@@ -1,0 +1,11 @@
+{
+  "binary": "/tmp/metabypass-coerce/metabypass_test",
+  "repeat": 100,
+  "workers": 8,
+  "tmp_parent": "/dev/shm",
+  "case_timeout_seconds": 60,
+  "elapsed_seconds": 74.98367979296017,
+  "total": 1600,
+  "passed": 1600,
+  "failures": []
+}

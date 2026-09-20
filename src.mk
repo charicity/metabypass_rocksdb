@@ -287,6 +287,7 @@ LIB_SOURCES =                                                   \
   utilities/cassandra/cassandra_compaction_filter.cc            \
   utilities/cassandra/format.cc                                 \
   utilities/cassandra/merge_operator.cc                         \
+  utilities/metabypass/tiered_storage.cc \
   utilities/metabypass/native_files.cc \
   utilities/metabypass/separated_storage.cc \
   utilities/metabypass/backup.cc \

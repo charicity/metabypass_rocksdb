@@ -19,8 +19,12 @@
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
 SeparatedStorage::SeparatedStorage(std::shared_ptr<FileSystem> fs,
-                                   std::string index, std::string data)
-    : FileSystemWrapper(fs), index_(std::move(index)), data_(std::move(data)) {}
+                                   std::string index, std::string data,
+                                   std::shared_ptr<TieredStorage> tier)
+    : FileSystemWrapper(tier ? tier : fs),
+      index_(std::move(index)),
+      data_(std::move(data)),
+      tier_(std::move(tier)) {}
 SeparatedStorage::~SeparatedStorage() {
   if (lock_)
     target()->UnlockFile(lock_, IOOptions(), nullptr).PermitUncheckedError();
@@ -249,6 +253,10 @@ Status Scan(FileSystem* fs, const std::string& path, uint64_t required,
                           : Status::Corruption("damaged referenced blob", path);
 }
 }  // namespace
+Status ScanBlob(FileSystem* fs, const std::string& path, uint64_t required,
+                uint64_t* end, uint64_t* count, bool* sealed) {
+  return Scan(fs, path, required, end, count, sealed);
+}
 Status SeparatedStorage::Dependencies(const std::string& index,
                                       const NativeState& state,
                                       std::map<uint64_t, uint64_t>* lengths,
@@ -432,7 +440,9 @@ Status SeparatedStorage::PersistIncremental(
     if (!s.ok()) return s;
     saved = next;
   }
-  return SyncDir(target(), data_);
+  Status s = SyncDir(target(), data_);
+  if (s.ok() && tier_) s = tier_->Persist(lengths);
+  return s;
 }
 Status SeparatedStorage::PrepareRecovery(const std::string& index) {
   NativeState state;
@@ -470,30 +480,37 @@ Status SeparatedStorage::PrepareRecovery(const std::string& index) {
     bool sealed;
     s = Scan(target(), BlobPath(b.first), b.second, &end, &count, &sealed);
     if (!s.ok()) return s;
-    if (!sealed) {
+    if (!sealed || tier_) {
       BlobLogFooter footer;
       footer.blob_count = count;
       std::string encoded_footer;
       footer.EncodeTo(&encoded_footer);
-      const std::string temp = BlobPath(b.first) + ".recover";
-      s = Copy(target(), BlobPath(b.first), temp, end);
-      if (!s.ok()) return s;
-      std::unique_ptr<FSWritableFile> writer;
-      s = target()->ReopenWritableFile(temp, FileOptions(), &writer, nullptr);
-      if (!s.ok()) return s;
-      s = writer->Append(encoded_footer, IOOptions(), nullptr);
-      if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
-      s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
-      if (s.ok())
-        s = target()->RenameFile(temp, BlobPath(b.first), IOOptions(), nullptr);
-      if (!s.ok()) return s;
+      if (tier_) {
+        s = tier_->SealRecovery(b.first, end, encoded_footer);
+        if (!s.ok()) return s;
+      } else {
+        const std::string temp = BlobPath(b.first) + ".recover";
+        s = Copy(target(), BlobPath(b.first), temp, end);
+        if (!s.ok()) return s;
+        std::unique_ptr<FSWritableFile> writer;
+        s = target()->ReopenWritableFile(temp, FileOptions(), &writer, nullptr);
+        if (!s.ok()) return s;
+        s = writer->Append(encoded_footer, IOOptions(), nullptr);
+        if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
+        s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
+        if (s.ok())
+          s = target()->RenameFile(temp, BlobPath(b.first), IOOptions(),
+                                   nullptr);
+        if (!s.ok()) return s;
+      }
     }
     TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryBlobSealed", &s);
     if (!s.ok()) return s;
     if (state.blobs.count(b.first) == 0)
       extra.AddBlobFile(b.first, count, end - BlobLogHeader::kSize, "", "");
   }
-  s = SyncDir(target(), data_);
+  if (tier_) s = tier_->ArchiveUnreferenced(lengths);
+  if (s.ok()) s = SyncDir(target(), data_);
   extra.SetNextFile(next);
   if (s.ok()) s = RewriteManifest(target(), index, state, extra);
   return s;

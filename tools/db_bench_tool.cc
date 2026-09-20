@@ -1122,6 +1122,12 @@ DEFINE_string(
     "Standalone Metabypass benchmark: write, baseline, restore, verify. "
     "Uses --db, --num, --value_size, --sync and the metabypass flags.");
 DEFINE_string(metabypass_data_dir, "", "Separate retained blob directory");
+DEFINE_string(metabypass_staging_dir, "",
+              "Optional fast blob staging directory");
+DEFINE_uint64(metabypass_staging_capacity, 0,
+              "Required tiered staging byte budget");
+DEFINE_uint64(metabypass_slow_write_delay_us, 0,
+              "Benchmark-only delay per slow writable-file append/sync call");
 DEFINE_string(metabypass_backup_dir, "", "Native index backup directory");
 DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
               "Pending event bytes");
@@ -10951,9 +10957,78 @@ class ReadFaultInjectionFS : public FileSystemWrapper {
 
 // A deliberately narrow benchmark entry point keeps unsupported DB APIs out
 // of the research prototype. Baseline uses the same separated blob storage.
+// Delays only the selected slow directories. This is a latency-injection
+// experiment, not a model of device bandwidth or power-loss behavior.
+class MetaBypassDelayedFile : public FSWritableFileOwnerWrapper {
+ public:
+  MetaBypassDelayedFile(std::unique_ptr<FSWritableFile> f, uint64_t delay)
+      : FSWritableFileOwnerWrapper(std::move(f)), delay_(delay) {}
+  IOStatus Append(const Slice& b, const IOOptions& o,
+                  IODebugContext* d) override {
+    Pause();
+    return target()->Append(b, o, d);
+  }
+  IOStatus Append(const Slice& b, const IOOptions& o,
+                  const DataVerificationInfo& v, IODebugContext* d) override {
+    Pause();
+    return target()->Append(b, o, v, d);
+  }
+  IOStatus Sync(const IOOptions& o, IODebugContext* d) override {
+    Pause();
+    return target()->Sync(o, d);
+  }
+  IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+    Pause();
+    return target()->Fsync(o, d);
+  }
+
+ private:
+  void Pause() {
+    std::this_thread::sleep_for(std::chrono::microseconds(delay_));
+  }
+  uint64_t delay_;
+};
+class MetaBypassDelayedFS : public FileSystemWrapper {
+ public:
+  explicit MetaBypassDelayedFS(std::shared_ptr<FileSystem> fs)
+      : FileSystemWrapper(std::move(fs)) {}
+  const char* Name() const override { return "MetaBypassBenchmarkDelay"; }
+  IOStatus NewWritableFile(const std::string& p, const FileOptions& o,
+                           std::unique_ptr<FSWritableFile>* f,
+                           IODebugContext* d) override {
+    IOStatus s = target()->NewWritableFile(p, o, f, d);
+    if (s.ok()) Wrap(p, f);
+    return s;
+  }
+  IOStatus ReopenWritableFile(const std::string& p, const FileOptions& o,
+                              std::unique_ptr<FSWritableFile>* f,
+                              IODebugContext* d) override {
+    IOStatus s = target()->ReopenWritableFile(p, o, f, d);
+    if (s.ok()) Wrap(p, f);
+    return s;
+  }
+
+ private:
+  void Wrap(const std::string& p, std::unique_ptr<FSWritableFile>* f) {
+    for (const auto& dir :
+         {FLAGS_metabypass_data_dir, FLAGS_metabypass_backup_dir}) {
+      if (!dir.empty() && p.compare(0, dir.size() + 1, dir + "/") == 0) {
+        f->reset(new MetaBypassDelayedFile(
+            std::move(*f), FLAGS_metabypass_slow_write_delay_us));
+        break;
+      }
+    }
+  }
+};
+
 static int RunMetaBypassBenchmark() {
   Options options;
-  options.env = FLAGS_env;
+  std::unique_ptr<Env> delayed_env;
+  if (FLAGS_metabypass_slow_write_delay_us != 0) {
+    delayed_env = NewCompositeEnv(
+        std::make_shared<MetaBypassDelayedFS>(FLAGS_env->GetFileSystem()));
+  }
+  options.env = delayed_env ? delayed_env.get() : FLAGS_env;
   options.create_if_missing = true;
   options.allow_concurrent_memtable_write = false;
   options.enable_blob_files = true;
@@ -10962,6 +11037,8 @@ static int RunMetaBypassBenchmark() {
   options.compression = kNoCompression;
   MetaBypassOptions bypass;
   bypass.data_dir = FLAGS_metabypass_data_dir;
+  bypass.staging_dir = FLAGS_metabypass_staging_dir;
+  bypass.staging_capacity = FLAGS_metabypass_staging_capacity;
   bypass.backup_dir = FLAGS_metabypass_backup_dir;
   bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
@@ -10996,7 +11073,7 @@ static int RunMetaBypassBenchmark() {
   if (baseline) {
     options.error_if_exists = true;
     storage = std::make_shared<metabypass::SeparatedStorage>(
-        FLAGS_env->GetFileSystem(), FLAGS_db, bypass.data_dir);
+        options.env->GetFileSystem(), FLAGS_db, bypass.data_dir);
     s = storage->Lock();
     std::vector<std::string> children;
     if (s.ok())
@@ -11017,8 +11094,11 @@ static int RunMetaBypassBenchmark() {
   const std::string value(FLAGS_value_size, 'v');
   WriteOptions write;
   write.sync = FLAGS_sync;
+  std::vector<uint64_t> latencies;
+  latencies.reserve(FLAGS_num);
   start = clock->NowMicros();
   for (int64_t i = 0; s.ok() && i < FLAGS_num; ++i) {
+    const uint64_t operation_start = clock->NowMicros();
     const std::string key = std::to_string(i);
     if (verify) {
       std::string actual;
@@ -11027,8 +11107,12 @@ static int RunMetaBypassBenchmark() {
         s = Status::Corruption("benchmark value mismatch");
     } else
       s = baseline ? raw->Put(write, key, value) : db->Put(write, key, value);
+    latencies.push_back(clock->NowMicros() - operation_start);
   }
   const uint64_t foreground = clock->NowMicros() - start;
+  std::sort(latencies.begin(), latencies.end());
+  const uint64_t p99 =
+      latencies.empty() ? 0 : latencies[(latencies.size() - 1) * 99 / 100];
   const uint64_t sync_start = clock->NowMicros();
   if (s.ok() && db) s = db->SyncBackup();
   const uint64_t sync_us = clock->NowMicros() - sync_start;
@@ -11049,6 +11133,14 @@ static int RunMetaBypassBenchmark() {
          stats.last_point_lag_micros, stats.peak_queued_bytes,
          stats.mirrored_bytes, stats.retained_index_bytes,
          stats.validated_blob_bytes, stats.reused_tables, s.ToString().c_str());
+  printf("metabypass tiered=%d p99_us=%" PRIu64 " staging_bytes=%" PRIu64
+         " staging_peak=%" PRIu64 " migrated_blob_bytes=%" PRIu64
+         " pending_blob_bytes=%" PRIu64 " staging_wait_us=%" PRIu64
+         " sync_write_us=%" PRIu64 "\n",
+         !bypass.staging_dir.empty(), p99, stats.staging_bytes,
+         stats.peak_staging_bytes, stats.migrated_blob_bytes,
+         stats.pending_blob_bytes, stats.staging_backpressure_micros,
+         stats.sync_write_micros);
   return s.ok() ? 0 : 1;
 }
 

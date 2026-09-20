@@ -1,0 +1,725 @@
+{
+  "base_commit": "9db67d46b726ff01e76c514620ee822215ed930c",
+  "final_source_sha256": {
+    "db/blob/blob_file_partition_manager.cc": "49cfa9b2d451047dfbd056d5fdbca7e730e564378507606575617460f03cf70b",
+    "db/blob/blob_file_partition_manager.h": "83beb18ecc1a46282f703ea9d0637ba94f2ab4679659b03c479609b733cb8d18",
+    "include/rocksdb/utilities/metabypass.h": "322494e929d1430d3dbfffecf1095faef4dbecdd25a541930a99b1cc30ffdf5d",
+    "tools/db_bench_tool.cc": "6969d7c9a8b90e3e666f25753bef17e26afc77dbb592956b6cbac95708db55ae",
+    "utilities/metabypass/backup.cc": "ec2f72de616bb0c03622b1eee7f25c0f751d7be153d507e0ea63f6ccbe7cd150",
+    "utilities/metabypass/backup.h": "7bc4fbed49c6dcfaaf7cedadb66b44edde807e5082743bd70db67d8337c22bd5",
+    "utilities/metabypass/metabypass_db.cc": "7878b93b261d6d16cad622d3e95b76b80f30443bbd03c69a35bc238f35e42956",
+    "utilities/metabypass/metabypass_test.cc": "7979b2ee9390eb5369266ae966843db6746a004570efae5744267bedc7867a75",
+    "utilities/metabypass/native_files.h": "9229658581f917a526f4753b50b00acc27e41e5cd842b9c28ce4b379cad1714d",
+    "utilities/metabypass/separated_storage.cc": "f55d164d5099bd373f08be2f33fd55dd265c1dd936fee2dc3e3000459ca33997",
+    "utilities/metabypass/separated_storage.h": "0ec14ac0963f0b7cd36d0619f9a05a8e54c6a7b1eb1c4fd2197b341130f3448c",
+    "utilities/metabypass/tiered_storage.cc": "be6dfa866494b9c648f8fd7ca947c34ff0c6f85bcccd01383f72b0ef0642e9c5",
+    "utilities/metabypass/tiered_storage.h": "f021dcc81fa5f07e532c38764a73c18bcb1458eb85a599fd4703716d0b9c7450"
+  },
+  "normal_component_and_blob_regressions": {
+    "passed": 152,
+    "failed": 0,
+    "case_timeout_seconds": 60,
+    "log": "/tmp/mb-tier-frozen-regression.log"
+  },
+  "status_component": {
+    "passed": 53,
+    "failed": 0,
+    "tmp_parent": "/dev/shm",
+    "log": "/tmp/mb-tier-status-frozen-tests.log"
+  },
+  "normal_full": {
+    "command": "AUTO_CLEAN=1 make -j24 check J=24 TEST_TMPDIR=/tmp/mb-tier-full-normal DRIVER='timeout 60'",
+    "result": {
+      "status": "completed",
+      "phase": "testing",
+      "completed": 3323,
+      "total": 3322,
+      "failed": 5,
+      "percent": 100,
+      "eta_seconds": -5,
+      "avg_time": "5.4",
+      "last_item": "prefix_test-shard-0",
+      "failed_tests": [
+        {
+          "test": "db_bloom_filter_test-shard-3",
+          "exit_code": 1,
+          "signal": 0,
+          "output": "10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/0 (3114 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (3114 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0 (3267 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (3267 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0 (308 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (308 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0 (538 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5 (1367 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (1906 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2 (202 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (202 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (10436 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy\n\n 1 FAILED TEST"
+        },
+        {
+          "test": "db_bloom_filter_test-shard-4",
+          "exit_code": 1,
+          "signal": 0,
+          "output": "10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/1 (3113 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (3113 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1 (3144 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (3144 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1 (529 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (529 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1 (2470 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6 (1342 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (3812 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3 (254 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (254 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (12792 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy\n\n 1 FAILED TEST"
+        },
+        {
+          "test": "column_family_test-shard-4",
+          "exit_code": 124,
+          "signal": 0,
+          "output": "Note: This is test shard 5 of 13.\n[==========] Running 10 tests from 4 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet\n[       OK ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet (111 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (112 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.AddDrop/0\n[       OK ] FormatDef/ColumnFamilyTest.AddDrop/0 (319 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0\n[       OK ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0 (173 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0 (265 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0 (160 ms)\n[----------] 4 tests from FormatDef/ColumnFamilyTest (917 ms total)\n\n[----------] 4 tests from FormatLatest/ColumnFamilyTest\n[ RUN      ] FormatLatest/ColumnFamilyTest.BulkAddDrop/0\n[       OK ] FormatLatest/ColumnFamilyTest.BulkAddDrop/0 (56545 ms)\n[ RUN      ] FormatLatest/ColumnFamilyTest.MultipleManualCompactions/0\n[       OK ] FormatLatest/ColumnFamilyTest.MultipleManualCompactions/0 (413 ms)\n[ RUN      ] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0\nReceived signal 15 (Terminated)"
+        },
+        {
+          "test": "column_family_test-shard-6",
+          "exit_code": 124,
+          "signal": 0,
+          "output": "Note: This is test shard 7 of 13.\n[==========] Running 9 tests from 3 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall\n[       OK ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall (143 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (143 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.BulkAddDrop/0\n[       OK ] FormatDef/ColumnFamilyTest.BulkAddDrop/0 (56559 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.MultipleManualCompactions/0\n[       OK ] FormatDef/ColumnFamilyTest.MultipleManualCompactions/0 (425 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0\nReceived signal 15 (Terminated)\nReceived signal 15 (Terminated)"
+        },
+        {
+          "test": "prefetch_test-shard-8",
+          "exit_code": 139,
+          "signal": 0,
+          "output": "Note: This is test shard 9 of 11.\n[==========] Running 10 tests from 5 test cases.\n[----------] Global test environment set-up.\n[----------] 6 tests from PrefetchTest/PrefetchTest\n[ RUN      ] PrefetchTest/PrefetchTest.Basic/0\nfile/prefetch_test.cc:352: Failure\nExpected: (post_compaction_prefetch_bytes.max) >= (expected_compaction_readahead_size * 0.9), actual: 1.31891e+06 vs 1.88744e+06\nReceived signal 11 (Segmentation fault)\nInvoking GDB for stack trace...\nGDB failed; falling back on backtrace+addr2line...\n#0   [0x5624eb96cd20] ??\t??:0\t\ntimeout: the monitored command dumped core\nSegmentation fault"
+        }
+      ]
+    }
+  },
+  "status_full": {
+    "command": "AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j16 check J=24 TEST_TMPDIR=/tmp/mb-tier-status-final DRIVER='timeout 60'",
+    "completed": 3305,
+    "failed": 39,
+    "failures": [
+      {
+        "test": "db_bloom_filter_test-shard-3",
+        "exit_code": 1,
+        "signal": 0,
+        "seconds": 12.138,
+        "output_tail": "10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0 (3666 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (3667 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0 (350 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (350 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0 (636 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5 (1399 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (2035 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2 (282 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (282 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (12091 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy\n\n 1 FAILED TEST"
+      },
+      {
+        "test": "db_bloom_filter_test-shard-4",
+        "exit_code": 1,
+        "signal": 0,
+        "seconds": 14.588,
+        "output_tail": "10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1 (3634 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (3634 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1 (582 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (582 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1 (2535 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6 (1415 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (3950 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3 (302 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (302 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (14522 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy\n\n 1 FAILED TEST"
+      },
+      {
+        "test": "compaction_service_test-shard-15",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.159,
+        "output_tail": "Note: This is test shard 16 of 46.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from CompactionServiceTest\n[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-239",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.191,
+        "output_tail": "Note: This is test shard 240 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/20\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-241",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.131,
+        "output_tail": "Note: This is test shard 242 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/22\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-247",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.447,
+        "output_tail": "Note: This is test shard 248 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/28\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-251",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.534,
+        "output_tail": "Note: This is test shard 252 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/0\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-252",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.078,
+        "output_tail": "Note: This is test shard 253 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-253",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.828,
+        "output_tail": "Note: This is test shard 254 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-254",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.086,
+        "output_tail": "Note: This is test shard 255 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-255",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.134,
+        "output_tail": "Note: This is test shard 256 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/4\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-256",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.664,
+        "output_tail": "Note: This is test shard 257 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/5\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-257",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.482,
+        "output_tail": "Note: This is test shard 258 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-258",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.367,
+        "output_tail": "Note: This is test shard 259 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/7\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-259",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.184,
+        "output_tail": "Note: This is test shard 260 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/8\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-260",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.073,
+        "output_tail": "Note: This is test shard 261 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/9\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-261",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.048,
+        "output_tail": "Note: This is test shard 262 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/10\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-262",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.045,
+        "output_tail": "Note: This is test shard 263 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/11\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-263",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.031,
+        "output_tail": "Note: This is test shard 264 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/12\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-264",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.031,
+        "output_tail": "Note: This is test shard 265 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/13\nReceived signal 15 (Terminated)\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-265",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.042,
+        "output_tail": "Note: This is test shard 266 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/14\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-266",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.097,
+        "output_tail": "Note: This is test shard 267 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/15\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-267",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.236,
+        "output_tail": "Note: This is test shard 268 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/16\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-268",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.235,
+        "output_tail": "Note: This is test shard 269 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/17\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-269",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.074,
+        "output_tail": "Note: This is test shard 270 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/18\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-270",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.05,
+        "output_tail": "Note: This is test shard 271 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/19\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-271",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.095,
+        "output_tail": "Note: This is test shard 272 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/20\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-272",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.071,
+        "output_tail": "Note: This is test shard 273 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/21\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-273",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.082,
+        "output_tail": "Note: This is test shard 274 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/22\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-274",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.175,
+        "output_tail": "Note: This is test shard 275 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/23\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-275",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.095,
+        "output_tail": "Note: This is test shard 276 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/24\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-276",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.096,
+        "output_tail": "Note: This is test shard 277 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/25\nReceived signal 15 (Terminated)\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-277",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.037,
+        "output_tail": "Note: This is test shard 278 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/26\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-278",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.026,
+        "output_tail": "Note: This is test shard 279 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/27\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-279",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.017,
+        "output_tail": "Note: This is test shard 280 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/28\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-280",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.032,
+        "output_tail": "Note: This is test shard 281 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/29\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-281",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.153,
+        "output_tail": "Note: This is test shard 282 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/30\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "external_sst_file_test-shard-282",
+        "exit_code": 124,
+        "signal": 0,
+        "seconds": 60.074,
+        "output_tail": "Note: This is test shard 283 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/31\nReceived signal 15 (Terminated)"
+      },
+      {
+        "test": "prefetch_test-shard-8",
+        "exit_code": 139,
+        "signal": 0,
+        "seconds": 0.664,
+        "output_tail": "Note: This is test shard 9 of 11.\n[==========] Running 10 tests from 5 test cases.\n[----------] Global test environment set-up.\n[----------] 6 tests from PrefetchTest/PrefetchTest\n[ RUN      ] PrefetchTest/PrefetchTest.Basic/0\nfile/prefetch_test.cc:352: Failure\nExpected: (post_compaction_prefetch_bytes.max) >= (expected_compaction_readahead_size * 0.9), actual: 1.31891e+06 vs 1.88744e+06\nReceived signal 11 (Segmentation fault)\nInvoking GDB for stack trace...\nGDB failed; falling back on backtrace+addr2line...\n#0   [0x563fa6b52d20] ??\t??:0\t\ntimeout: the monitored command dumped core\nSegmentation fault"
+      }
+    ]
+  },
+  "status_timeout_retries": {
+    "workers": 4,
+    "timeout_seconds": 60,
+    "total": 36,
+    "completed": 36,
+    "results": [
+      {
+        "test": "external_sst_file_test-shard-247",
+        "total_shards": 286,
+        "shard_index": 247,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 29.95297182793729,
+        "output": "Note: This is test shard 248 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/28\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/28 (29926 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (29926 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (29926 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-239",
+        "total_shards": 286,
+        "shard_index": 239,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 30.451217591995373,
+        "output": "Note: This is test shard 240 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/20\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/20 (30421 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (30422 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (30422 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-241",
+        "total_shards": 286,
+        "shard_index": 241,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 30.549204732989892,
+        "output": "Note: This is test shard 242 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/22\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.NonZeroSeqno/22 (30520 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (30520 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (30520 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "compaction_service_test-shard-15",
+        "total_shards": 46,
+        "shard_index": 15,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 40.36079236899968,
+        "output": "Note: This is test shard 16 of 46.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from CompactionServiceTest\n[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags\n[       OK ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (40330 ms)\n[----------] 1 test from CompactionServiceTest (40330 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (40330 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-252",
+        "total_shards": 286,
+        "shard_index": 252,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.961574121029116,
+        "output": "Note: This is test shard 253 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1 (33936 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33936 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33936 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-251",
+        "total_shards": 286,
+        "shard_index": 251,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.805409819004126,
+        "output": "Note: This is test shard 252 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/0\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/0 (34778 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34778 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34778 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-253",
+        "total_shards": 286,
+        "shard_index": 253,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.16193329310045,
+        "output": "Note: This is test shard 254 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2 (35139 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35139 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35139 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-254",
+        "total_shards": 286,
+        "shard_index": 254,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.66554374201223,
+        "output": "Note: This is test shard 255 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3 (34607 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34607 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34607 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-256",
+        "total_shards": 286,
+        "shard_index": 256,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.51067675999366,
+        "output": "Note: This is test shard 257 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/5\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/5 (34482 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34482 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34482 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-255",
+        "total_shards": 286,
+        "shard_index": 255,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.24946257006377,
+        "output": "Note: This is test shard 256 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/4\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/4 (35223 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35223 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35223 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-257",
+        "total_shards": 286,
+        "shard_index": 257,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.5931002079742,
+        "output": "Note: This is test shard 258 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6 (35568 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35568 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35568 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-258",
+        "total_shards": 286,
+        "shard_index": 258,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.013110999017954,
+        "output": "Note: This is test shard 259 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/7\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/7 (34981 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34981 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34981 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-259",
+        "total_shards": 286,
+        "shard_index": 259,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.47184035310056,
+        "output": "Note: This is test shard 260 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/8\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/8 (33451 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33451 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33451 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-260",
+        "total_shards": 286,
+        "shard_index": 260,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.86196971300524,
+        "output": "Note: This is test shard 261 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/9\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/9 (33836 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33837 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33837 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-261",
+        "total_shards": 286,
+        "shard_index": 261,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.11662265099585,
+        "output": "Note: This is test shard 262 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/10\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/10 (35095 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35095 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35095 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-262",
+        "total_shards": 286,
+        "shard_index": 262,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.6800323210191,
+        "output": "Note: This is test shard 263 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/11\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/11 (34657 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34657 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34657 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-263",
+        "total_shards": 286,
+        "shard_index": 263,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.47867196297739,
+        "output": "Note: This is test shard 264 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/12\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/12 (33457 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33457 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33457 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-264",
+        "total_shards": 286,
+        "shard_index": 264,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.892247330979444,
+        "output": "Note: This is test shard 265 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/13\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/13 (33867 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33867 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33868 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-265",
+        "total_shards": 286,
+        "shard_index": 265,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.02830877201632,
+        "output": "Note: This is test shard 266 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/14\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/14 (35002 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35002 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35002 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-266",
+        "total_shards": 286,
+        "shard_index": 266,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.497259377967566,
+        "output": "Note: This is test shard 267 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/15\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/15 (34477 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34477 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34478 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-267",
+        "total_shards": 286,
+        "shard_index": 267,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.66569242195692,
+        "output": "Note: This is test shard 268 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/16\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/16 (34640 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34640 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34640 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-268",
+        "total_shards": 286,
+        "shard_index": 268,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.77115809696261,
+        "output": "Note: This is test shard 269 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/17\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/17 (33747 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33747 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33747 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-269",
+        "total_shards": 286,
+        "shard_index": 269,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.954602789948694,
+        "output": "Note: This is test shard 270 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/18\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/18 (34929 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34929 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34929 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-270",
+        "total_shards": 286,
+        "shard_index": 270,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.44840997108258,
+        "output": "Note: This is test shard 271 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/19\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/19 (34421 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34421 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34421 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-272",
+        "total_shards": 286,
+        "shard_index": 272,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.78583075501956,
+        "output": "Note: This is test shard 273 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/21\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/21 (33761 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33761 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33761 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-271",
+        "total_shards": 286,
+        "shard_index": 271,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.60436395602301,
+        "output": "Note: This is test shard 272 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/20\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/20 (34581 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34581 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34581 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-273",
+        "total_shards": 286,
+        "shard_index": 273,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.060482050990686,
+        "output": "Note: This is test shard 274 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/22\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/22 (35037 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (35037 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (35037 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-274",
+        "total_shards": 286,
+        "shard_index": 274,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.496033897972666,
+        "output": "Note: This is test shard 275 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/23\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/23 (34468 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34468 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34468 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-275",
+        "total_shards": 286,
+        "shard_index": 275,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.38915521197487,
+        "output": "Note: This is test shard 276 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/24\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/24 (33363 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33363 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33363 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-276",
+        "total_shards": 286,
+        "shard_index": 276,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.91480062995106,
+        "output": "Note: This is test shard 277 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/25\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/25 (33893 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33893 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33893 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-277",
+        "total_shards": 286,
+        "shard_index": 277,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 35.00876945303753,
+        "output": "Note: This is test shard 278 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/26\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/26 (34982 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34982 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34982 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-278",
+        "total_shards": 286,
+        "shard_index": 278,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.41582120792009,
+        "output": "Note: This is test shard 279 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/27\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/27 (34392 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34392 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34392 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-279",
+        "total_shards": 286,
+        "shard_index": 279,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.63392431894317,
+        "output": "Note: This is test shard 280 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/28\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/28 (34606 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34607 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34607 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-280",
+        "total_shards": 286,
+        "shard_index": 280,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 33.867299125064164,
+        "output": "Note: This is test shard 281 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/29\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/29 (33841 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (33841 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (33841 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-281",
+        "total_shards": 286,
+        "shard_index": 281,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 34.57983970607165,
+        "output": "Note: This is test shard 282 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/30\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/30 (34556 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (34556 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (34556 ms total)\n[  PASSED  ] 1 test.\n"
+      },
+      {
+        "test": "external_sst_file_test-shard-282",
+        "total_shards": 286,
+        "shard_index": 282,
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 31.853687125025317,
+        "output": "Note: This is test shard 283 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/31\n[       OK ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/31 (31828 ms)\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2 (31828 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (31828 ms total)\n[  PASSED  ] 1 test.\n"
+      }
+    ]
+  },
+  "notes": [
+    "Full checks were run during implementation; final identity/priority refinements were verified with final component suites and coerce repetitions.",
+    "A duplicate normal full run and an initial eight-worker Status full run were interrupted and are not counted as passes.",
+    "The normal progress tool reported 3323 completed against a generated total of 3322.",
+    "Full checks overlapped before the duplicate normal run was stopped; retry concurrency was four with the same disk-backed tmp filesystem."
+  ],
+  "other_checks": {
+    "format": "passed",
+    "sources": "passed",
+    "buck_regeneration": "byte-identical",
+    "python": "passed",
+    "ldb": "passed",
+    "db_crashtest": "passed",
+    "dump": "passed",
+    "workflow_yaml": "blocked: Ruby unavailable",
+    "c_api_completeness": "1745 declarations each defined once",
+    "c_api_compatibility": "failed relative to main: 21 functions and 5 symbols; pre-existing"
+  },
+  "hardware_limit": "One virtual block device; tmpfs/disk and injected latency only. No physical SSD/HDD or real power-loss validation.",
+  "normal_timeout_retries": [
+    {
+      "test": "column_family_test-shard-4",
+      "total_shards": 13,
+      "shard_index": 4,
+      "exit_code": 0,
+      "passed_cases": 10,
+      "milliseconds": 36763
+    },
+    {
+      "test": "column_family_test-shard-6",
+      "total_shards": 13,
+      "shard_index": 6,
+      "exit_code": 0,
+      "passed_cases": 9,
+      "milliseconds": 37092
+    }
+  ]
+}

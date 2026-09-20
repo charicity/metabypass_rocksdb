@@ -2,12 +2,18 @@
 //  This source code is licensed under both the GPLv2 (found in the
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <limits>
+#include <mutex>
 
+#include "db/blob/blob_file_partition_manager.h"
+#include "db/column_family.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/write_batch.h"
+#include "util/cast_util.h"
 #include "utilities/metabypass/backup.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -31,6 +37,15 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
   if (overlap(index, m.data_dir) || overlap(index, m.backup_dir) ||
       overlap(m.data_dir, m.backup_dir))
     return Status::InvalidArgument("Metabypass directories must be disjoint");
+  if (!m.staging_dir.empty()) {
+    if (!valid_path(m.staging_dir) || m.staging_capacity < 8192 ||
+        overlap(m.staging_dir, index) || overlap(m.staging_dir, m.data_dir) ||
+        overlap(m.staging_dir, m.backup_dir))
+      return Status::InvalidArgument("invalid tiered staging configuration");
+  } else if (m.staging_capacity != 0) {
+    return Status::InvalidArgument(
+        "staging capacity requires staging directory");
+  }
   if (m.queue_capacity < 4096 || m.batch_bytes == 0 ||
       m.batch_bytes > m.queue_capacity || m.interval_ms == 0 ||
       m.interval_ms > std::numeric_limits<int64_t>::max())
@@ -80,12 +95,21 @@ class SupportedBatch : public WriteBatch::Handler {
 };
 }  // namespace
 struct MetaBypassDB::Impl {
+  std::shared_ptr<metabypass::TieredStorage> tier;
+  std::mutex admission;
+  std::atomic<uint64_t> sync_write_us{0};
   std::shared_ptr<metabypass::SeparatedStorage> storage;
   std::shared_ptr<metabypass::Backup> backup;
   std::unique_ptr<Env> env;
   std::unique_ptr<DB> db;
   Status closed;
-  ~Impl() { closed.PermitUncheckedError(); }
+  ~Impl() {
+    if (tier) {
+      tier->SetFailureHandler({});
+      tier->Stop().PermitUncheckedError();
+    }
+    closed.PermitUncheckedError();
+  }
 };
 MetaBypassDB::MetaBypassDB(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
@@ -99,8 +123,10 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   if (!s.ok()) return s;
   auto impl = std::make_unique<Impl>();
   auto fs = options.env->GetFileSystem();
-  impl->storage =
-      std::make_shared<metabypass::SeparatedStorage>(fs, index, m.data_dir);
+  if (!m.staging_dir.empty())
+    impl->tier = std::make_shared<metabypass::TieredStorage>(fs, m);
+  impl->storage = std::make_shared<metabypass::SeparatedStorage>(
+      fs, index, m.data_dir, impl->tier);
   s = impl->storage->Lock();
   if (!s.ok()) return s;
   s = fs->FileExists(index + "/METABYPASS-RESTORING", IOOptions(), nullptr);
@@ -115,7 +141,9 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   if (!existing && !options.create_if_missing)
     return Status::InvalidArgument("Metabypass index does not exist");
   if (!existing) {
-    for (const auto& path : {m.data_dir, m.backup_dir}) {
+    std::vector<std::string> directories{m.data_dir, m.backup_dir};
+    if (impl->tier) directories.push_back(m.staging_dir);
+    for (const auto& path : directories) {
       std::vector<std::string> children;
       s = fs->GetChildren(path, IOOptions(), &children, nullptr);
       if (s.IsNotFound()) continue;
@@ -125,6 +153,27 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
           return Status::InvalidArgument(
               "new Metabypass requires empty data and backup directories");
       }
+    }
+  }
+  const std::string format_path = m.data_dir + "/METABYPASS-TIERED";
+  Status format = fs->FileExists(format_path, IOOptions(), nullptr);
+  if (!format.ok() && !format.IsNotFound()) return format;
+  if (existing && format.ok() != bool(impl->tier))
+    return Status::InvalidArgument("cannot change Metabypass storage format");
+  if (impl->tier) {
+    if (existing) {
+      std::string version;
+      s = metabypass::Read(fs.get(), format_path, &version);
+      if (!s.ok()) return s;
+      if (version != "MBT1\n")
+        return Status::NotSupported("tiered storage format");
+    }
+    s = impl->tier->Initialize(false);
+    if (!s.ok()) return s;
+    if (!existing) {
+      s = metabypass::Write(fs.get(), format_path, "MBT1\n");
+      if (s.ok()) s = metabypass::SyncDir(fs.get(), m.data_dir);
+      if (!s.ok()) return s;
     }
   }
   if (existing) {
@@ -144,11 +193,26 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
       if (owner != identity)
         return Status::Corruption("Metabypass directory identity mismatch");
     }
+    if (impl->tier) {
+      std::string staging_owner;
+      s = metabypass::Read(fs.get(), m.staging_dir + "/METABYPASS-IDENTITY",
+                           &staging_owner);
+      if (!s.ok()) return s;
+      if (staging_owner != identity)
+        return Status::Corruption("staging identity mismatch");
+    }
     s = impl->storage->PrepareRecovery(index);
     if (!s.ok()) return s;
   }
   impl->backup =
       std::make_shared<metabypass::Backup>(impl->storage, index, m, options);
+  if (impl->tier) {
+    std::weak_ptr<metabypass::Backup> weak = impl->backup;
+    impl->tier->SetFailureHandler([weak](const Status& error) {
+      if (auto backup = weak.lock()) backup->StorageFailed(error);
+    });
+    impl->tier->Start();
+  }
   s = impl->backup->Start(existing);
   if (!s.ok()) return s;
   impl->env = NewCompositeEnv(impl->backup);
@@ -167,6 +231,10 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     if (s.ok() && !existing)
       s = metabypass::Write(fs.get(), index + "/METABYPASS", identity);
     if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
+    if (s.ok() && impl->tier && !existing)
+      s = metabypass::Write(fs.get(), m.staging_dir + "/METABYPASS-IDENTITY",
+                            identity);
+    if (s.ok() && impl->tier) s = metabypass::SyncDir(fs.get(), m.staging_dir);
     if (s.ok()) s = impl->backup->Activate(identity);
     if (s.ok()) s = impl->backup->Sync();
   }
@@ -186,12 +254,35 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
   Status s = Validate(options, m, index);
   if (!s.ok()) return s;
   auto fs = options.env->GetFileSystem();
-  metabypass::SeparatedStorage storage(fs, index, m.data_dir);
+  std::shared_ptr<metabypass::TieredStorage> tier;
+  if (!m.staging_dir.empty())
+    tier = std::make_shared<metabypass::TieredStorage>(fs, m);
+  metabypass::SeparatedStorage storage(fs, index, m.data_dir, tier);
   s = storage.Lock();
   if (!s.ok()) return s;
   FileLock* backup_lock = nullptr;
   s = fs->LockFile(m.backup_dir + "/LOCK", IOOptions(), &backup_lock, nullptr);
   if (!s.ok()) return s;
+  if (tier) {
+    std::string version;
+    s = metabypass::Read(fs.get(), m.data_dir + "/METABYPASS-TIERED", &version);
+    if (s.ok() && version != "MBT1\n")
+      s = Status::NotSupported("tiered storage format");
+    if (s.ok()) s = tier->Initialize(true);
+    if (!s.ok()) {
+      fs->UnlockFile(backup_lock, IOOptions(), nullptr).PermitUncheckedError();
+      return s;
+    }
+  } else {
+    Status format =
+        fs->FileExists(m.data_dir + "/METABYPASS-TIERED", IOOptions(), nullptr);
+    if (!format.IsNotFound()) {
+      fs->UnlockFile(backup_lock, IOOptions(), nullptr).PermitUncheckedError();
+      return format.ok()
+                 ? Status::InvalidArgument("tiered restore requires staging")
+                 : format;
+    }
+  }
   std::string data_owner, backup_owner;
   s = metabypass::Read(fs.get(), m.data_dir + "/METABYPASS-IDENTITY",
                        &data_owner);
@@ -200,6 +291,26 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
                          &backup_owner);
   if (s.ok() && data_owner != backup_owner)
     s = Status::Corruption("data and backup identity mismatch");
+  bool staging_identity_exists = false;
+  if (s.ok() && tier) {
+    std::vector<std::string> staging_files;
+    s = fs->GetChildren(m.staging_dir, IOOptions(), &staging_files, nullptr);
+    for (const auto& file : staging_files) {
+      if (!s.ok()) break;
+      if (file == "." || file == ".." || file == "METABYPASS-LOCK" ||
+          file == "METABYPASS-IDENTITY.tmp")
+        continue;
+      if (file != "METABYPASS-IDENTITY") {
+        s = Status::InvalidArgument("restore staging is not empty");
+        break;
+      }
+      std::string owner;
+      s = metabypass::Read(fs.get(), m.staging_dir + "/" + file, &owner);
+      if (s.ok() && owner != backup_owner)
+        s = Status::Corruption("restore staging identity mismatch");
+      if (s.ok()) staging_identity_exists = true;
+    }
+  }
   if (s.ok()) s = metabypass::EnsureDir(fs.get(), index);
   std::vector<std::string> children;
   if (s.ok()) s = fs->GetChildren(index, IOOptions(), &children, nullptr);
@@ -220,9 +331,16 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
                           backup_owner);
   if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
   if (s.ok())
-    s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index,
+    s = metabypass::Backup::RestoreFiles(storage.target(), m.backup_dir, index,
                                          storage);
   if (s.ok()) s = storage.PrepareRecovery(index);
+  if (s.ok() && tier && !staging_identity_exists) {
+    const std::string marker = m.staging_dir + "/METABYPASS-IDENTITY";
+    s = metabypass::Write(fs.get(), marker + ".tmp", backup_owner);
+    if (s.ok())
+      s = fs->RenameFile(marker + ".tmp", marker, IOOptions(), nullptr);
+  }
+  if (s.ok() && tier) s = metabypass::SyncDir(fs.get(), m.staging_dir);
   if (s.ok()) {
     std::string identity;
     s = metabypass::Read(fs.get(), index + "/IDENTITY", &identity);
@@ -256,7 +374,40 @@ Status MetaBypassDB::Write(const WriteOptions& o, WriteBatch* b) {
   if (s.ok() && !check.supported)
     s = Status::NotSupported("Metabypass LogData");
   if (s.ok()) s = impl_->backup->Error();
-  if (s.ok()) s = impl_->db->Write(o, b);
+  if (!s.ok() || !impl_->tier) {
+    if (s.ok()) s = impl_->db->Write(o, b);
+    return s;
+  }
+  // Admission serializes tiered writes only, before acquiring any DB lock.
+  // A conservative compression and per-record envelope bounds staging growth.
+  std::unique_lock<std::mutex> admission(impl_->admission);
+  const uint64_t bytes = b->GetDataSize();
+  const uint64_t count = b->Count();
+  if (bytes > (UINT64_MAX - 4096) / 2 ||
+      count > (UINT64_MAX - bytes * 2 - 4096) / 128)
+    return Status::InvalidArgument("batch staging charge overflow");
+  const uint64_t charge = bytes * 2 + count * 128 + 4096;
+  auto* cf = static_cast_with_check<ColumnFamilyHandleImpl>(
+      impl_->db->DefaultColumnFamily());
+  s = impl_->tier->Reserve(charge, [&] {
+    auto* manager = cf->cfd()->blob_partition_manager();
+    return manager ? manager->SealForSpace(WriteOptions()) : Status::OK();
+  });
+  if (s.ok()) {
+    s = impl_->backup->Error();
+    if (s.ok()) s = impl_->db->Write(o, b);
+    impl_->tier->ReleaseReservation();
+  }
+  admission.unlock();
+  if (s.ok() && o.sync) {
+    const auto start = std::chrono::steady_clock::now();
+    s = impl_->backup->Sync();
+    impl_->sync_write_us.fetch_add(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count(),
+        std::memory_order_relaxed);
+  }
   return s;
 }
 Status MetaBypassDB::Get(const ReadOptions& o, const Slice& k, std::string* v) {
@@ -282,13 +433,18 @@ Status MetaBypassDB::CompactRange(const CompactRangeOptions& o, const Slice* a,
 }
 Status MetaBypassDB::SyncBackup() { return impl_->backup->Sync(); }
 MetaBypassStats MetaBypassDB::GetBackupStats() const {
-  return impl_->backup->Stats();
+  auto stats = impl_->backup->Stats();
+  if (impl_->tier) impl_->tier->AddStats(&stats);
+  stats.sync_write_micros =
+      impl_->sync_write_us.load(std::memory_order_relaxed);
+  return stats;
 }
 Status MetaBypassDB::Close() {
   if (!impl_->db) return impl_->closed;
   Status s = impl_->db->Close();
   impl_->db.reset();
   s.UpdateIfOk(impl_->backup->Stop());
+  if (impl_->tier) s.UpdateIfOk(impl_->tier->Stop());
   impl_->closed = s;
   return impl_->closed;
 }

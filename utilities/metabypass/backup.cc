@@ -248,6 +248,7 @@ Status Backup::Reserve(Channel& channel, size_t charge) {
   return Status::OK();
 }
 void Backup::Fail(const Status& status) {
+  if (storage_->tier()) storage_->tier()->Cancel(status);
   std::lock_guard<std::mutex> publish(publication_mutex_);
   std::lock_guard<std::mutex> lock(mutex_);
   if (stats_.error.ok()) stats_.error = status;
@@ -563,6 +564,15 @@ Status Backup::Publish(const Candidate& candidate) {
               << '\n';
     total += f.second;
   }
+  if (storage_->tier()) {
+    s = storage_->tier()->SaveCheckpoint(point + "/BLOB-MAP", blobs);
+    if (!s.ok()) return s;
+    std::string map;
+    s = Read(disk_, point + "/BLOB-MAP", &map);
+    if (!s.ok()) return s;
+    inventory << "D BLOB-MAP " << map.size() << ' '
+              << crc32c::Value(map.data(), map.size()) << '\n';
+  }
   for (const auto& b : blobs) {
     inventory << "B " << b.first << ' ' << b.second << ' '
               << blob_cache_.at(b.first).crc << '\n';
@@ -838,6 +848,28 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
   if (!s.ok()) return s;
   if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
     return Status::Corruption("published inventory checksum");
+  if (storage.tier()) {
+    std::istringstream maps(inventory);
+    std::string kind, file;
+    uint64_t size;
+    uint32_t crc;
+    bool found = false;
+    while (maps >> kind >> file >> size >> crc) {
+      if (kind != "D") continue;
+      if (found || file != "BLOB-MAP")
+        return Status::Corruption("invalid blob map entry");
+      std::string bytes;
+      s = Read(fs, point + "/BLOB-MAP", &bytes);
+      if (!s.ok()) return s;
+      if (bytes.size() != size ||
+          crc32c::Value(bytes.data(), bytes.size()) != crc)
+        return Status::Corruption("blob map checksum");
+      s = storage.tier()->LoadCheckpoint(point + "/BLOB-MAP");
+      if (!s.ok()) return s;
+      found = true;
+    }
+    if (!found) return Status::Corruption("missing tiered blob map");
+  }
   std::istringstream in(inventory);
   std::string kind, file;
   uint64_t length;
@@ -848,7 +880,9 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
   };
   std::vector<Entry> entries;
   while (in >> kind >> file >> length >> expected) {
-    if (!SafeName(file) || (kind != "I" && kind != "B"))
+    if (!SafeName(file) ||
+        (kind != "I" && kind != "B" &&
+         !(storage.tier() && kind == "D" && file == "BLOB-MAP")))
       return Status::Corruption("invalid inventory");
     std::string path;
     if (kind == "B") {

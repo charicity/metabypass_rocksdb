@@ -22,9 +22,21 @@ struct MetaBypassOptions {
   // Wake the worker on this many pending bytes or after interval_ms.
   size_t batch_bytes = 256 * 1024;
   uint64_t interval_ms = 1000;
+  // Optional fast blob staging. Empty preserves the original storage mode.
+  // With staging enabled, data_dir and backup_dir must survive staging loss.
+  std::string staging_dir;
+  // Required when staging_dir is set. Logical bytes, excluding filesystem
+  // allocation overhead. Oversized batches are rejected before DB writes.
+  uint64_t staging_capacity = 0;
 };
 struct MetaBypassStats {
   Status error;
+  uint64_t staging_bytes = 0;
+  uint64_t peak_staging_bytes = 0;
+  uint64_t pending_blob_bytes = 0;
+  uint64_t migrated_blob_bytes = 0;
+  uint64_t staging_backpressure_micros = 0;
+  uint64_t sync_write_micros = 0;
   uint64_t queued_bytes = 0;
   uint64_t peak_queued_bytes = 0;
   uint64_t backpressure_micros = 0;
@@ -57,13 +69,17 @@ class MetaBypassDB {
                      const std::string& index_dir,
                      std::unique_ptr<MetaBypassDB>* result);
   // Copies only the published native index files to an empty directory and
-  // prepares blob metadata. Does not modify the backup. data_dir must be
+  // prepares blob metadata. Tiered mode also requires empty staging (or a
+  // resumable restore), and reads values remotely without full rehydration.
+  // Does not modify the published backup. data_dir must be
   // exclusively owned; blob files may be sealed during preparation. A failed
   // restore can be retried on its marked destination. Call Open afterwards
   // to execute native RocksDB recovery.
   static Status Restore(const Options& options, const MetaBypassOptions& bypass,
                         const std::string& empty_index_dir);
   ~MetaBypassDB();
+  // With staging enabled, sync=true also waits for a complete remote point.
+  // A failed remote barrier can follow a successful primary mutation.
   Status Put(const WriteOptions&, const Slice& key, const Slice& value);
   Status Delete(const WriteOptions&, const Slice& key);
   Status Write(const WriteOptions&, WriteBatch*);

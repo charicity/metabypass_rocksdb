@@ -1,0 +1,1 @@
+Experimental Metabypass can stage blob writes in a bounded fast directory and asynchronously persist immutable blob extents to slow storage; tiered synchronous writes and backup synchronization wait for a complete remote recovery point.

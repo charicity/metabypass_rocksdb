@@ -27,6 +27,7 @@ class Backup : public FileSystemWrapper {
   Status Stop();
   MetaBypassStats Stats() const;
   Status Error() const;
+  void StorageFailed(const Status& s) { Fail(s); }
   static Status RestoreFiles(FileSystem*, const std::string& backup,
                              const std::string& destination,
                              const SeparatedStorage& storage);

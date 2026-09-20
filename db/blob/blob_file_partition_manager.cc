@@ -531,6 +531,28 @@ Status BlobFilePartitionManager::WriteBlob(
   return Status::OK();
 }
 
+Status BlobFilePartitionManager::SealForSpace(const WriteOptions& options) {
+  MutexLock lock(&mutex_);
+  for (auto& partition : partitions_) {
+    if (!partition->writer) continue;
+    SealedFile file;
+    Status s = SealActiveBlobFile(options, partition.get(), &file);
+    if (!s.ok()) return s;
+    current_generation_sealed_files_.push_back(std::move(file));
+  }
+  for (auto& batch : pending_generations_) {
+    for (auto& deferred : batch.deferred_files) {
+      if (!deferred.writer) continue;
+      SealedFile file;
+      Status s = SealDeferredFile(options, &deferred, &file);
+      if (!s.ok()) return s;
+      batch.sealed_files.push_back(std::move(file));
+    }
+    batch.deferred_files.clear();
+  }
+  return Status::OK();
+}
+
 void BlobFilePartitionManager::RotateCurrentGeneration() {
   MutexLock lock(&mutex_);
 

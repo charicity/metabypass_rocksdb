@@ -4,14 +4,17 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #include "rocksdb/utilities/metabypass.h"
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <thread>
 
 #include "rocksdb/write_batch.h"
 #include "test_util/sync_point.h"
 #include "test_util/testharness.h"
+#include "util/cast_util.h"
 #include "util/random.h"
 #include "utilities/metabypass/backup.h"
 
@@ -108,6 +111,10 @@ class MetaBypassTest : public testing::Test {
         ASSERT_OK(fs_->DeleteFile(path + "/" + f, IOOptions(), nullptr));
     }
     ASSERT_OK(fs_->DeleteDir(path, IOOptions(), nullptr));
+  }
+  void EnableTier(uint64_t capacity = 1024 * 1024) {
+    m_.staging_dir = root_ + "/staging";
+    m_.staging_capacity = capacity;
   }
   void Open() { ASSERT_OK(MetaBypassDB::Open(o_, m_, index_, &db_)); }
   void Check(const std::string& key, const std::string& expected) {
@@ -318,6 +325,417 @@ class MetaBypassTest : public testing::Test {
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
+TEST_F(MetaBypassTest, TieredSyncSurvivesCompleteFastStorageLoss) {
+  EnableTier(1024 * 1024);
+  Open();
+  WriteOptions sync;
+  sync.sync = true;
+  ASSERT_OK(db_->Put(sync, "key", std::string(10000, 'v')));
+  Check("key", std::string(10000, 'v'));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("key", std::string(10000, 'v'));
+  ASSERT_OK(db_->Put(sync, "next", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Open();
+  Check("next", "value");
+}
+
+TEST_F(MetaBypassTest, TieredPressureEvictsWithoutMemtableFlush) {
+  EnableTier(32 * 1024);
+  o_.write_buffer_size = 16 * 1024 * 1024;
+  Open();
+  for (int i = 0; i < 100; ++i)
+    ASSERT_OK(
+        db_->Put(WriteOptions(), std::to_string(i), std::string(1000, 'v')));
+  ASSERT_OK(db_->SyncBackup());
+  for (int i = 0; i < 100; ++i)
+    Check(std::to_string(i), std::string(1000, 'v'));
+  auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  ASSERT_LE(stats.peak_staging_bytes, m_.staging_capacity);
+  ASSERT_GT(stats.migrated_blob_bytes, m_.staging_capacity);
+  ASSERT_GT(stats.staging_backpressure_micros, 0);
+  std::vector<std::string> files;
+  ASSERT_OK(fs_->GetChildren(index_, IOOptions(), &files, nullptr));
+  for (const auto& f : files) ASSERT_EQ(f.find(".sst"), std::string::npos);
+}
+
+TEST_F(MetaBypassTest, TieredMigrationDoesNotBlockAsyncWrites) {
+  EnableTier(1024 * 1024);
+  Open();
+  TestGate gate;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigration",
+                                        [&](void*) { gate.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "a", "one"));
+  Status sync_status;
+  std::atomic<bool> done{false};
+  std::thread sync([&] {
+    sync_status = db_->SyncBackup();
+    done.store(true);
+  });
+  gate.WaitUntilBlocked();
+  Status write = db_->Put(WriteOptions(), "b", "two");
+  const bool returned = done.load();
+  gate.Release();
+  sync.join();
+  ASSERT_OK(write);
+  ASSERT_FALSE(returned);
+  ASSERT_OK(sync_status);
+  Check("b", "two");
+}
+
+TEST_F(MetaBypassTest, TieredMigrationFailurePreservesPublishedPoint) {
+  EnableTier(1024 * 1024);
+  Open();
+  WriteOptions sync;
+  sync.sync = true;
+  ASSERT_OK(db_->Put(sync, "key", "old"));
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierExtentSynced", [](void* p) {
+        *static_cast<Status*>(p) = Status::IOError("injected tier failure");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_FALSE(db_->Put(sync, "key", "new").ok());
+  ASSERT_FALSE(db_->Put(WriteOptions(), "rejected", "value").ok());
+  Check("key", "new");
+  ASSERT_FALSE(db_->SyncBackup().ok());
+  ASSERT_FALSE(db_->Close().ok());
+  db_.reset();
+  SyncPoint::GetInstance()->DisableProcessing();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("key", "old");
+}
+
+TEST_F(MetaBypassTest, TieredCompressionBatchIterationAndReopen) {
+  EnableTier(64 * 1024);
+  o_.blob_compression_type = kSnappyCompression;
+  Open();
+  for (int i = 0; i < 30; ++i) {
+    WriteBatch batch;
+    ASSERT_OK(batch.Put("a", std::string(4000, 'a' + i % 20)));
+    ASSERT_OK(batch.Put("b", std::string(4000, 'b')));
+    ASSERT_OK(batch.Delete("gone"));
+    ASSERT_OK(db_->Write(WriteOptions(), &batch));
+  }
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("a", std::string(4000, 'j'));
+  std::unique_ptr<Iterator> it(db_->NewIterator(ReadOptions()));
+  it->SeekToFirst();
+  ASSERT_TRUE(it->Valid());
+  ASSERT_EQ(it->key(), "a");
+  it->Next();
+  ASSERT_TRUE(it->Valid());
+  ASSERT_EQ(it->key(), "b");
+  it->Next();
+  ASSERT_FALSE(it->Valid());
+  ASSERT_OK(it->status());
+}
+
+#ifndef OS_WIN
+TEST_F(MetaBypassTest, TieredCrashBoundariesAndCompleteFastStorageLoss) {
+  EnableTier(1024 * 1024);
+  for (const std::string stage :
+       {"", "MetaBypass::TierExtentSynced", "MetaBypass::TierDescriptorSynced",
+        "MetaBypass::CandidateSynced", "MetaBypass::BeforePointerReplace",
+        "MetaBypass::PointerSynced", "MetaBypass::TierBeforeEvict"}) {
+    SCOPED_TRACE(stage);
+    db_.reset();
+    Clean(index_);
+    Clean(m_.staging_dir);
+    Clean(m_.data_dir);
+    Clean(m_.backup_dir);
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+      execl(executable.c_str(), executable.c_str(), "--tiered-crash-writer",
+            index_.c_str(), m_.data_dir.c_str(), m_.backup_dir.c_str(),
+            m_.staging_dir.c_str(), stage.c_str(), nullptr);
+      _exit(127);
+    }
+    int status;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFSIGNALED(status));
+    ASSERT_EQ(WTERMSIG(status), SIGKILL);
+    Clean(index_);
+    Clean(m_.staging_dir);
+    ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+    Open();
+    std::string a, b;
+    ASSERT_OK(db_->Get(ReadOptions(), "a", &a));
+    ASSERT_OK(db_->Get(ReadOptions(), "b", &b));
+    ASSERT_EQ(a, b);
+    ASSERT_TRUE(a == "old" || a == "new");
+    if (stage.empty()) {
+      ASSERT_EQ(a, "new");
+    }
+    WriteOptions sync;
+    sync.sync = true;
+    ASSERT_OK(db_->Put(sync, "after", "restore"));
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Open();
+    Check("after", "restore");
+  }
+}
+#endif
+
+TEST_F(MetaBypassTest, TieredRestoreRetryDoesNotChangePublishedSource) {
+  EnableTier(1024 * 1024);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  std::string pointer;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pointer));
+  Clean(index_);
+  Clean(m_.staging_dir);
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierDescriptorSynced", [](void* p) {
+        *static_cast<Status*>(p) = Status::IOError("recovery interruption");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_FALSE(MetaBypassDB::Restore(o_, m_, index_).ok());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  std::string after;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &after));
+  ASSERT_EQ(pointer, after);
+  Open();
+  Check("key", "value");
+}
+
+TEST_F(MetaBypassTest, TieredPublishedExtentCorruptionRejected) {
+  EnableTier(1024 * 1024);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  std::vector<std::string> names;
+  ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
+  bool corrupted = false;
+  for (const auto& name : names) {
+    if (name.compare(0, 8, "segment-") == 0) {
+      ASSERT_OK(metabypass::Write(fs_.get(), m_.data_dir + "/" + name, "bad"));
+      corrupted = true;
+    }
+  }
+  ASSERT_TRUE(corrupted);
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_FALSE(MetaBypassDB::Restore(o_, m_, index_).ok());
+}
+
+TEST_F(MetaBypassTest, TieredConcurrentReadsDuringPressureAndFlush) {
+  EnableTier(32 * 1024);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "seed", std::string(1000, 's')));
+  std::atomic<bool> stop{false};
+  std::vector<std::thread> readers;
+  std::array<Status, 4> results;
+  for (size_t i = 0; i < results.size(); ++i) {
+    readers.emplace_back([&, i] {
+      while (!stop.load()) {
+        std::string value;
+        results[i] = db_->Get(ReadOptions(), "seed", &value);
+        if (!results[i].ok()) break;
+        if (value != std::string(1000, 's')) {
+          results[i] = Status::Corruption("concurrent tier read");
+          break;
+        }
+      }
+    });
+  }
+  Status writes;
+  for (int i = 0; i < 100 && writes.ok(); ++i) {
+    writes =
+        db_->Put(WriteOptions(), std::to_string(i), std::string(1000, 'v'));
+    if (writes.ok() && i % 20 == 0) writes = db_->Flush(FlushOptions());
+  }
+  stop.store(true);
+  for (auto& reader : readers) reader.join();
+  ASSERT_OK(writes);
+  for (const auto& result : results) ASSERT_OK(result);
+  ASSERT_OK(db_->SyncBackup());
+}
+
+TEST_F(MetaBypassTest, TieredReopenArchivesOrphanStaging) {
+  EnableTier(32 * 1024);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "seed", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  // Simulates a newly allocated file left before its WAL record existed.
+  ASSERT_OK(metabypass::Write(fs_.get(), m_.staging_dir + "/999999.blob",
+                              std::string(20000, 'x')));
+  Open();
+  Check("seed", "value");
+  for (int i = 0; i < 30; ++i)
+    ASSERT_OK(
+        db_->Put(WriteOptions(), std::to_string(i), std::string(1000, 'v')));
+  ASSERT_OK(db_->SyncBackup());
+}
+
+TEST_F(MetaBypassTest, TieredRandomizedRoundTrip) {
+  EnableTier(64 * 1024);
+  const uint32_t seed = o_.env->NowMicros() & 0xffffffff;
+  SCOPED_TRACE("seed=" + std::to_string(seed));
+  Random random(seed);
+  std::map<std::string, std::string> expected;
+  Open();
+  for (int step = 0; step < 150; ++step) {
+    WriteBatch batch;
+    for (int j = 0; j < 2; ++j) {
+      const std::string key = std::to_string(random.Uniform(30));
+      if (random.OneIn(4)) {
+        ASSERT_OK(batch.Delete(key));
+        expected.erase(key);
+      } else {
+        const std::string value(random.Uniform(1000), 'a' + random.Uniform(26));
+        ASSERT_OK(batch.Put(key, value));
+        expected[key] = value;
+      }
+    }
+    WriteOptions write;
+    write.sync = step % 31 == 0;
+    ASSERT_OK(db_->Write(write, &batch));
+    if (step % 23 == 0) {
+      ASSERT_OK(db_->Flush(FlushOptions()));
+    }
+  }
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  std::unique_ptr<Iterator> it(db_->NewIterator(ReadOptions()));
+  it->SeekToFirst();
+  for (const auto& entry : expected) {
+    ASSERT_TRUE(it->Valid());
+    ASSERT_EQ(it->key(), entry.first);
+    ASSERT_EQ(it->value(), entry.second);
+    it->Next();
+  }
+  ASSERT_FALSE(it->Valid());
+  ASSERT_OK(it->status());
+}
+
+TEST_F(MetaBypassTest, TieredRejectsFormatChangesAndInvalidBudget) {
+  EnableTier(0);
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsInvalidArgument());
+  ASSERT_TRUE(fs_->FileExists(m_.data_dir, IOOptions(), nullptr).IsNotFound());
+  m_.staging_dir.clear();
+  Open();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  EnableTier();
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsInvalidArgument());
+}
+
+TEST_F(MetaBypassTest, TieredCloseWithoutFlushingActiveBlob) {
+  EnableTier();
+  o_.avoid_flush_during_shutdown = true;
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("key", "value");
+}
+
+TEST_F(MetaBypassTest, TieredRestoreRejectsForeignStagingIdentity) {
+  EnableTier();
+  Open();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(metabypass::EnsureDir(fs_.get(), m_.staging_dir));
+  const std::string marker = m_.staging_dir + "/METABYPASS-IDENTITY";
+  ASSERT_OK(metabypass::Write(fs_.get(), marker, "foreign"));
+  ASSERT_TRUE(MetaBypassDB::Restore(o_, m_, index_).IsCorruption());
+  std::string owner;
+  ASSERT_OK(metabypass::Read(fs_.get(), marker, &owner));
+  ASSERT_EQ(owner, "foreign");
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/METABYPASS-IDENTITY",
+                             &owner));
+  ASSERT_OK(metabypass::Write(fs_.get(), marker, owner));
+  auto failing = std::make_shared<MarkerFailureFileSystem>(fs_);
+  failing->fail_path = marker;
+  auto env = NewCompositeEnv(failing);
+  Options restore_options = o_;
+  restore_options.env = env.get();
+  ASSERT_OK(MetaBypassDB::Restore(restore_options, m_, index_));
+  ASSERT_EQ(failing->failures, 0);
+}
+
+TEST_F(MetaBypassTest, TieredRequestedDependenciesPreemptBackgroundCopy) {
+  EnableTier(8 * 1024 * 1024);
+  o_.write_buffer_size = 16 * 1024 * 1024;
+  o_.blob_file_size = 2 * 1024 * 1024;
+  Open();
+  TestGate validation, extent, request;
+  std::atomic<bool> first{true};
+  std::atomic<int> yields{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) { validation.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierExtentSynced",
+                                        [&](void*) {
+                                          if (first.exchange(false))
+                                            extent.Block();
+                                        });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierPersistRequested",
+                                        [&](void*) { request.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationYield",
+                                        [&](void*) { ++yields; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "a", std::string(1024 * 1024, 'a')));
+  ASSERT_OK(db_->Put(WriteOptions(), "b", std::string(1024 * 1024, 'b')));
+  extent.WaitUntilBlocked();
+  Status result;
+  std::thread sync([&] { result = db_->SyncBackup(); });
+  validation.Release();
+  request.WaitUntilBlocked();
+  request.Release();
+  extent.Release();
+  sync.join();
+  ASSERT_OK(result);
+  ASSERT_GT(yields.load(), 0);
+  Check("a", std::string(1024 * 1024, 'a'));
+  Check("b", std::string(1024 * 1024, 'b'));
+}
+
+TEST_F(MetaBypassTest, TieredRejectsOversizedBatchBeforeWrite) {
+  EnableTier(8192);
+  Open();
+  ASSERT_TRUE(db_->Put(WriteOptions(), "too-large", std::string(8192, 'v'))
+                  .IsInvalidArgument());
+  std::string value;
+  ASSERT_TRUE(db_->Get(ReadOptions(), "too-large", &value).IsNotFound());
+  ASSERT_OK(db_->Put(WriteOptions(), "small", "value"));
+}
+
 TEST_F(MetaBypassTest, CloseRestoreAppendAndReopen) {
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "a", "old"));
@@ -1208,6 +1626,43 @@ int main(int argc, char** argv) {
   using ROCKSDB_NAMESPACE::SyncPoint;
   using ROCKSDB_NAMESPACE::WriteBatch;
   using ROCKSDB_NAMESPACE::WriteOptions;
+#ifndef OS_WIN
+  if (argc == 7 && std::string(argv[1]) == "--tiered-crash-writer") {
+    Options options;
+    options.create_if_missing = true;
+    options.allow_concurrent_memtable_write = false;
+    MetaBypassOptions m;
+    m.data_dir = argv[3];
+    m.backup_dir = argv[4];
+    m.staging_dir = argv[5];
+    m.staging_capacity = 1024 * 1024;
+    std::unique_ptr<MetaBypassDB> db;
+    Status s = MetaBypassDB::Open(options, m, argv[2], &db);
+    WriteOptions sync;
+    sync.sync = true;
+    WriteBatch batch;
+    if (s.ok()) s = batch.Put("a", "old");
+    if (s.ok()) s = batch.Put("b", "old");
+    if (s.ok()) s = db->Write(sync, &batch);
+    if (argv[6][0]) {
+      SyncPoint::GetInstance()->SetCallBack(
+          argv[6], [](void*) { kill(getpid(), SIGKILL); });
+      SyncPoint::GetInstance()->EnableProcessing();
+    }
+    batch.Clear();
+    if (s.ok()) s = batch.Put("a", "new");
+    if (s.ok()) s = batch.Put("b", "new");
+    if (s.ok()) s = db->Write(sync, &batch);
+    if (s.ok()) s = db->Flush(ROCKSDB_NAMESPACE::FlushOptions());
+    if (s.ok()) s = db->SyncBackup();
+    if (!s.ok()) {
+      fprintf(stderr, "%s\n", s.ToString().c_str());
+      return 2;
+    }
+    kill(getpid(), SIGKILL);
+    return 3;
+  }
+#endif
 #ifndef OS_WIN
   if ((argc == 5 || argc == 6) &&
       std::string(argv[1]) == "--metabypass-crash-writer") {

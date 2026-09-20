@@ -14,6 +14,10 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+// Validates records and identifies an optional valid footer. Recovery may
+// discard bytes only after the required prefix.
+Status ScanBlob(FileSystem*, const std::string&, uint64_t required,
+                uint64_t* end, uint64_t* count, bool* sealed);
 Status Read(FileSystem* fs, const std::string& path, std::string* data);
 Status Write(FileSystem* fs, const std::string& path, const Slice& data);
 Status EnsureDir(FileSystem* fs, const std::string& path);

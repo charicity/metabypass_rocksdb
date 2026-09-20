@@ -329,6 +329,7 @@ cpp_library_wrapper(name="rocksdb_lib", srcs=[
         "utilities/metabypass/metabypass_db.cc",
         "utilities/metabypass/native_files.cc",
         "utilities/metabypass/separated_storage.cc",
+        "utilities/metabypass/tiered_storage.cc",
         "utilities/object_registry.cc",
         "utilities/option_change_migration/option_change_migration.cc",
         "utilities/options/options_util.cc",

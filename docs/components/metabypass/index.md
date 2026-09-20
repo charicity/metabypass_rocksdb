@@ -255,3 +255,8 @@ For the fresh four-version comparison including backup disabled, see
 
 See [identity retry and option validation fixes](review-fixes.md) for the
 review findings, regression coverage and verification results.
+
+## Strong tiered blob storage
+
+See [strong tiered storage](tiered-storage.md) for the optional fast staging
+layer, remote synchronous-write contract, capacity policy and recovery protocol.

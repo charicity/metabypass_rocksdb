@@ -1,0 +1,4779 @@
+{
+  "data_root": "/tmp/metabypass-versions-4kibi3g2",
+  "binaries": {
+    "original": {
+      "path": "/tmp/metabypass-scan-ablation-bin/baseline",
+      "sha256": "37c6b42c10ebf0cbc92c127ce5eaa52928b81493c8d0b3c7ccac02394189a3a5"
+    },
+    "incremental": {
+      "path": "/tmp/metabypass-scan-ablation-bin/async-incremental",
+      "sha256": "8a77199fbc44b219e59c6f84a3a56f99f38c76d526dd4557998851f830adabfe"
+    },
+    "fixed": {
+      "path": "/tmp/mb-notify-fixed-db-bench",
+      "sha256": "207e2c90cfd3413b94bb700b4f877a95969ecc961f7c0fb6e06b49c25bf37ea0"
+    }
+  },
+  "runs": [
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/warmup-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/warmup-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/warmup-original/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.27063925901893526,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=20211 sync_us=47835 close_us=72386 backpressure_us=0 last_point_build_us=53252 last_point_lag_us=72096 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104424 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 20211,
+        "sync_us": 47835,
+        "close_us": 72386,
+        "backpressure_us": 0,
+        "last_point_build_us": 53252,
+        "last_point_lag_us": 72096,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104424
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/warmup-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/warmup-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/warmup-incremental/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.3399012230220251,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=24508 sync_us=77430 close_us=92574 backpressure_us=0 last_point_build_us=73383 last_point_lag_us=92112 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104422 validated_blob_bytes=1058952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 24508,
+        "sync_us": 77430,
+        "close_us": 92574,
+        "backpressure_us": 0,
+        "last_point_build_us": 73383,
+        "last_point_lag_us": 92112,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104422,
+        "validated_blob_bytes": 1058952,
+        "reused_tables": 0
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/warmup-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/warmup-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/warmup-fixed/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.3150727580068633,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=17219 sync_us=66788 close_us=90481 backpressure_us=0 last_point_build_us=71261 last_point_lag_us=90046 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104422 validated_blob_bytes=1058952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 17219,
+        "sync_us": 66788,
+        "close_us": 90481,
+        "backpressure_us": 0,
+        "last_point_build_us": 71261,
+        "last_point_lag_us": 90046,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104422,
+        "validated_blob_bytes": 1058952,
+        "reused_tables": 0
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7774349150131457,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=428519 sync_us=545986 close_us=676277 backpressure_us=0 last_point_build_us=313429 last_point_lag_us=644954 queue_peak_bytes=3675819 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 428519,
+        "sync_us": 545986,
+        "close_us": 676277,
+        "backpressure_us": 0,
+        "last_point_build_us": 313429,
+        "last_point_lag_us": 644954,
+        "queue_peak_bytes": 3675819,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 1650782,
+        "restore_us": 661633
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.9913337369798683,
+      "exit": 0,
+      "stdout": "metabypass restore_us=661633 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 661633
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.999482840008568,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171950 sync_us=9 close_us=316053 backpressure_us=0 last_point_build_us=315284 last_point_lag_us=315568 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171950,
+        "sync_us": 9,
+        "close_us": 316053,
+        "backpressure_us": 0,
+        "last_point_build_us": 315284,
+        "last_point_lag_us": 315568,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3403699760092422,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=607850 sync_us=194538 close_us=392574 backpressure_us=0 last_point_build_us=272276 last_point_lag_us=360276 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 607850,
+        "sync_us": 194538,
+        "close_us": 392574,
+        "backpressure_us": 0,
+        "last_point_build_us": 272276,
+        "last_point_lag_us": 360276,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1194962,
+        "restore_us": 651162
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.9741775949951261,
+      "exit": 0,
+      "stdout": "metabypass restore_us=651162 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 651162
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7581165680312552,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171790 sync_us=15 close_us=66584 backpressure_us=0 last_point_build_us=65800 last_point_lag_us=66115 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171790,
+        "sync_us": 15,
+        "close_us": 66584,
+        "backpressure_us": 0,
+        "last_point_build_us": 65800,
+        "last_point_lag_us": 66115,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2040765379788354,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=431346 sync_us=235454 close_us=398316 backpressure_us=0 last_point_build_us=272156 last_point_lag_us=365781 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 431346,
+        "sync_us": 235454,
+        "close_us": 398316,
+        "backpressure_us": 0,
+        "last_point_build_us": 272156,
+        "last_point_lag_us": 365781,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1065116,
+        "restore_us": 673334
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0129727799794637,
+      "exit": 0,
+      "stdout": "metabypass restore_us=673334 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 673334
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7597805170225911,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173169 sync_us=1 close_us=67335 backpressure_us=0 last_point_build_us=66560 last_point_lag_us=66873 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173169,
+        "sync_us": 1,
+        "close_us": 67335,
+        "backpressure_us": 0,
+        "last_point_build_us": 66560,
+        "last_point_lag_us": 66873,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.4192679899861105,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=669632 sync_us=205007 close_us=396807 backpressure_us=0 last_point_build_us=278306 last_point_lag_us=365086 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 669632,
+        "sync_us": 205007,
+        "close_us": 396807,
+        "backpressure_us": 0,
+        "last_point_build_us": 278306,
+        "last_point_lag_us": 365086,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1271446,
+        "restore_us": 665519
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.9983926590066403,
+      "exit": 0,
+      "stdout": "metabypass restore_us=665519 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 665519
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7598703999537975,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173807 sync_us=15 close_us=66671 backpressure_us=0 last_point_build_us=65501 last_point_lag_us=65908 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173807,
+        "sync_us": 15,
+        "close_us": 66671,
+        "backpressure_us": 0,
+        "last_point_build_us": 65501,
+        "last_point_lag_us": 65908,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2368659689673223,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=431697 sync_us=262730 close_us=400689 backpressure_us=0 last_point_build_us=276093 last_point_lag_us=367488 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 431697,
+        "sync_us": 262730,
+        "close_us": 400689,
+        "backpressure_us": 0,
+        "last_point_build_us": 276093,
+        "last_point_lag_us": 367488,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1095116,
+        "restore_us": 666412
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.002450502011925,
+      "exit": 0,
+      "stdout": "metabypass restore_us=666412 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 666412
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.763779237982817,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=172965 sync_us=1 close_us=65482 backpressure_us=0 last_point_build_us=64774 last_point_lag_us=65063 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 172965,
+        "sync_us": 1,
+        "close_us": 65482,
+        "backpressure_us": 0,
+        "last_point_build_us": 64774,
+        "last_point_lag_us": 65063,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8112213010317646,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=431621 sync_us=566686 close_us=688549 backpressure_us=0 last_point_build_us=321145 last_point_lag_us=665007 queue_peak_bytes=3879302 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 431621,
+        "sync_us": 566686,
+        "close_us": 688549,
+        "backpressure_us": 0,
+        "last_point_build_us": 321145,
+        "last_point_lag_us": 665007,
+        "queue_peak_bytes": 3879302,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 1686856,
+        "restore_us": 672230
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0111955160391517,
+      "exit": 0,
+      "stdout": "metabypass restore_us=672230 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 672230
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.9997839219868183,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173853 sync_us=9 close_us=320683 backpressure_us=0 last_point_build_us=319952 last_point_lag_us=320239 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173853,
+        "sync_us": 9,
+        "close_us": 320683,
+        "backpressure_us": 0,
+        "last_point_build_us": 319952,
+        "last_point_lag_us": 320239,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.237339214014355,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=427436 sync_us=267007 close_us=404686 backpressure_us=0 last_point_build_us=278185 last_point_lag_us=372904 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 427436,
+        "sync_us": 267007,
+        "close_us": 404686,
+        "backpressure_us": 0,
+        "last_point_build_us": 278185,
+        "last_point_lag_us": 372904,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1099129,
+        "restore_us": 669841
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.009827364992816,
+      "exit": 0,
+      "stdout": "metabypass restore_us=669841 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 669841
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7581822630017996,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174287 sync_us=1 close_us=66377 backpressure_us=0 last_point_build_us=65535 last_point_lag_us=65848 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174287,
+        "sync_us": 1,
+        "close_us": 66377,
+        "backpressure_us": 0,
+        "last_point_build_us": 65535,
+        "last_point_lag_us": 65848,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8565719210309908,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=451835 sync_us=562374 close_us=718625 backpressure_us=0 last_point_build_us=345151 last_point_lag_us=685829 queue_peak_bytes=3733721 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 451835,
+        "sync_us": 562374,
+        "close_us": 718625,
+        "backpressure_us": 0,
+        "last_point_build_us": 345151,
+        "last_point_lag_us": 685829,
+        "queue_peak_bytes": 3733721,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 1732834,
+        "restore_us": 671304
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.010771851055324,
+      "exit": 0,
+      "stdout": "metabypass restore_us=671304 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 671304
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0246207549935207,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=181646 sync_us=10 close_us=324662 backpressure_us=0 last_point_build_us=323909 last_point_lag_us=324194 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 181646,
+        "sync_us": 10,
+        "close_us": 324662,
+        "backpressure_us": 0,
+        "last_point_build_us": 323909,
+        "last_point_lag_us": 324194,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.348596609022934,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=592434 sync_us=208039 close_us=402620 backpressure_us=0 last_point_build_us=281892 last_point_lag_us=367640 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 592434,
+        "sync_us": 208039,
+        "close_us": 402620,
+        "backpressure_us": 0,
+        "last_point_build_us": 281892,
+        "last_point_lag_us": 367640,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1203093,
+        "restore_us": 675724
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0155614140094258,
+      "exit": 0,
+      "stdout": "metabypass restore_us=675724 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 675724
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7733035539858975,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174678 sync_us=18 close_us=65786 backpressure_us=0 last_point_build_us=64942 last_point_lag_us=65274 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174678,
+        "sync_us": 18,
+        "close_us": 65786,
+        "backpressure_us": 0,
+        "last_point_build_us": 64942,
+        "last_point_lag_us": 65274,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8065455460455269,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=450756 sync_us=543571 close_us=684214 backpressure_us=0 last_point_build_us=316759 last_point_lag_us=652109 queue_peak_bytes=3691289 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 450756,
+        "sync_us": 543571,
+        "close_us": 684214,
+        "backpressure_us": 0,
+        "last_point_build_us": 316759,
+        "last_point_lag_us": 652109,
+        "queue_peak_bytes": 3691289,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1678541,
+        "restore_us": 670743
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0148806319921277,
+      "exit": 0,
+      "stdout": "metabypass restore_us=670743 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 670743
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0066426529665478,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=178257 sync_us=10 close_us=318162 backpressure_us=0 last_point_build_us=317386 last_point_lag_us=317673 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 178257,
+        "sync_us": 10,
+        "close_us": 318162,
+        "backpressure_us": 0,
+        "last_point_build_us": 317386,
+        "last_point_lag_us": 317673,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3268447820446454,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=574442 sync_us=204083 close_us=404569 backpressure_us=0 last_point_build_us=280169 last_point_lag_us=371318 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 574442,
+        "sync_us": 204083,
+        "close_us": 404569,
+        "backpressure_us": 0,
+        "last_point_build_us": 280169,
+        "last_point_lag_us": 371318,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1183094,
+        "restore_us": 670017
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0046721860417165,
+      "exit": 0,
+      "stdout": "metabypass restore_us=670017 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 670017
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7663739680428989,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176016 sync_us=16 close_us=66573 backpressure_us=0 last_point_build_us=65654 last_point_lag_us=66004 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176016,
+        "sync_us": 16,
+        "close_us": 66573,
+        "backpressure_us": 0,
+        "last_point_build_us": 65654,
+        "last_point_lag_us": 66004,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2573795699863695,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=478879 sync_us=229523 close_us=402891 backpressure_us=0 last_point_build_us=278180 last_point_lag_us=369569 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 478879,
+        "sync_us": 229523,
+        "close_us": 402891,
+        "backpressure_us": 0,
+        "last_point_build_us": 278180,
+        "last_point_lag_us": 369569,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1111293,
+        "restore_us": 688684
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.023407627013512,
+      "exit": 0,
+      "stdout": "metabypass restore_us=688684 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 688684
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7633078710059635,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175000 sync_us=1 close_us=67494 backpressure_us=0 last_point_build_us=66708 last_point_lag_us=67037 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175000,
+        "sync_us": 1,
+        "close_us": 67494,
+        "backpressure_us": 0,
+        "last_point_build_us": 66708,
+        "last_point_lag_us": 67037,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3301874300232157,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=596154 sync_us=180314 close_us=406561 backpressure_us=0 last_point_build_us=279778 last_point_lag_us=374511 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 596154,
+        "sync_us": 180314,
+        "close_us": 406561,
+        "backpressure_us": 0,
+        "last_point_build_us": 279778,
+        "last_point_lag_us": 374511,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1183029,
+        "restore_us": 692034
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0369901189696975,
+      "exit": 0,
+      "stdout": "metabypass restore_us=692034 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 692034
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7638188359560445,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173967 sync_us=15 close_us=66464 backpressure_us=0 last_point_build_us=65614 last_point_lag_us=65958 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173967,
+        "sync_us": 15,
+        "close_us": 66464,
+        "backpressure_us": 0,
+        "last_point_build_us": 65614,
+        "last_point_lag_us": 65958,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2116538590053096,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=410655 sync_us=267694 close_us=402644 backpressure_us=0 last_point_build_us=278076 last_point_lag_us=369286 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 410655,
+        "sync_us": 267694,
+        "close_us": 402644,
+        "backpressure_us": 0,
+        "last_point_build_us": 278076,
+        "last_point_lag_us": 369286,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1080993,
+        "restore_us": 685720
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0203679740079679,
+      "exit": 0,
+      "stdout": "metabypass restore_us=685720 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 685720
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7607837180257775,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174728 sync_us=1 close_us=65385 backpressure_us=0 last_point_build_us=64615 last_point_lag_us=64927 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174728,
+        "sync_us": 1,
+        "close_us": 65385,
+        "backpressure_us": 0,
+        "last_point_build_us": 64615,
+        "last_point_lag_us": 64927,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7696740219835192,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=421721 sync_us=542522 close_us=678461 backpressure_us=0 last_point_build_us=317147 last_point_lag_us=650447 queue_peak_bytes=3813418 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 421721,
+        "sync_us": 542522,
+        "close_us": 678461,
+        "backpressure_us": 0,
+        "last_point_build_us": 317147,
+        "last_point_lag_us": 650447,
+        "queue_peak_bytes": 3813418,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1642704,
+        "restore_us": 667426
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0026834909804165,
+      "exit": 0,
+      "stdout": "metabypass restore_us=667426 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 667426
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_default-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.005921050964389,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=172780 sync_us=8 close_us=322141 backpressure_us=0 last_point_build_us=321343 last_point_lag_us=321617 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 172780,
+        "sync_us": 8,
+        "close_us": 322141,
+        "backpressure_us": 0,
+        "last_point_build_us": 321343,
+        "last_point_lag_us": 321617,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.6152312500053085,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1758965 sync_us=2351501 close_us=2375966 backpressure_us=0 last_point_build_us=1130352 last_point_lag_us=2326795 queue_peak_bytes=16819398 mirrored_bytes=11631177 retained_index_bytes=15983624 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1758965,
+        "sync_us": 2351501,
+        "close_us": 2375966,
+        "backpressure_us": 0,
+        "last_point_build_us": 1130352,
+        "last_point_lag_us": 2326795,
+        "queue_peak_bytes": 16819398,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "write_sync_close_us": 6486432,
+        "restore_us": 2095752
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2491603789967485,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2095752 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2095752
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4233130399952643,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=684053 sync_us=15 close_us=1116821 backpressure_us=0 last_point_build_us=1115960 last_point_lag_us=1116289 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 684053,
+        "sync_us": 15,
+        "close_us": 1116821,
+        "backpressure_us": 0,
+        "last_point_build_us": 1115960,
+        "last_point_lag_us": 1116289,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.819732790987473,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2277382 sync_us=329053 close_us=1069817 backpressure_us=0 last_point_build_us=921317 last_point_lag_us=1015732 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2277382,
+        "sync_us": 329053,
+        "close_us": 1069817,
+        "backpressure_us": 0,
+        "last_point_build_us": 921317,
+        "last_point_lag_us": 1015732,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3676252,
+        "restore_us": 2087329
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2349244480137713,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2087329 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2087329
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.31563287100289,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=677094 sync_us=20 close_us=67781 backpressure_us=0 last_point_build_us=66903 last_point_lag_us=67255 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 677094,
+        "sync_us": 20,
+        "close_us": 67781,
+        "backpressure_us": 0,
+        "last_point_build_us": 66903,
+        "last_point_lag_us": 67255,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.342185557994526,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1651566 sync_us=485546 close_us=1059637 backpressure_us=0 last_point_build_us=914774 last_point_lag_us=1010953 queue_peak_bytes=3285695 mirrored_bytes=11631177 retained_index_bytes=15983625 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1651566,
+        "sync_us": 485546,
+        "close_us": 1059637,
+        "backpressure_us": 0,
+        "last_point_build_us": 914774,
+        "last_point_lag_us": 1010953,
+        "queue_peak_bytes": 3285695,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3196749,
+        "restore_us": 2060749
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.190024792973418,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2060749 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2060749
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-0-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3301072050235234,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=679038 sync_us=1 close_us=68496 backpressure_us=0 last_point_build_us=67616 last_point_lag_us=67958 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 679038,
+        "sync_us": 1,
+        "close_us": 68496,
+        "backpressure_us": 0,
+        "last_point_build_us": 67616,
+        "last_point_lag_us": 67958,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.9441285339999013,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2486923 sync_us=233204 close_us=1079908 backpressure_us=0 last_point_build_us=928880 last_point_lag_us=1027493 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2486923,
+        "sync_us": 233204,
+        "close_us": 1079908,
+        "backpressure_us": 0,
+        "last_point_build_us": 928880,
+        "last_point_lag_us": 1027493,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3800035,
+        "restore_us": 2086841
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2128222419996746,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2086841 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2086841
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.323103430971969,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=665159 sync_us=19 close_us=68708 backpressure_us=0 last_point_build_us=67729 last_point_lag_us=68070 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 665159,
+        "sync_us": 19,
+        "close_us": 68708,
+        "backpressure_us": 0,
+        "last_point_build_us": 67729,
+        "last_point_lag_us": 68070,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.57415513304295,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1955698 sync_us=420364 close_us=1046822 backpressure_us=0 last_point_build_us=902229 last_point_lag_us=998879 queue_peak_bytes=3146166 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1955698,
+        "sync_us": 420364,
+        "close_us": 1046822,
+        "backpressure_us": 0,
+        "last_point_build_us": 902229,
+        "last_point_lag_us": 998879,
+        "queue_peak_bytes": 3146166,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3422884,
+        "restore_us": 2120223
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2874081030022353,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2120223 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2120223
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.328611204982735,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=668296 sync_us=1 close_us=67524 backpressure_us=0 last_point_build_us=66575 last_point_lag_us=66901 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 668296,
+        "sync_us": 1,
+        "close_us": 67524,
+        "backpressure_us": 0,
+        "last_point_build_us": 66575,
+        "last_point_lag_us": 66901,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.551023188047111,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1804668 sync_us=2229723 close_us=2390336 backpressure_us=0 last_point_build_us=1138432 last_point_lag_us=2340494 queue_peak_bytes=15581480 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1804668,
+        "sync_us": 2229723,
+        "close_us": 2390336,
+        "backpressure_us": 0,
+        "last_point_build_us": 1138432,
+        "last_point_lag_us": 2340494,
+        "queue_peak_bytes": 15581480,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6424727,
+        "restore_us": 2107516
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.244214354956057,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2107516 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2107516
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-1-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4593597899656743,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=695697 sync_us=12 close_us=1127216 backpressure_us=0 last_point_build_us=1126314 last_point_lag_us=1126651 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 695697,
+        "sync_us": 12,
+        "close_us": 1127216,
+        "backpressure_us": 0,
+        "last_point_build_us": 1126314,
+        "last_point_lag_us": 1126651,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.462113309011329,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1826905 sync_us=444747 close_us=1048085 backpressure_us=0 last_point_build_us=899089 last_point_lag_us=1000292 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1826905,
+        "sync_us": 444747,
+        "close_us": 1048085,
+        "backpressure_us": 0,
+        "last_point_build_us": 899089,
+        "last_point_lag_us": 1000292,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3319737,
+        "restore_us": 2074409
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2211996379774064,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2074409 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2074409
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3480526790372096,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=682661 sync_us=1 close_us=66896 backpressure_us=0 last_point_build_us=65931 last_point_lag_us=66266 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 682661,
+        "sync_us": 1,
+        "close_us": 66896,
+        "backpressure_us": 0,
+        "last_point_build_us": 65931,
+        "last_point_lag_us": 66266,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.45831985201221,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1676209 sync_us=2271554 close_us=2383223 backpressure_us=0 last_point_build_us=1134983 last_point_lag_us=2334473 queue_peak_bytes=16140945 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1676209,
+        "sync_us": 2271554,
+        "close_us": 2383223,
+        "backpressure_us": 0,
+        "last_point_build_us": 1134983,
+        "last_point_lag_us": 2334473,
+        "queue_peak_bytes": 16140945,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6330986,
+        "restore_us": 2081078
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2221342159900814,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2081078 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2081078
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4280375839443877,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=666972 sync_us=11 close_us=1162861 backpressure_us=0 last_point_build_us=1161853 last_point_lag_us=1162256 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 666972,
+        "sync_us": 11,
+        "close_us": 1162861,
+        "backpressure_us": 0,
+        "last_point_build_us": 1161853,
+        "last_point_lag_us": 1162256,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.9448828620370477,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2483967 sync_us=228149 close_us=1087546 backpressure_us=0 last_point_build_us=932569 last_point_lag_us=1035644 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983619 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2483967,
+        "sync_us": 228149,
+        "close_us": 1087546,
+        "backpressure_us": 0,
+        "last_point_build_us": 932569,
+        "last_point_lag_us": 1035644,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983619,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3799662,
+        "restore_us": 2081716
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.212505917006638,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2081716 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2081716
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3434276790358126,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=670124 sync_us=26 close_us=67316 backpressure_us=0 last_point_build_us=66375 last_point_lag_us=66743 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056432 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 670124,
+        "sync_us": 26,
+        "close_us": 67316,
+        "backpressure_us": 0,
+        "last_point_build_us": 66375,
+        "last_point_lag_us": 66743,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056432,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.432992482034024,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1828467 sync_us=2096766 close_us=2375730 backpressure_us=0 last_point_build_us=1131971 last_point_lag_us=2328672 queue_peak_bytes=14417539 mirrored_bytes=11631177 retained_index_bytes=15983621 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1828467,
+        "sync_us": 2096766,
+        "close_us": 2375730,
+        "backpressure_us": 0,
+        "last_point_build_us": 1131971,
+        "last_point_lag_us": 2328672,
+        "queue_peak_bytes": 14417539,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983621,
+        "write_sync_close_us": 6300963,
+        "restore_us": 2071818
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.211073047015816,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2071818 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2071818
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4168674429529347,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=702738 sync_us=14 close_us=1103063 backpressure_us=0 last_point_build_us=1102163 last_point_lag_us=1102489 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056432 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 702738,
+        "sync_us": 14,
+        "close_us": 1103063,
+        "backpressure_us": 0,
+        "last_point_build_us": 1102163,
+        "last_point_lag_us": 1102489,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056432
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.8368639840045944,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2406206 sync_us=222033 close_us=1052962 backpressure_us=0 last_point_build_us=904489 last_point_lag_us=1006961 queue_peak_bytes=3285695 mirrored_bytes=11631177 retained_index_bytes=15983625 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2406206,
+        "sync_us": 222033,
+        "close_us": 1052962,
+        "backpressure_us": 0,
+        "last_point_build_us": 904489,
+        "last_point_lag_us": 1006961,
+        "queue_peak_bytes": 3285695,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3681201,
+        "restore_us": 2080592
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.221339858020656,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2080592 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2080592
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.331508570990991,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=675730 sync_us=17 close_us=68179 backpressure_us=0 last_point_build_us=67186 last_point_lag_us=67554 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 675730,
+        "sync_us": 17,
+        "close_us": 68179,
+        "backpressure_us": 0,
+        "last_point_build_us": 67186,
+        "last_point_lag_us": 67554,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3773636700352654,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1711112 sync_us=462691 close_us=1059089 backpressure_us=0 last_point_build_us=912116 last_point_lag_us=1008791 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983625 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1711112,
+        "sync_us": 462691,
+        "close_us": 1059089,
+        "backpressure_us": 0,
+        "last_point_build_us": 912116,
+        "last_point_lag_us": 1008791,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3232892,
+        "restore_us": 2103668
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.246810321987141,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2103668 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2103668
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-3-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3482793319853954,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=680356 sync_us=1 close_us=67546 backpressure_us=0 last_point_build_us=66483 last_point_lag_us=66836 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 680356,
+        "sync_us": 1,
+        "close_us": 67546,
+        "backpressure_us": 0,
+        "last_point_build_us": 66483,
+        "last_point_lag_us": 66836,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.7734790240065195,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2348138 sync_us=226790 close_us=1052877 backpressure_us=0 last_point_build_us=906124 last_point_lag_us=1002048 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983623 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2348138,
+        "sync_us": 226790,
+        "close_us": 1052877,
+        "backpressure_us": 0,
+        "last_point_build_us": 906124,
+        "last_point_lag_us": 1002048,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983623,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3627805,
+        "restore_us": 2092662
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2386866440065205,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2092662 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2092662
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3563915359554812,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=698909 sync_us=18 close_us=67182 backpressure_us=0 last_point_build_us=66183 last_point_lag_us=66522 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056434 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 698909,
+        "sync_us": 18,
+        "close_us": 67182,
+        "backpressure_us": 0,
+        "last_point_build_us": 66183,
+        "last_point_lag_us": 66522,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056434,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3786646369844675,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1684953 sync_us=498689 close_us=1047122 backpressure_us=0 last_point_build_us=903924 last_point_lag_us=997007 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1684953,
+        "sync_us": 498689,
+        "close_us": 1047122,
+        "backpressure_us": 0,
+        "last_point_build_us": 903924,
+        "last_point_lag_us": 997007,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3230764,
+        "restore_us": 2099874
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.230717940023169,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2099874 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2099874
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-fixed/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.338612366002053,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=682077 sync_us=2 close_us=68241 backpressure_us=0 last_point_build_us=67165 last_point_lag_us=67536 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 682077,
+        "sync_us": 2,
+        "close_us": 68241,
+        "backpressure_us": 0,
+        "last_point_build_us": 67165,
+        "last_point_lag_us": 67536,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.554682562011294,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1673412 sync_us=2369592 close_us=2385777 backpressure_us=0 last_point_build_us=1132568 last_point_lag_us=2337733 queue_peak_bytes=16467733 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1673412,
+        "sync_us": 2369592,
+        "close_us": 2385777,
+        "backpressure_us": 0,
+        "last_point_build_us": 1132568,
+        "last_point_lag_us": 2337733,
+        "queue_peak_bytes": 16467733,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6428781,
+        "restore_us": 2083723
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2165451390319504,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2083723 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2083723
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/200k_default-4-original/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4454613890266046,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=702173 sync_us=12 close_us=1126366 backpressure_us=0 last_point_build_us=1125607 last_point_lag_us=1125917 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 702173,
+        "sync_us": 12,
+        "close_us": 1126366,
+        "backpressure_us": 0,
+        "last_point_build_us": 1125607,
+        "last_point_lag_us": 1125917,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.222042898007203,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=790518 sync_us=601787 close_us=702404 backpressure_us=287886 last_point_build_us=327339 last_point_lag_us=668024 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 790518,
+        "sync_us": 601787,
+        "close_us": 702404,
+        "backpressure_us": 287886,
+        "last_point_build_us": 327339,
+        "last_point_lag_us": 668024,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2094709,
+        "restore_us": 678066
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0190548250102438,
+      "exit": 0,
+      "stdout": "metabypass restore_us=678066 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 678066
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0200070340069942,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174447 sync_us=11 close_us=323525 backpressure_us=0 last_point_build_us=322782 last_point_lag_us=323065 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174447,
+        "sync_us": 11,
+        "close_us": 323525,
+        "backpressure_us": 0,
+        "last_point_build_us": 322782,
+        "last_point_lag_us": 323065,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.3040005560033023,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=577332 sync_us=175266 close_us=406480 backpressure_us=0 last_point_build_us=280033 last_point_lag_us=373440 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 577332,
+        "sync_us": 175266,
+        "close_us": 406480,
+        "backpressure_us": 0,
+        "last_point_build_us": 280033,
+        "last_point_lag_us": 373440,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1159078,
+        "restore_us": 693797
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.054391839017626,
+      "exit": 0,
+      "stdout": "metabypass restore_us=693797 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 693797
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7596020530327223,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=172100 sync_us=17 close_us=66409 backpressure_us=0 last_point_build_us=65546 last_point_lag_us=65888 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 172100,
+        "sync_us": 17,
+        "close_us": 66409,
+        "backpressure_us": 0,
+        "last_point_build_us": 65546,
+        "last_point_lag_us": 65888,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2282120540039614,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=451619 sync_us=218737 close_us=412827 backpressure_us=0 last_point_build_us=280144 last_point_lag_us=378370 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 451619,
+        "sync_us": 218737,
+        "close_us": 412827,
+        "backpressure_us": 0,
+        "last_point_build_us": 280144,
+        "last_point_lag_us": 378370,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1083183,
+        "restore_us": 675499
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0165108690271154,
+      "exit": 0,
+      "stdout": "metabypass restore_us=675499 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 675499
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-0-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7703541279770434,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176290 sync_us=1 close_us=66374 backpressure_us=0 last_point_build_us=65475 last_point_lag_us=65835 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176290,
+        "sync_us": 1,
+        "close_us": 66374,
+        "backpressure_us": 0,
+        "last_point_build_us": 65475,
+        "last_point_lag_us": 65835,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2924504219554365,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=568956 sync_us=189228 close_us=392343 backpressure_us=0 last_point_build_us=266032 last_point_lag_us=357490 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 568956,
+        "sync_us": 189228,
+        "close_us": 392343,
+        "backpressure_us": 0,
+        "last_point_build_us": 266032,
+        "last_point_lag_us": 357490,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1150527,
+        "restore_us": 677683
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0194025660166517,
+      "exit": 0,
+      "stdout": "metabypass restore_us=677683 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 677683
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7632883320329711,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174546 sync_us=17 close_us=65986 backpressure_us=0 last_point_build_us=65196 last_point_lag_us=65509 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174546,
+        "sync_us": 17,
+        "close_us": 65986,
+        "backpressure_us": 0,
+        "last_point_build_us": 65196,
+        "last_point_lag_us": 65509,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2349985250039026,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=439685 sync_us=240717 close_us=412861 backpressure_us=0 last_point_build_us=276178 last_point_lag_us=378582 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 439685,
+        "sync_us": 240717,
+        "close_us": 412861,
+        "backpressure_us": 0,
+        "last_point_build_us": 276178,
+        "last_point_lag_us": 378582,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1093263,
+        "restore_us": 687327
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.031320693960879,
+      "exit": 0,
+      "stdout": "metabypass restore_us=687327 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 687327
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7783945379778743,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174254 sync_us=2 close_us=78415 backpressure_us=0 last_point_build_us=77640 last_point_lag_us=77956 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174254,
+        "sync_us": 2,
+        "close_us": 78415,
+        "backpressure_us": 0,
+        "last_point_build_us": 77640,
+        "last_point_lag_us": 77956,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.184061066014692,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=741306 sync_us=621412 close_us=698539 backpressure_us=314881 last_point_build_us=321520 last_point_lag_us=664883 queue_peak_bytes=2097106 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 741306,
+        "sync_us": 621412,
+        "close_us": 698539,
+        "backpressure_us": 314881,
+        "last_point_build_us": 321520,
+        "last_point_lag_us": 664883,
+        "queue_peak_bytes": 2097106,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2061257,
+        "restore_us": 676627
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0177485680324025,
+      "exit": 0,
+      "stdout": "metabypass restore_us=676627 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 676627
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-1-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0146656130091287,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173579 sync_us=11 close_us=325192 backpressure_us=0 last_point_build_us=324397 last_point_lag_us=324687 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173579,
+        "sync_us": 11,
+        "close_us": 325192,
+        "backpressure_us": 0,
+        "last_point_build_us": 324397,
+        "last_point_lag_us": 324687,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2343261319911107,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=433270 sync_us=239158 close_us=410616 backpressure_us=0 last_point_build_us=280146 last_point_lag_us=377984 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975888 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 433270,
+        "sync_us": 239158,
+        "close_us": 410616,
+        "backpressure_us": 0,
+        "last_point_build_us": 280146,
+        "last_point_lag_us": 377984,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1083044,
+        "restore_us": 666420
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0071663780254312,
+      "exit": 0,
+      "stdout": "metabypass restore_us=666420 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 666420
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7640841029933654,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=164640 sync_us=2 close_us=65905 backpressure_us=0 last_point_build_us=65075 last_point_lag_us=65395 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 164640,
+        "sync_us": 2,
+        "close_us": 65905,
+        "backpressure_us": 0,
+        "last_point_build_us": 65075,
+        "last_point_lag_us": 65395,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.2011807950329967,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=765724 sync_us=611055 close_us=696412 backpressure_us=324824 last_point_build_us=323123 last_point_lag_us=664148 queue_peak_bytes=2097118 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 765724,
+        "sync_us": 611055,
+        "close_us": 696412,
+        "backpressure_us": 324824,
+        "last_point_build_us": 323123,
+        "last_point_lag_us": 664148,
+        "queue_peak_bytes": 2097118,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2073191,
+        "restore_us": 684600
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.035936131956987,
+      "exit": 0,
+      "stdout": "metabypass restore_us=684600 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 684600
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0152446529828012,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=177855 sync_us=11 close_us=322867 backpressure_us=0 last_point_build_us=322059 last_point_lag_us=322355 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 177855,
+        "sync_us": 11,
+        "close_us": 322867,
+        "backpressure_us": 0,
+        "last_point_build_us": 322059,
+        "last_point_lag_us": 322355,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.377423451980576,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=603028 sync_us=217617 close_us=410495 backpressure_us=0 last_point_build_us=279984 last_point_lag_us=376334 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 603028,
+        "sync_us": 217617,
+        "close_us": 410495,
+        "backpressure_us": 0,
+        "last_point_build_us": 279984,
+        "last_point_lag_us": 376334,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1231140,
+        "restore_us": 677898
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.02102292800555,
+      "exit": 0,
+      "stdout": "metabypass restore_us=677898 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 677898
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.759200906031765,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=165427 sync_us=15 close_us=67205 backpressure_us=0 last_point_build_us=66339 last_point_lag_us=66656 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 165427,
+        "sync_us": 15,
+        "close_us": 67205,
+        "backpressure_us": 0,
+        "last_point_build_us": 66339,
+        "last_point_lag_us": 66656,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.2491254699998535,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=820044 sync_us=614730 close_us=692392 backpressure_us=333054 last_point_build_us=321735 last_point_lag_us=658095 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 820044,
+        "sync_us": 614730,
+        "close_us": 692392,
+        "backpressure_us": 333054,
+        "last_point_build_us": 321735,
+        "last_point_lag_us": 658095,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2127166,
+        "restore_us": 688173
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0481158579932526,
+      "exit": 0,
+      "stdout": "metabypass restore_us=688173 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 688173
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.006698619981762,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171324 sync_us=12 close_us=317054 backpressure_us=0 last_point_build_us=316257 last_point_lag_us=316546 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296153 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171324,
+        "sync_us": 12,
+        "close_us": 317054,
+        "backpressure_us": 0,
+        "last_point_build_us": 316257,
+        "last_point_lag_us": 316546,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296153
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2790739979827777,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=557247 sync_us=179197 close_us=396597 backpressure_us=0 last_point_build_us=274106 last_point_lag_us=368483 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 557247,
+        "sync_us": 179197,
+        "close_us": 396597,
+        "backpressure_us": 0,
+        "last_point_build_us": 274106,
+        "last_point_lag_us": 368483,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1133041,
+        "restore_us": 684612
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0201995969982818,
+      "exit": 0,
+      "stdout": "metabypass restore_us=684612 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 684612
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7621163279982284,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174157 sync_us=15 close_us=66236 backpressure_us=0 last_point_build_us=65322 last_point_lag_us=65620 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174157,
+        "sync_us": 15,
+        "close_us": 66236,
+        "backpressure_us": 0,
+        "last_point_build_us": 65322,
+        "last_point_lag_us": 65620,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.3110593640012667,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=477168 sync_us=281349 close_us=407615 backpressure_us=0 last_point_build_us=276999 last_point_lag_us=373782 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 477168,
+        "sync_us": 281349,
+        "close_us": 407615,
+        "backpressure_us": 0,
+        "last_point_build_us": 276999,
+        "last_point_lag_us": 373782,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1166132,
+        "restore_us": 673109
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0066145429736935,
+      "exit": 0,
+      "stdout": "metabypass restore_us=673109 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 673109
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-3-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7473839390440844,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=166104 sync_us=1 close_us=66498 backpressure_us=0 last_point_build_us=65642 last_point_lag_us=65960 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 166104,
+        "sync_us": 1,
+        "close_us": 66498,
+        "backpressure_us": 0,
+        "last_point_build_us": 65642,
+        "last_point_lag_us": 65960,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.3914131810306571,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=643021 sync_us=203584 close_us=412455 backpressure_us=0 last_point_build_us=282073 last_point_lag_us=377876 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 643021,
+        "sync_us": 203584,
+        "close_us": 412455,
+        "backpressure_us": 0,
+        "last_point_build_us": 282073,
+        "last_point_lag_us": 377876,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1259060,
+        "restore_us": 666451
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.002851617988199,
+      "exit": 0,
+      "stdout": "metabypass restore_us=666451 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 666451
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7637291289865971,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173064 sync_us=13 close_us=69511 backpressure_us=0 last_point_build_us=68586 last_point_lag_us=68934 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173064,
+        "sync_us": 13,
+        "close_us": 69511,
+        "backpressure_us": 0,
+        "last_point_build_us": 68586,
+        "last_point_lag_us": 68934,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "write",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.2301279989769682,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=454732 sync_us=225643 close_us=406681 backpressure_us=0 last_point_build_us=282032 last_point_lag_us=372690 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 454732,
+        "sync_us": 225643,
+        "close_us": 406681,
+        "backpressure_us": 0,
+        "last_point_build_us": 282032,
+        "last_point_lag_us": 372690,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1087056,
+        "restore_us": 681740
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0193711600149982,
+      "exit": 0,
+      "stdout": "metabypass restore_us=681740 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 681740
+      }
+    },
+    {
+      "variant": "fixed",
+      "mode": "verify",
+      "command": [
+        "/tmp/mb-notify-fixed-db-bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-fixed/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7705430120113306,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=177813 sync_us=1 close_us=66812 backpressure_us=0 last_point_build_us=65851 last_point_lag_us=66163 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296153 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 177813,
+        "sync_us": 1,
+        "close_us": 66812,
+        "backpressure_us": 0,
+        "last_point_build_us": 65851,
+        "last_point_lag_us": 66163,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296153,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.243889194971416,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=806528 sync_us=615782 close_us=692879 backpressure_us=319191 last_point_build_us=325194 last_point_lag_us=667967 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 806528,
+        "sync_us": 615782,
+        "close_us": 692879,
+        "backpressure_us": 319191,
+        "last_point_build_us": 325194,
+        "last_point_lag_us": 667967,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2115189,
+        "restore_us": 683088
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "original",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0225547479931265,
+      "exit": 0,
+      "stdout": "metabypass restore_us=683088 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 683088
+      }
+    },
+    {
+      "variant": "original",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/index",
+        "--metabypass_data_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/data",
+        "--metabypass_backup_dir=/tmp/metabypass-versions-4kibi3g2/50k_pressure-4-original/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0189298479817808,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=178783 sync_us=11 close_us=324008 backpressure_us=0 last_point_build_us=323188 last_point_lag_us=323502 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 178783,
+        "sync_us": 11,
+        "close_us": 324008,
+        "backpressure_us": 0,
+        "last_point_build_us": 323188,
+        "last_point_lag_us": 323502,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      }
+    }
+  ],
+  "summary": {
+    "50k_default": {
+      "original": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 431621,
+          "min": 421721,
+          "max": 451835
+        },
+        "sync_us": {
+          "median": 545986,
+          "min": 542522,
+          "max": 566686
+        },
+        "close_us": {
+          "median": 684214,
+          "min": 676277,
+          "max": 718625
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 317147,
+          "min": 313429,
+          "max": 345151
+        },
+        "last_point_lag_us": {
+          "median": 652109,
+          "min": 644954,
+          "max": 685829
+        },
+        "queue_peak_bytes": {
+          "median": 3733721,
+          "min": 3675819,
+          "max": 3879302
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975888,
+          "min": 3975888,
+          "max": 3975891
+        },
+        "write_sync_close_us": {
+          "median": 1678541,
+          "min": 1642704,
+          "max": 1732834
+        },
+        "restore_us": {
+          "median": 670743,
+          "min": 661633,
+          "max": 672230
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 596154,
+          "min": 574442,
+          "max": 669632
+        },
+        "sync_us": {
+          "median": 204083,
+          "min": 180314,
+          "max": 208039
+        },
+        "close_us": {
+          "median": 402620,
+          "min": 392574,
+          "max": 406561
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 279778,
+          "min": 272276,
+          "max": 281892
+        },
+        "last_point_lag_us": {
+          "median": 367640,
+          "min": 360276,
+          "max": 374511
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975891,
+          "min": 3975889,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1194962,
+          "min": 1183029,
+          "max": 1271446
+        },
+        "restore_us": {
+          "median": 670017,
+          "min": 651162,
+          "max": 692034
+        }
+      },
+      "fixed": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 431346,
+          "min": 410655,
+          "max": 478879
+        },
+        "sync_us": {
+          "median": 262730,
+          "min": 229523,
+          "max": 267694
+        },
+        "close_us": {
+          "median": 402644,
+          "min": 398316,
+          "max": 404686
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 278076,
+          "min": 272156,
+          "max": 278185
+        },
+        "last_point_lag_us": {
+          "median": 369286,
+          "min": 365781,
+          "max": 372904
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975891,
+          "min": 3975890,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1095116,
+          "min": 1065116,
+          "max": 1111293
+        },
+        "restore_us": {
+          "median": 673334,
+          "min": 666412,
+          "max": 688684
+        }
+      }
+    },
+    "200k_default": {
+      "original": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 1758965,
+          "min": 1673412,
+          "max": 1828467
+        },
+        "sync_us": {
+          "median": 2271554,
+          "min": 2096766,
+          "max": 2369592
+        },
+        "close_us": {
+          "median": 2383223,
+          "min": 2375730,
+          "max": 2390336
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 1132568,
+          "min": 1130352,
+          "max": 1138432
+        },
+        "last_point_lag_us": {
+          "median": 2334473,
+          "min": 2326795,
+          "max": 2340494
+        },
+        "queue_peak_bytes": {
+          "median": 16140945,
+          "min": 14417539,
+          "max": 16819398
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983625,
+          "min": 15983621,
+          "max": 15983625
+        },
+        "write_sync_close_us": {
+          "median": 6424727,
+          "min": 6300963,
+          "max": 6486432
+        },
+        "restore_us": {
+          "median": 2083723,
+          "min": 2071818,
+          "max": 2107516
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 2406206,
+          "min": 2277382,
+          "max": 2486923
+        },
+        "sync_us": {
+          "median": 228149,
+          "min": 222033,
+          "max": 329053
+        },
+        "close_us": {
+          "median": 1069817,
+          "min": 1052877,
+          "max": 1087546
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 921317,
+          "min": 904489,
+          "max": 932569
+        },
+        "last_point_lag_us": {
+          "median": 1015732,
+          "min": 1002048,
+          "max": 1035644
+        },
+        "queue_peak_bytes": {
+          "median": 2097444,
+          "min": 2097444,
+          "max": 3285695
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983624,
+          "min": 15983619,
+          "max": 15983626
+        },
+        "validated_blob_bytes": {
+          "median": 212288952,
+          "min": 212288952,
+          "max": 212288952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 3681201,
+          "min": 3627805,
+          "max": 3800035
+        },
+        "restore_us": {
+          "median": 2086841,
+          "min": 2080592,
+          "max": 2092662
+        }
+      },
+      "fixed": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 1711112,
+          "min": 1651566,
+          "max": 1955698
+        },
+        "sync_us": {
+          "median": 462691,
+          "min": 420364,
+          "max": 498689
+        },
+        "close_us": {
+          "median": 1048085,
+          "min": 1046822,
+          "max": 1059637
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 903924,
+          "min": 899089,
+          "max": 914774
+        },
+        "last_point_lag_us": {
+          "median": 1000292,
+          "min": 997007,
+          "max": 1010953
+        },
+        "queue_peak_bytes": {
+          "median": 2097444,
+          "min": 2097444,
+          "max": 3285695
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983625,
+          "min": 15983624,
+          "max": 15983626
+        },
+        "validated_blob_bytes": {
+          "median": 212288952,
+          "min": 212288952,
+          "max": 212288952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 3232892,
+          "min": 3196749,
+          "max": 3422884
+        },
+        "restore_us": {
+          "median": 2099874,
+          "min": 2060749,
+          "max": 2120223
+        }
+      }
+    },
+    "50k_pressure": {
+      "original": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 790518,
+          "min": 741306,
+          "max": 820044
+        },
+        "sync_us": {
+          "median": 614730,
+          "min": 601787,
+          "max": 621412
+        },
+        "close_us": {
+          "median": 696412,
+          "min": 692392,
+          "max": 702404
+        },
+        "backpressure_us": {
+          "median": 319191,
+          "min": 287886,
+          "max": 333054
+        },
+        "last_point_build_us": {
+          "median": 323123,
+          "min": 321520,
+          "max": 327339
+        },
+        "last_point_lag_us": {
+          "median": 664883,
+          "min": 658095,
+          "max": 668024
+        },
+        "queue_peak_bytes": {
+          "median": 2097095,
+          "min": 2097095,
+          "max": 2097118
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975890,
+          "min": 3975890,
+          "max": 3975890
+        },
+        "write_sync_close_us": {
+          "median": 2094709,
+          "min": 2061257,
+          "max": 2127166
+        },
+        "restore_us": {
+          "median": 683088,
+          "min": 676627,
+          "max": 688173
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 577332,
+          "min": 557247,
+          "max": 643021
+        },
+        "sync_us": {
+          "median": 189228,
+          "min": 175266,
+          "max": 217617
+        },
+        "close_us": {
+          "median": 406480,
+          "min": 392343,
+          "max": 412455
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 279984,
+          "min": 266032,
+          "max": 282073
+        },
+        "last_point_lag_us": {
+          "median": 373440,
+          "min": 357490,
+          "max": 377876
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975891,
+          "min": 3975890,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1159078,
+          "min": 1133041,
+          "max": 1259060
+        },
+        "restore_us": {
+          "median": 677898,
+          "min": 666451,
+          "max": 693797
+        }
+      },
+      "fixed": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 451619,
+          "min": 433270,
+          "max": 477168
+        },
+        "sync_us": {
+          "median": 239158,
+          "min": 218737,
+          "max": 281349
+        },
+        "close_us": {
+          "median": 410616,
+          "min": 406681,
+          "max": 412861
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 280144,
+          "min": 276178,
+          "max": 282032
+        },
+        "last_point_lag_us": {
+          "median": 377984,
+          "min": 372690,
+          "max": 378582
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975889,
+          "min": 3975888,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1087056,
+          "min": 1083044,
+          "max": 1166132
+        },
+        "restore_us": {
+          "median": 675499,
+          "min": 666420,
+          "max": 687327
+        }
+      }
+    }
+  },
+  "source_sha256": {
+    "utilities/metabypass/backup.cc": "1d1e4a0267b9ce83dbc259bd440417322f68d836a0ba6542079722053d940ce2",
+    "utilities/metabypass/backup.h": "66c6ce39fe0b1ef574a8f606a12ccd964beaca961c83939aa752c6d3d7c6cd66"
+  },
+  "measurement_order": "Three backup versions interleaved with rotated order within five trials per workload; no-backup baseline measured subsequently, with alternating 50k/200k order. No benchmark processes overlapped."
+}

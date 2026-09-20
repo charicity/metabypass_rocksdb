@@ -1,0 +1,55 @@
+--- a/utilities/metabypass/backup.h
++++ b/utilities/metabypass/backup.h
+@@ -103,6 +103,7 @@
+   std::mutex publication_mutex_;
+   mutable std::mutex mutex_;
+   std::condition_variable cv_;
++  std::condition_variable validator_cv_;
+   std::deque<Event> queue_;
+   MetaBypassStats stats_;
+   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
+--- a/utilities/metabypass/backup.cc
++++ b/utilities/metabypass/backup.cc
+@@ -234,6 +234,7 @@
+   std::lock_guard<std::mutex> publish(publication_mutex_);
+   std::lock_guard<std::mutex> lock(mutex_);
+   if (stats_.error.ok()) stats_.error = status;
++  validator_cv_.notify_all();
+   cv_.notify_all();
+ }
+ void Backup::Finish(Event&& e, const Status& primary) {
+@@ -248,7 +249,8 @@
+     // A failed primary append can leave a partial file. Never publish across
+     // it.
+   }
+-  cv_.notify_all();
++  if (!primary.ok() || stats_.queued_bytes >= options_.batch_bytes)
++    cv_.notify_all();
+ }
+ IOStatus Backup::NewWritableFile(const std::string& p, const FileOptions& o,
+                                  std::unique_ptr<FSWritableFile>* r,
+@@ -642,6 +644,7 @@
+         break;
+       }
+       candidate_ = std::move(candidate);
++      validator_cv_.notify_one();
+       cv_.notify_all();
+     }
+     if (stopping_ && queue_.empty()) {
+@@ -657,6 +660,7 @@
+   queue_.clear();
+   stats_.queued_bytes = 0;
+   mirror_done_ = true;
++  validator_cv_.notify_all();
+   cv_.notify_all();
+   lock.unlock();
+   for (auto& w : writers_) {
+@@ -667,7 +671,7 @@
+ void Backup::ValidateLoop() {
+   std::unique_lock<std::mutex> lock(mutex_);
+   while (true) {
+-    cv_.wait(lock,
++    validator_cv_.wait(lock,
+              [&] { return candidate_ || mirror_done_ || !stats_.error.ok(); });
+     if (!stats_.error.ok() || (!candidate_ && mirror_done_)) break;
+     auto candidate = std::move(candidate_);

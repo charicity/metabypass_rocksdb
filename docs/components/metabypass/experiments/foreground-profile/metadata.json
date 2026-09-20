@@ -1,0 +1,22 @@
+{
+  "commit": "29680012306b378b8eb321cd409cba669ec0e342",
+  "platform": "Linux ubuntu-server 5.15.0-191-generic #201-Ubuntu SMP Fri Aug 7 18:39:04 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/mb-foreground-profile/baseline-driver",
+      "sha256": "aace94c8e8a59fc945c81ff194a634654cf251adb2bee0ad604be873e49db32c"
+    },
+    "current": {
+      "path": "/tmp/mb-foreground-profile/current-driver",
+      "sha256": "a38cb31006fbcbe4a1b9fb10027b199a87380717cfa7e72221fb671e7af55fe4"
+    },
+    "split-cv": {
+      "path": "/tmp/mb-foreground-profile/split-cv-driver",
+      "sha256": "cb52a0efc0ed664c3b68b4f5c9b12911b97b1bd19b54587314a5adf874157dd9"
+    },
+    "threshold": {
+      "path": "/tmp/mb-foreground-profile/threshold-driver",
+      "sha256": "631b951bac776d5f6f88fe531524403167fbbc808cb8882343bb23514b074669"
+    }
+  }
+}

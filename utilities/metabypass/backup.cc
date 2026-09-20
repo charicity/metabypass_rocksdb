@@ -205,7 +205,7 @@ Status Backup::Activate(const std::string& identity) {
   }
   std::lock_guard<std::mutex> lock(mutex_);
   active_ = true;
-  cv_.notify_all();
+  WakeMirror();
   return Status::OK();
 }
 Status Backup::Reserve(size_t charge) {
@@ -216,13 +216,18 @@ Status Backup::Reserve(size_t charge) {
   const uint64_t start = Now();
   const bool blocked = stats_.queued_bytes > options_.queue_capacity - charge;
   if (blocked) {
+    waiting_charge_ = charge;
+    // A reservation can run out of space before reaching batch_bytes.
+    // Drain immediately rather than waiting for the batching timer.
+    WakeMirror();
     TEST_SYNC_POINT("MetaBypass::Backpressure");
+    space_cv_.wait(lock, [&] {
+      return stopping_ || !stats_.error.ok() ||
+             stats_.queued_bytes <= options_.queue_capacity - charge;
+    });
+    waiting_charge_ = 0;
+    stats_.backpressure_micros += Now() - start;
   }
-  cv_.wait(lock, [&] {
-    return stopping_ || !stats_.error.ok() ||
-           stats_.queued_bytes <= options_.queue_capacity - charge;
-  });
-  if (blocked) stats_.backpressure_micros += Now() - start;
   if (!stats_.error.ok()) return stats_.error;
   if (stopping_) return Status::ShutdownInProgress();
   stats_.queued_bytes += charge;
@@ -234,7 +239,10 @@ void Backup::Fail(const Status& status) {
   std::lock_guard<std::mutex> publish(publication_mutex_);
   std::lock_guard<std::mutex> lock(mutex_);
   if (stats_.error.ok()) stats_.error = status;
-  cv_.notify_all();
+  WakeMirror();
+  validator_cv_.notify_one();
+  space_cv_.notify_one();
+  sync_cv_.notify_all();
 }
 void Backup::Finish(Event&& e, const Status& primary) {
   if (!primary.ok()) Fail(primary);
@@ -248,7 +256,7 @@ void Backup::Finish(Event&& e, const Status& primary) {
     // A failed primary append can leave a partial file. Never publish across
     // it.
   }
-  cv_.notify_all();
+  WakeMirror();
 }
 IOStatus Backup::NewWritableFile(const std::string& p, const FileOptions& o,
                                  std::unique_ptr<FSWritableFile>* r,
@@ -587,9 +595,21 @@ Status Backup::Publish(const Candidate& candidate) {
     stats_.last_publish_micros = Now();
     stats_.last_point_lag_micros = Now() - candidate.oldest;
     stats_.retained_index_bytes = total;
-    cv_.notify_all();
+    sync_cv_.notify_all();
   }
   return Status::OK();
+}
+bool Backup::MirrorReady() const {
+  return stopping_ || !stats_.error.ok() ||
+         (!queue_.empty() && (waiting_charge_ != 0 || requested_ > published_ ||
+                              stats_.queued_bytes >= options_.batch_bytes)) ||
+         (active_ && !candidate_busy_ && applied_ > captured_);
+}
+void Backup::WakeMirror() {
+  if (mirror_waiting_ && MirrorReady()) {
+    TEST_SYNC_POINT("MetaBypass::MirrorNotified");
+    mirror_cv_.notify_one();
+  }
 }
 void Backup::Run() {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -599,13 +619,11 @@ void Backup::Run() {
     lock.lock();
   };
   while (stats_.error.ok()) {
-    cv_.wait_for(lock, std::chrono::milliseconds(options_.interval_ms), [&] {
-      return stopping_ || !stats_.error.ok() ||
-             (!queue_.empty() &&
-              (requested_ > published_ ||
-               stats_.queued_bytes >= options_.batch_bytes)) ||
-             (active_ && !candidate_busy_ && applied_ > captured_);
-    });
+    mirror_waiting_ = true;
+    TEST_SYNC_POINT("MetaBypass::BeforeMirrorWait");
+    mirror_cv_.wait_for(lock, std::chrono::milliseconds(options_.interval_ms),
+                        [&] { return MirrorReady(); });
+    mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
     const uint64_t boundary = accepted_;
     while (!queue_.empty() && queue_.front().seq <= boundary) {
@@ -619,10 +637,13 @@ void Backup::Run() {
       stats_.queued_bytes -= e.charge;
       stats_.mirrored_bytes += e.bytes.size();
       applied_ = e.seq;
-      cv_.notify_all();
       if (!s.ok()) {
         fail(s);
         break;
+      }
+      if (waiting_charge_ != 0 &&
+          stats_.queued_bytes <= options_.queue_capacity - waiting_charge_) {
+        space_cv_.notify_one();
       }
     }
     if (!stats_.error.ok()) break;
@@ -642,11 +663,15 @@ void Backup::Run() {
         break;
       }
       candidate_ = std::move(candidate);
-      cv_.notify_all();
+      validator_cv_.notify_one();
     }
     if (stopping_ && queue_.empty()) {
       if (candidate_busy_) {
-        cv_.wait(lock, [&] { return !candidate_busy_ || !stats_.error.ok(); });
+        TEST_SYNC_POINT("MetaBypass::CloseWaitingForValidation");
+        mirror_waiting_ = true;
+        mirror_cv_.wait(lock,
+                        [&] { return !candidate_busy_ || !stats_.error.ok(); });
+        mirror_waiting_ = false;
       } else if (!active_ || published_ >= applied_) {
         break;
       } else if (captured_ >= applied_) {
@@ -657,7 +682,7 @@ void Backup::Run() {
   queue_.clear();
   stats_.queued_bytes = 0;
   mirror_done_ = true;
-  cv_.notify_all();
+  validator_cv_.notify_one();
   lock.unlock();
   for (auto& w : writers_) {
     if (w.second) w.second->Close(IOOptions(), nullptr).PermitUncheckedError();
@@ -667,8 +692,8 @@ void Backup::Run() {
 void Backup::ValidateLoop() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
-    cv_.wait(lock,
-             [&] { return candidate_ || mirror_done_ || !stats_.error.ok(); });
+    validator_cv_.wait(
+        lock, [&] { return candidate_ || mirror_done_ || !stats_.error.ok(); });
     if (!stats_.error.ok() || (!candidate_ && mirror_done_)) break;
     auto candidate = std::move(candidate_);
     lock.unlock();
@@ -686,17 +711,18 @@ void Backup::ValidateLoop() {
               ? std::min(oldest_unpublished_micros_, candidate->oldest)
               : candidate->oldest;
     candidate_busy_ = false;
-    cv_.notify_all();
+    WakeMirror();
   }
   candidate_busy_ = false;
-  cv_.notify_all();
+  WakeMirror();
 }
 Status Backup::Sync() {
   std::unique_lock<std::mutex> lock(mutex_);
   const uint64_t goal = accepted_;
   requested_ = std::max(requested_, goal);
-  cv_.notify_all();
-  cv_.wait(lock, [&] {
+  WakeMirror();
+  TEST_SYNC_POINT("MetaBypass::SyncWaiting");
+  sync_cv_.wait(lock, [&] {
     return !stats_.error.ok() || published_ >= goal || stopping_;
   });
   return stats_.error;
@@ -705,7 +731,9 @@ Status Backup::Stop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     stopping_ = true;
-    cv_.notify_all();
+    WakeMirror();
+    space_cv_.notify_one();
+    sync_cv_.notify_all();
   }
   if (thread_.joinable()) thread_.join();
   if (validator_.joinable()) validator_.join();

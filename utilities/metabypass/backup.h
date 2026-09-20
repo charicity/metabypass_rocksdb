@@ -72,6 +72,9 @@ class Backup : public FileSystemWrapper {
   };
   Status Capture(Candidate* candidate);
   Status Publish(const Candidate& candidate);
+  // Called with mutex_ held. Each wait channel has a distinct predicate.
+  bool MirrorReady() const;
+  void WakeMirror();
   void Run();
   void ValidateLoop();
   struct TableValidation {
@@ -102,7 +105,10 @@ class Backup : public FileSystemWrapper {
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
+  std::condition_variable mirror_cv_, validator_cv_, space_cv_, sync_cv_;
+  bool mirror_waiting_ = false;
+  // operations_ serializes reservations, so at most one producer waits.
+  size_t waiting_charge_ = 0;
   std::deque<Event> queue_;
   MetaBypassStats stats_;
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;

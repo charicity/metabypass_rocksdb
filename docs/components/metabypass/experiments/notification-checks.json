@@ -1,0 +1,462 @@
+{
+  "normal_command": "AUTO_CLEAN=1 make -j24 check J=24 TEST_TMPDIR=/tmp/mb-notify-normal-tests DRIVER='timeout 60'",
+  "status_command": "AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j24 check J=24 TEST_TMPDIR=/tmp/mb-notify-status-tests DRIVER='timeout 60'",
+  "runs": {
+    "normal": {
+      "shards": 3321,
+      "failed_shards": [
+        {
+          "Seq": "831",
+          "Host": ":",
+          "Starttime": "1789900953.599",
+          "JobRuntime": "    13.871",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\""
+        },
+        {
+          "Seq": "832",
+          "Host": ":",
+          "Starttime": "1789900954.455",
+          "JobRuntime": "    16.199",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\""
+        },
+        {
+          "Seq": "779",
+          "Host": ":",
+          "Starttime": "1789900940.664",
+          "JobRuntime": "    60.043",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\""
+        },
+        {
+          "Seq": "1494",
+          "Host": ":",
+          "Starttime": "1789901184.951",
+          "JobRuntime": "    60.229",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-252 >& t/log-run-external_sst_file_test-shard-252 || bash -c \"cat t/log-run-external_sst_file_test-shard-252; exit $?\""
+        },
+        {
+          "Seq": "1495",
+          "Host": ":",
+          "Starttime": "1789901185.877",
+          "JobRuntime": "    60.273",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-253 >& t/log-run-external_sst_file_test-shard-253 || bash -c \"cat t/log-run-external_sst_file_test-shard-253; exit $?\""
+        },
+        {
+          "Seq": "1496",
+          "Host": ":",
+          "Starttime": "1789901190.666",
+          "JobRuntime": "    60.285",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-254 >& t/log-run-external_sst_file_test-shard-254 || bash -c \"cat t/log-run-external_sst_file_test-shard-254; exit $?\""
+        },
+        {
+          "Seq": "1499",
+          "Host": ":",
+          "Starttime": "1789901203.886",
+          "JobRuntime": "    60.398",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-257 >& t/log-run-external_sst_file_test-shard-257 || bash -c \"cat t/log-run-external_sst_file_test-shard-257; exit $?\""
+        },
+        {
+          "Seq": "2552",
+          "Host": ":",
+          "Starttime": "1789901620.687",
+          "JobRuntime": "    60.165",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\""
+        },
+        {
+          "Seq": "2554",
+          "Host": ":",
+          "Starttime": "1789901621.250",
+          "JobRuntime": "    60.115",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\""
+        },
+        {
+          "Seq": "3111",
+          "Host": ":",
+          "Starttime": "1789901734.789",
+          "JobRuntime": "     0.763",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "139",
+          "Signal": "0",
+          "Command": "t/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\""
+        }
+      ],
+      "metabypass_shards": [
+        {
+          "Seq": "3059",
+          "Host": ":",
+          "Starttime": "1789901721.960",
+          "JobRuntime": "    11.628",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-1 >& t/log-run-metabypass_test-shard-1 || bash -c \"cat t/log-run-metabypass_test-shard-1; exit $?\""
+        },
+        {
+          "Seq": "3058",
+          "Host": ":",
+          "Starttime": "1789901721.940",
+          "JobRuntime": "    14.056",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-0 >& t/log-run-metabypass_test-shard-0 || bash -c \"cat t/log-run-metabypass_test-shard-0; exit $?\""
+        },
+        {
+          "Seq": "3060",
+          "Host": ":",
+          "Starttime": "1789901722.154",
+          "JobRuntime": "    17.638",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-2 >& t/log-run-metabypass_test-shard-2 || bash -c \"cat t/log-run-metabypass_test-shard-2; exit $?\""
+        }
+      ]
+    },
+    "status": {
+      "shards": 3302,
+      "failed_shards": [
+        {
+          "Seq": "831",
+          "Host": ":",
+          "Starttime": "1789900953.217",
+          "JobRuntime": "    14.413",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\""
+        },
+        {
+          "Seq": "832",
+          "Host": ":",
+          "Starttime": "1789900954.085",
+          "JobRuntime": "    16.766",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\""
+        },
+        {
+          "Seq": "779",
+          "Host": ":",
+          "Starttime": "1789900940.392",
+          "JobRuntime": "    60.044",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\""
+        },
+        {
+          "Seq": "1494",
+          "Host": ":",
+          "Starttime": "1789901186.606",
+          "JobRuntime": "    60.059",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-252 >& t/log-run-external_sst_file_test-shard-252 || bash -c \"cat t/log-run-external_sst_file_test-shard-252; exit $?\""
+        },
+        {
+          "Seq": "1495",
+          "Host": ":",
+          "Starttime": "1789901186.611",
+          "JobRuntime": "    60.066",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-253 >& t/log-run-external_sst_file_test-shard-253 || bash -c \"cat t/log-run-external_sst_file_test-shard-253; exit $?\""
+        },
+        {
+          "Seq": "1496",
+          "Host": ":",
+          "Starttime": "1789901191.180",
+          "JobRuntime": "    60.756",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-254 >& t/log-run-external_sst_file_test-shard-254 || bash -c \"cat t/log-run-external_sst_file_test-shard-254; exit $?\""
+        },
+        {
+          "Seq": "1499",
+          "Host": ":",
+          "Starttime": "1789901201.584",
+          "JobRuntime": "    60.342",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-257 >& t/log-run-external_sst_file_test-shard-257 || bash -c \"cat t/log-run-external_sst_file_test-shard-257; exit $?\""
+        },
+        {
+          "Seq": "2551",
+          "Host": ":",
+          "Starttime": "1789901619.505",
+          "JobRuntime": "    60.123",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\""
+        },
+        {
+          "Seq": "2553",
+          "Host": ":",
+          "Starttime": "1789901619.953",
+          "JobRuntime": "    60.055",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\""
+        },
+        {
+          "Seq": "3095",
+          "Host": ":",
+          "Starttime": "1789901733.044",
+          "JobRuntime": "     0.720",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "139",
+          "Signal": "0",
+          "Command": "t/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\""
+        }
+      ],
+      "metabypass_shards": [
+        {
+          "Seq": "3043",
+          "Host": ":",
+          "Starttime": "1789901719.974",
+          "JobRuntime": "    11.895",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-1 >& t/log-run-metabypass_test-shard-1 || bash -c \"cat t/log-run-metabypass_test-shard-1; exit $?\""
+        },
+        {
+          "Seq": "3042",
+          "Host": ":",
+          "Starttime": "1789901719.961",
+          "JobRuntime": "    13.907",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-0 >& t/log-run-metabypass_test-shard-0 || bash -c \"cat t/log-run-metabypass_test-shard-0; exit $?\""
+        },
+        {
+          "Seq": "3044",
+          "Host": ":",
+          "Starttime": "1789901720.217",
+          "JobRuntime": "    17.655",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "0",
+          "Signal": "0",
+          "Command": "t/run-metabypass_test-shard-2 >& t/log-run-metabypass_test-shard-2 || bash -c \"cat t/log-run-metabypass_test-shard-2; exit $?\""
+        }
+      ]
+    }
+  },
+  "logs": {
+    "normal_unit": {
+      "path": "/tmp/mb-notify-tests.log",
+      "sha256": "b8eb29cd7aab2f739cd8b65450518ddb754e8e47e4dc7ac3820a5645a02ff740",
+      "tail": [
+        "[15/26] MetaBypassTest.CloseDrainsWithValidatorBlocked (1074 ms)",
+        "[16/26] MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure (1181 ms)",
+        "[17/26] MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint (1189 ms)",
+        "[18/26] MetaBypassTest.FragmentedWalBatchIsAtomic (1227 ms)",
+        "[19/26] MetaBypassTest.InterruptedBlobPreparationIsRetryable (1327 ms)",
+        "[20/26] MetaBypassTest.ConcurrentBatchesFlushAndSync (1453 ms)",
+        "[21/26] MetaBypassTest.SigkillUnflushedBatchRecovery (1741 ms)",
+        "[22/26] MetaBypassTest.CloseRestoreAppendAndReopen (1846 ms)",
+        "[23/26] MetaBypassTest.IncrementalValidationReusesPrefixesAndTables (1868 ms)",
+        "[24/26] MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles (2070 ms)",
+        "[25/26] MetaBypassTest.RotationCompactionAndRetention (2623 ms)",
+        "[26/26] MetaBypassTest.SigkillPublicationStages (3509 ms)"
+      ]
+    },
+    "status_unit": {
+      "path": "/tmp/mb-notify-status-unit.log",
+      "sha256": "24aa48d9d20f9edc559980e724f81a1ab130b23563a4b4b6670e3be95b8e94a7",
+      "tail": [
+        "[       OK ] MetaBypassTest.FragmentedWalBatchIsAtomic (1777 ms)",
+        "[ RUN      ] MetaBypassTest.SigkillPublicationStages",
+        "[       OK ] MetaBypassTest.SigkillPublicationStages (6637 ms)",
+        "[ RUN      ] MetaBypassTest.InterruptedBlobPreparationIsRetryable",
+        "[       OK ] MetaBypassTest.InterruptedBlobPreparationIsRetryable (1845 ms)",
+        "[ RUN      ] MetaBypassTest.SigkillUnflushedBatchRecovery",
+        "[       OK ] MetaBypassTest.SigkillUnflushedBatchRecovery (2576 ms)",
+        "[----------] 26 tests from MetaBypassTest (38217 ms total)",
+        "",
+        "[----------] Global test environment tear-down",
+        "[==========] 26 tests from 1 test case ran. (38218 ms total)",
+        "[  PASSED  ] 26 tests."
+      ]
+    },
+    "coerce": {
+      "path": "/tmp/mb-notify-coerce-retry.log",
+      "sha256": "124f365c17428e3a3a34b081cf2460467c602d4839ccb04d532e31834a0d80cb",
+      "tail": [
+        "[2589/2600] MetaBypassTest.QueueCapacityAndOrdering (65 ms)",
+        "[2590/2600] MetaBypassTest.QueueCapacityAndOrdering (65 ms)",
+        "[2591/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2592/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2593/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2594/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2595/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2596/2600] MetaBypassTest.QueueCapacityAndOrdering (65 ms)",
+        "[2597/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2598/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2599/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[2600/2600] MetaBypassTest.QueueCapacityAndOrdering (64 ms)"
+      ]
+    },
+    "normal_compaction_retry": {
+      "path": "/tmp/mb-notify-compaction-new.log",
+      "sha256": "a14a6e38ed25108901ecab3479d6c847584c6f2c6c3ec1101ec0ea1f21121658",
+      "tail": [
+        "Note: Google Test filter = CompactionServiceTest.CorruptedOutputVerifyOutputFlags",
+        "[==========] Running 1 test from 1 test case.",
+        "[----------] Global test environment set-up.",
+        "[----------] 1 test from CompactionServiceTest",
+        "[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags",
+        "[       OK ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (11241 ms)",
+        "[----------] 1 test from CompactionServiceTest (11241 ms total)",
+        "",
+        "[----------] Global test environment tear-down",
+        "[==========] 1 test from 1 test case ran. (11241 ms total)",
+        "[  PASSED  ] 1 test."
+      ]
+    },
+    "baseline_compaction_retry": {
+      "path": "/tmp/mb-notify-compaction-old.log",
+      "sha256": "cc7211283b2e07aaa9f46a82d9a5d83141f32e79dff140c42da7d35a67d9df79",
+      "tail": [
+        "Note: Google Test filter = CompactionServiceTest.CorruptedOutputVerifyOutputFlags",
+        "[==========] Running 1 test from 1 test case.",
+        "[----------] Global test environment set-up.",
+        "[----------] 1 test from CompactionServiceTest",
+        "[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags",
+        "[       OK ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (11175 ms)",
+        "[----------] 1 test from CompactionServiceTest (11175 ms total)",
+        "",
+        "[----------] Global test environment tear-down",
+        "[==========] 1 test from 1 test case ran. (11184 ms total)",
+        "[  PASSED  ] 1 test."
+      ]
+    },
+    "normal_ingestion_retry": {
+      "path": "/tmp/mb-notify-ingest-retry.log",
+      "sha256": "f516a26c79e668e75488d5187454b9bea910a77999d31ebabfaddb81252b8d59",
+      "tail": [
+        "[0/4] Running tests...",
+        "[1/4] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2 (5089 ms)",
+        "[2/4] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6 (5128 ms)",
+        "[3/4] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3 (5130 ms)",
+        "[4/4] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1 (5282 ms)"
+      ]
+    },
+    "status_compaction_ingestion_retry": {
+      "path": "/tmp/mb-notify-status-retry.log",
+      "sha256": "ba61ec78d440c95c9722d1303104942d9eba0265109bd7615e14d4213909dc99",
+      "tail": [
+        "[0/5] Running tests...",
+        "[1/5] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1 (5036 ms)",
+        "[2/5] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3 (5231 ms)",
+        "[3/5] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2 (5306 ms)",
+        "[4/5] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6 (5385 ms)",
+        "[5/5] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (11453 ms)"
+      ]
+    },
+    "normal_cf_retry": {
+      "path": "/tmp/mb-notify-cf-retry.log",
+      "sha256": "4c0a787fcf30c4210ddaf8123f31ac273b3f968a14453366203a303d349e9fa5",
+      "tail": [
+        "[0/2] Running tests...",
+        "[1/2] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0 (826 ms)",
+        "[2/2] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0 (867 ms)"
+      ]
+    },
+    "status_cf_retry": {
+      "path": "/tmp/mb-notify-status-cf-retry.log",
+      "sha256": "4d2016214b0db442c5da0b39154b2a014c6f50ddafe760cb213a50a20888e4e0",
+      "tail": [
+        "[0/2] Running tests...",
+        "[1/2] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0 (916 ms)",
+        "[2/2] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0 (916 ms)"
+      ]
+    },
+    "source_checks": {
+      "path": "/tmp/mb-notify-source-checks.log",
+      "sha256": "47b89e70fd8b709e2fb5404a0560e22abed6f55a63905cbfe3bd2361e8ddac8a",
+      "tail": [
+        "  - rocksdb_pinnable_multi_get_result",
+        "  - rocksdb_table_properties_lsm_info_at_creation",
+        "error: 5 public C API symbol(s) (enum constants / typedefs) present at 'main' are missing now (backward-incompatible removal):",
+        "  - rocksdb_pinnable_multi_get_error",
+        "  - rocksdb_pinnable_multi_get_found",
+        "  - rocksdb_pinnable_multi_get_not_found",
+        "  - rocksdb_pinnable_multi_get_out_of_bounds",
+        "  - rocksdb_pinnable_multi_get_t",
+        "",
+        "If a change is intentional and reviewed, record it in",
+        "tools/c_api_gen/api_compatibility_allowlist.json with a reason; otherwise restore the original declaration (see tools/c_api_gen/abi_type_overrides.json for pinning a generated C type).",
+        "make: *** [Makefile:1166: check-c-api-gen] Error 1"
+      ]
+    }
+  },
+  "source_sha256": {
+    "utilities/metabypass/backup.cc": "1d1e4a0267b9ce83dbc259bd440417322f68d836a0ba6542079722053d940ce2",
+    "utilities/metabypass/backup.h": "66c6ce39fe0b1ef574a8f606a12ccd964beaca961c83939aa752c6d3d7c6cd66",
+    "utilities/metabypass/metabypass_test.cc": "715e2c57e027e7bfc08161b3bf9220ea595ed9e88209a7a6c0d480b2d5e1d9ef"
+  },
+  "coerce_command": "COERCE_CONTEXT_SWITCH=1 build_tools/rocksptest.sh metabypass_test -r100 --timeout_per_test=60 -w16",
+  "initial_coerce_attempt": "Aborted at 60 seconds because --timeout=60 is a whole-run limit, not a per-test limit. The runner also raised TypeError in timeout cleanup. Superseded by a fresh successful 2600-case run with --timeout_per_test=60."
+}

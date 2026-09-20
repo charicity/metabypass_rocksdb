@@ -1,0 +1,545 @@
+[
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-l2r03y5i",
+      "200000"
+    ],
+    "stdout": "foreground_us=1662946 user_us=909494 system_us=747033 voluntary=217 involuntary=3\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1662946,
+      "user_us": 909494,
+      "system_us": 747033,
+      "voluntary": 217,
+      "involuntary": 3
+    },
+    "verification": [
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=restore",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-l2r03y5i/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-l2r03y5i/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-l2r03y5i/backup"
+        ],
+        "stdout": "metabypass restore_us=2055421 status=OK\n"
+      },
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=verify",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-l2r03y5i/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-l2r03y5i/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-l2r03y5i/backup"
+        ],
+        "stdout": "metabypass mode=verify ops=200000 foreground_us=661460 sync_us=21 close_us=68496 backpressure_us=0 last_point_build_us=67530 last_point_lag_us=67893 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n"
+      }
+    ]
+  },
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-t3jhu78m",
+      "200000"
+    ],
+    "stdout": "foreground_us=2497744 user_us=1093852 system_us=1329179 voluntary=8215 involuntary=8\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2497744,
+      "user_us": 1093852,
+      "system_us": 1329179,
+      "voluntary": 8215,
+      "involuntary": 8
+    },
+    "verification": [
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=restore",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-t3jhu78m/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-t3jhu78m/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-t3jhu78m/backup"
+        ],
+        "stdout": "metabypass restore_us=2042061 status=OK\n"
+      },
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=verify",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-t3jhu78m/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-t3jhu78m/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-t3jhu78m/backup"
+        ],
+        "stdout": "metabypass mode=verify ops=200000 foreground_us=677412 sync_us=18 close_us=68432 backpressure_us=0 last_point_build_us=67429 last_point_lag_us=67829 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n"
+      }
+    ]
+  },
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-hdzz1j3r",
+      "200000"
+    ],
+    "stdout": "foreground_us=1934405 user_us=917115 system_us=981664 voluntary=2966 involuntary=10\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1934405,
+      "user_us": 917115,
+      "system_us": 981664,
+      "voluntary": 2966,
+      "involuntary": 10
+    },
+    "verification": [
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=restore",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-hdzz1j3r/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-hdzz1j3r/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-hdzz1j3r/backup"
+        ],
+        "stdout": "metabypass restore_us=2061637 status=OK\n"
+      },
+      {
+        "command": [
+          "/tmp/metabypass-scan-ablation-bin/async-incremental",
+          "--metabypass_mode=verify",
+          "--num=200000",
+          "--value_size=1024",
+          "--db=/tmp/mb-confirm-hdzz1j3r/index",
+          "--metabypass_data_dir=/tmp/mb-confirm-hdzz1j3r/data",
+          "--metabypass_backup_dir=/tmp/mb-confirm-hdzz1j3r/backup"
+        ],
+        "stdout": "metabypass mode=verify ops=200000 foreground_us=672238 sync_us=17 close_us=67753 backpressure_us=0 last_point_build_us=66847 last_point_lag_us=67195 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=212288952 reused_tables=1 status=OK\n"
+      }
+    ]
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-648m82s3",
+      "200000"
+    ],
+    "stdout": "foreground_us=2581940 user_us=1142267 system_us=1381035 voluntary=5903 involuntary=10\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2581940,
+      "user_us": 1142267,
+      "system_us": 1381035,
+      "voluntary": 5903,
+      "involuntary": 10
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-xgffnbbk",
+      "200000"
+    ],
+    "stdout": "foreground_us=1802492 user_us=947928 system_us=828122 voluntary=2149 involuntary=9\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1802492,
+      "user_us": 947928,
+      "system_us": 828122,
+      "voluntary": 2149,
+      "involuntary": 9
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-6cc0wdso",
+      "200000"
+    ],
+    "stdout": "foreground_us=1810675 user_us=874996 system_us=927068 voluntary=300 involuntary=8\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1810675,
+      "user_us": 874996,
+      "system_us": 927068,
+      "voluntary": 300,
+      "involuntary": 8
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-cpfo55hu",
+      "200000"
+    ],
+    "stdout": "foreground_us=1870383 user_us=918116 system_us=914163 voluntary=4115 involuntary=29\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1870383,
+      "user_us": 918116,
+      "system_us": 914163,
+      "voluntary": 4115,
+      "involuntary": 29
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-aydle5_s",
+      "200000"
+    ],
+    "stdout": "foreground_us=1824220 user_us=882715 system_us=933279 voluntary=295 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1824220,
+      "user_us": 882715,
+      "system_us": 933279,
+      "voluntary": 295,
+      "involuntary": 6
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-5glzf3xg",
+      "200000"
+    ],
+    "stdout": "foreground_us=2356708 user_us=1037318 system_us=1270480 voluntary=4283 involuntary=12\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2356708,
+      "user_us": 1037318,
+      "system_us": 1270480,
+      "voluntary": 4283,
+      "involuntary": 12
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-5vdybrhu",
+      "200000"
+    ],
+    "stdout": "foreground_us=1838910 user_us=937493 system_us=894275 voluntary=169 involuntary=7\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1838910,
+      "user_us": 937493,
+      "system_us": 894275,
+      "voluntary": 169,
+      "involuntary": 7
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-enfviigu",
+      "200000"
+    ],
+    "stdout": "foreground_us=2582461 user_us=1172800 system_us=1336401 voluntary=7963 involuntary=2\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2582461,
+      "user_us": 1172800,
+      "system_us": 1336401,
+      "voluntary": 7963,
+      "involuntary": 2
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-naaky5f_",
+      "200000"
+    ],
+    "stdout": "foreground_us=1904308 user_us=924074 system_us=948368 voluntary=3050 involuntary=44\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1904308,
+      "user_us": 924074,
+      "system_us": 948368,
+      "voluntary": 3050,
+      "involuntary": 44
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-1c6riz0f",
+      "200000"
+    ],
+    "stdout": "foreground_us=2261667 user_us=1046647 system_us=1169140 voluntary=3840 involuntary=5\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2261667,
+      "user_us": 1046647,
+      "system_us": 1169140,
+      "voluntary": 3840,
+      "involuntary": 5
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-ftrt04rs",
+      "200000"
+    ],
+    "stdout": "foreground_us=1772934 user_us=887393 system_us=847943 voluntary=4986 involuntary=1\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1772934,
+      "user_us": 887393,
+      "system_us": 847943,
+      "voluntary": 4986,
+      "involuntary": 1
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-cwvz0du4",
+      "200000"
+    ],
+    "stdout": "foreground_us=1788582 user_us=900359 system_us=880482 voluntary=261 involuntary=17\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1788582,
+      "user_us": 900359,
+      "system_us": 880482,
+      "voluntary": 261,
+      "involuntary": 17
+    }
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-u2b0dyhq",
+      "200000"
+    ],
+    "stdout": "foreground_us=1955265 user_us=1072661 system_us=875224 voluntary=165 involuntary=2\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f3ab338d0a8 offset=90a8 ns=23306 count=531\nPROFILE kind=0 site=0x565439445381 offset=10e381 ns=11539618 count=200000\nPROFILE kind=0 site=0x7f3ab3389561 offset=5561 ns=1366 count=20\nPROFILE kind=0 site=0x7f3ab338d7a5 offset=97a5 ns=2603 count=34\nPROFILE kind=0 site=0x565439435f7a offset=fef7a ns=12195440 count=200000\nPROFILE kind=1 site=0x565439435fb2 offset=fefb2 ns=13224154 count=200000\nPROFILE kind=0 site=0x5654394366f1 offset=ff6f1 ns=14841178 count=200000\nPROFILE kind=0 site=0x565439436931 offset=ff931 ns=8971216 count=200000\nPROFILE kind=0 site=0x7f3ab3386beb offset=2beb ns=4493 count=54\nPROFILE kind=2 site=0x5654395a6ff0 offset=26fff0 ns=927650818 count=400001\nPROFILE kind=0 site=0x56543962fb34 offset=2f8b34 ns=15632820 count=400003\n",
+    "metrics": {
+      "foreground_us": 1955265,
+      "user_us": 1072661,
+      "system_us": 875224,
+      "voluntary": 165,
+      "involuntary": 2
+    },
+    "symbols": "??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n??\n??:0\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n??\n??:0\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-owuaxzcf",
+      "200000"
+    ],
+    "stdout": "foreground_us=2822513 user_us=1223888 system_us=1521871 voluntary=7985 involuntary=4\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f5321978beb offset=2beb ns=3291 count=26\nPROFILE kind=0 site=0x55ac2f2ca5cf offset=ff5cf ns=45974964 count=200000\nPROFILE kind=2 site=0x55ac2f4421a0 offset=2771a0 ns=965551526 count=400001\nPROFILE kind=1 site=0x55ac2f2ca5f8 offset=ff5f8 ns=602933015 count=200000\nPROFILE kind=0 site=0x55ac2f2cacb1 offset=ffcb1 ns=28551132 count=200000\nPROFILE kind=0 site=0x55ac2f4cace4 offset=2ffce4 ns=16923043 count=400003\nPROFILE kind=0 site=0x55ac2f2caf01 offset=fff01 ns=68044500 count=200000\nPROFILE kind=0 site=0x7f532197f0a8 offset=90a8 ns=10931 count=225\nPROFILE kind=0 site=0x7f532197b561 offset=5561 ns=1006 count=8\nPROFILE kind=0 site=0x7f532197f7a5 offset=97a5 ns=2239 count=18\nPROFILE kind=0 site=0x55ac2f2dbc41 offset=110c41 ns=25744656 count=200000\n",
+    "metrics": {
+      "foreground_us": 2822513,
+      "user_us": 1223888,
+      "system_us": 1521871,
+      "voluntary": 7985,
+      "involuntary": 4
+    },
+    "symbols": "??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n??\n??:0\n??\n??:0\n??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-nl9s057h",
+      "200000"
+    ],
+    "stdout": "foreground_us=2027539 user_us=1175531 system_us=816318 voluntary=4228 involuntary=4\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f3b19264beb offset=2beb ns=3284 count=26\nPROFILE kind=0 site=0x55ee3ccfccb1 offset=110cb1 ns=26818504 count=200000\nPROFILE kind=0 site=0x7f3b1926b0a8 offset=90a8 ns=11138 count=225\nPROFILE kind=0 site=0x7f3b19267561 offset=5561 ns=1013 count=8\nPROFILE kind=0 site=0x55ee3cceb5df offset=ff5df ns=31120199 count=200000\nPROFILE kind=0 site=0x7f3b1926b7a5 offset=97a5 ns=2248 count=18\nPROFILE kind=1 site=0x55ee3cceb608 offset=ff608 ns=1760303 count=25995\nPROFILE kind=2 site=0x55ee3ce63210 offset=277210 ns=951294874 count=400001\nPROFILE kind=0 site=0x55ee3ccebce1 offset=ffce1 ns=36579357 count=200000\nPROFILE kind=0 site=0x55ee3ceebd54 offset=2ffd54 ns=15599879 count=400003\nPROFILE kind=0 site=0x55ee3ccebf31 offset=fff31 ns=22277424 count=200000\n",
+    "metrics": {
+      "foreground_us": 2027539,
+      "user_us": 1175531,
+      "system_us": 816318,
+      "voluntary": 4228,
+      "involuntary": 4
+    },
+    "symbols": "??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n??\n??:0\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-z03_dp45",
+      "200000"
+    ],
+    "stdout": "foreground_us=2759812 user_us=1233832 system_us=1459428 voluntary=6920 involuntary=7\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x561fbe8255cf offset=ff5cf ns=34278285 count=200000\nPROFILE kind=2 site=0x561fbe99d1a0 offset=2771a0 ns=934943913 count=400001\nPROFILE kind=1 site=0x561fbe8255f8 offset=ff5f8 ns=603808959 count=200000\nPROFILE kind=0 site=0x561fbe825cb1 offset=ffcb1 ns=31410513 count=200000\nPROFILE kind=0 site=0x561fbea25ce4 offset=2ffce4 ns=18738934 count=400003\nPROFILE kind=0 site=0x561fbe825f01 offset=fff01 ns=69936371 count=200000\nPROFILE kind=0 site=0x7f0c8e6420a8 offset=90a8 ns=10930 count=225\nPROFILE kind=0 site=0x7f0c8e63e561 offset=5561 ns=1011 count=8\nPROFILE kind=0 site=0x7f0c8e6427a5 offset=97a5 ns=2254 count=18\nPROFILE kind=0 site=0x561fbe836c41 offset=110c41 ns=26605007 count=200000\nPROFILE kind=0 site=0x7f0c8e63bbeb offset=2beb ns=3259 count=26\n",
+    "metrics": {
+      "foreground_us": 2759812,
+      "user_us": 1233832,
+      "system_us": 1459428,
+      "voluntary": 6920,
+      "involuntary": 7
+    },
+    "symbols": "rocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n??\n??:0\n??\n??:0\n??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n??\n??:0\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-pwtin0mk",
+      "200000"
+    ],
+    "stdout": "foreground_us=2031076 user_us=1141949 system_us=854877 voluntary=3535 involuntary=1\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f172037c0a8 offset=90a8 ns=11491 count=225\nPROFILE kind=0 site=0x7f1720378561 offset=5561 ns=901 count=8\nPROFILE kind=0 site=0x55e2485d05df offset=ff5df ns=36591803 count=200000\nPROFILE kind=0 site=0x7f172037c7a5 offset=97a5 ns=1991 count=18\nPROFILE kind=1 site=0x55e2485d0608 offset=ff608 ns=1897665 count=30246\nPROFILE kind=2 site=0x55e248748210 offset=277210 ns=941477351 count=400001\nPROFILE kind=0 site=0x55e2485d0ce1 offset=ffce1 ns=26598023 count=200000\nPROFILE kind=0 site=0x55e2487d0d54 offset=2ffd54 ns=15701563 count=400003\nPROFILE kind=0 site=0x55e2485d0f31 offset=fff31 ns=26917225 count=200000\nPROFILE kind=0 site=0x7f1720375beb offset=2beb ns=2936 count=26\nPROFILE kind=0 site=0x55e2485e1cb1 offset=110cb1 ns=26712621 count=200000\n",
+    "metrics": {
+      "foreground_us": 2031076,
+      "user_us": 1141949,
+      "system_us": 854877,
+      "voluntary": 3535,
+      "involuntary": 1
+    },
+    "symbols": "??\n??:0\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-3sm2_v72",
+      "200000"
+    ],
+    "stdout": "foreground_us=1969859 user_us=1109529 system_us=852350 voluntary=172 involuntary=17\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x55810b124381 offset=10e381 ns=12604429 count=200000\nPROFILE kind=0 site=0x55810b114f7a offset=fef7a ns=13179227 count=200000\nPROFILE kind=0 site=0x7f191e3190a8 offset=90a8 ns=23495 count=507\nPROFILE kind=1 site=0x55810b114fb2 offset=fefb2 ns=13986101 count=200000\nPROFILE kind=0 site=0x7f191e315561 offset=5561 ns=1443 count=19\nPROFILE kind=0 site=0x55810b1156f1 offset=ff6f1 ns=13711570 count=200000\nPROFILE kind=0 site=0x7f191e3197a5 offset=97a5 ns=2831 count=33\nPROFILE kind=0 site=0x55810b115931 offset=ff931 ns=9284808 count=200000\nPROFILE kind=2 site=0x55810b285ff0 offset=26fff0 ns=933833511 count=400001\nPROFILE kind=0 site=0x55810b30eb34 offset=2f8b34 ns=15785692 count=400003\nPROFILE kind=0 site=0x7f191e312beb offset=2beb ns=4459 count=52\n",
+    "metrics": {
+      "foreground_us": 1969859,
+      "user_us": 1109529,
+      "system_us": 852350,
+      "voluntary": 172,
+      "involuntary": 17
+    },
+    "symbols": "rocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Error() const\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\n??\n??:0\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "threshold",
+    "command": [
+      "/tmp/mb-foreground-profile/threshold-driver",
+      "/tmp/mb-confirm-vm0k4xqf",
+      "200000"
+    ],
+    "stdout": "foreground_us=1917221 user_us=1028479 system_us=865939 voluntary=2455 involuntary=7\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7fa2d155c0a8 offset=90a8 ns=10674 count=225\nPROFILE kind=0 site=0x7fa2d1558561 offset=5561 ns=890 count=8\nPROFILE kind=0 site=0x7fa2d155c7a5 offset=97a5 ns=1993 count=18\nPROFILE kind=0 site=0x5647bd81d5df offset=ff5df ns=22790667 count=200000\nPROFILE kind=1 site=0x5647bd81d608 offset=ff608 ns=1660429 count=21942\nPROFILE kind=2 site=0x5647bd995210 offset=277210 ns=875277892 count=400001\nPROFILE kind=0 site=0x7fa2d1555beb offset=2beb ns=2939 count=26\nPROFILE kind=0 site=0x5647bd81dce1 offset=ffce1 ns=24543519 count=200000\nPROFILE kind=0 site=0x5647bda1dd54 offset=2ffd54 ns=15825404 count=400003\nPROFILE kind=0 site=0x5647bd81df31 offset=fff31 ns=19578440 count=200000\nPROFILE kind=0 site=0x5647bd82ecb1 offset=110cb1 ns=19671355 count=200000\n",
+    "metrics": {
+      "foreground_us": 1917221,
+      "user_us": 1028479,
+      "system_us": 865939,
+      "voluntary": 2455,
+      "involuntary": 7
+    },
+    "symbols": "??\n??:0\n??\n??:0\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\n??\n??:0\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-confirm-a9hiaxod",
+      "200000"
+    ],
+    "stdout": "foreground_us=1939726 user_us=1023707 system_us=909144 voluntary=155 involuntary=17\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x55575ec34381 offset=10e381 ns=13236211 count=200000\nPROFILE kind=0 site=0x55575ec24f7a offset=fef7a ns=12041185 count=200000\nPROFILE kind=0 site=0x7fbb014950a8 offset=90a8 ns=20132 count=505\nPROFILE kind=1 site=0x55575ec24fb2 offset=fefb2 ns=12595473 count=200000\nPROFILE kind=0 site=0x7fbb01491561 offset=5561 ns=827 count=19\nPROFILE kind=0 site=0x55575ec256f1 offset=ff6f1 ns=14292394 count=200000\nPROFILE kind=0 site=0x7fbb014957a5 offset=97a5 ns=1477 count=33\nPROFILE kind=0 site=0x55575ec25931 offset=ff931 ns=9153359 count=200000\nPROFILE kind=2 site=0x55575ed95ff0 offset=26fff0 ns=910543873 count=400001\nPROFILE kind=0 site=0x55575ee1eb34 offset=2f8b34 ns=15773938 count=400003\nPROFILE kind=0 site=0x7fbb0148ebeb offset=2beb ns=2483 count=52\n",
+    "metrics": {
+      "foreground_us": 1939726,
+      "user_us": 1023707,
+      "system_us": 909144,
+      "voluntary": 155,
+      "involuntary": 17
+    },
+    "symbols": "rocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Error() const\n??:?\n??\n??:0\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\n??\n??:0\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-confirm-eyupycz9",
+      "200000"
+    ],
+    "stdout": "foreground_us=2576519 user_us=1173912 system_us=1361257 voluntary=4038 involuntary=5\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f98979a80a8 offset=90a8 ns=11006 count=225\nPROFILE kind=0 site=0x7f98979a4561 offset=5561 ns=996 count=8\nPROFILE kind=0 site=0x5598862f45cf offset=ff5cf ns=23776910 count=200000\nPROFILE kind=0 site=0x7f98979a87a5 offset=97a5 ns=2249 count=18\nPROFILE kind=2 site=0x55988646c1a0 offset=2771a0 ns=931300361 count=400001\nPROFILE kind=1 site=0x5598862f45f8 offset=ff5f8 ns=521448988 count=200000\nPROFILE kind=0 site=0x5598862f4cb1 offset=ffcb1 ns=23434008 count=200000\nPROFILE kind=0 site=0x5598864f4ce4 offset=2ffce4 ns=15764445 count=400003\nPROFILE kind=0 site=0x5598862f4f01 offset=fff01 ns=38547148 count=200000\nPROFILE kind=0 site=0x7f98979a1beb offset=2beb ns=3261 count=26\nPROFILE kind=0 site=0x559886305c41 offset=110c41 ns=14683812 count=200000\n",
+    "metrics": {
+      "foreground_us": 2576519,
+      "user_us": 1173912,
+      "system_us": 1361257,
+      "voluntary": 4038,
+      "involuntary": 5
+    },
+    "symbols": "??\n??:0\n??\n??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\n??\n??:0\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*)\n/tmp/metabypass-release-build/env/io_posix.cc:148\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&)\n??:?\nrocksdb::metabypass::Backup::Error() const\n??:?\nrocksdb::port::Mutex::Lock()\n/tmp/metabypass-release-build/port/port_posix.cc:52\nrocksdb::metabypass::Backup::Reserve(unsigned long)\n??:?\n??\n??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*)\n??:?\n"
+  }
+]

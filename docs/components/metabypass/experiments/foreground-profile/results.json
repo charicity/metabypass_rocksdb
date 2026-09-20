@@ -1,0 +1,638 @@
+[
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-pm5f7e96",
+      "200000"
+    ],
+    "stdout": "foreground_us=1791211 user_us=931231 system_us=848962 voluntary=217 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1791211,
+      "user_us": 931231,
+      "system_us": 848962,
+      "voluntary": 217,
+      "involuntary": 6
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-volz70jo",
+      "200000"
+    ],
+    "stdout": "foreground_us=2521721 user_us=1125859 system_us=1325055 voluntary=7240 involuntary=9\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2521721,
+      "user_us": 1125859,
+      "system_us": 1325055,
+      "voluntary": 7240,
+      "involuntary": 9
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 0,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-fv6g_5gb",
+      "200000"
+    ],
+    "stdout": "foreground_us=2346800 user_us=1130930 system_us=1175650 voluntary=3168 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2346800,
+      "user_us": 1130930,
+      "system_us": 1175650,
+      "voluntary": 3168,
+      "involuntary": 6
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-mxemiwt7",
+      "200000"
+    ],
+    "stdout": "foreground_us=2559439 user_us=1096345 system_us=1377182 voluntary=8988 involuntary=9\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2559439,
+      "user_us": 1096345,
+      "system_us": 1377182,
+      "voluntary": 8988,
+      "involuntary": 9
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-__wpdte6",
+      "200000"
+    ],
+    "stdout": "foreground_us=2376409 user_us=1165581 system_us=1169467 voluntary=3352 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2376409,
+      "user_us": 1165581,
+      "system_us": 1169467,
+      "voluntary": 3352,
+      "involuntary": 6
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 1,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-mly06pjy",
+      "200000"
+    ],
+    "stdout": "foreground_us=1741039 user_us=922890 system_us=808448 voluntary=239 involuntary=7\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1741039,
+      "user_us": 922890,
+      "system_us": 808448,
+      "voluntary": 239,
+      "involuntary": 7
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-wausxxui",
+      "200000"
+    ],
+    "stdout": "foreground_us=2118366 user_us=1090745 system_us=1011631 voluntary=433 involuntary=7\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2118366,
+      "user_us": 1090745,
+      "system_us": 1011631,
+      "voluntary": 433,
+      "involuntary": 7
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-pwrdk1s1",
+      "200000"
+    ],
+    "stdout": "foreground_us=1791964 user_us=929230 system_us=852861 voluntary=382 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1791964,
+      "user_us": 929230,
+      "system_us": 852861,
+      "voluntary": 382,
+      "involuntary": 6
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 2,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-gqbh7rbk",
+      "200000"
+    ],
+    "stdout": "foreground_us=2458761 user_us=1116229 system_us=1278136 voluntary=7058 involuntary=11\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2458761,
+      "user_us": 1116229,
+      "system_us": 1278136,
+      "voluntary": 7058,
+      "involuntary": 11
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-c7vezno3",
+      "200000"
+    ],
+    "stdout": "foreground_us=1831829 user_us=933320 system_us=891339 voluntary=271 involuntary=10\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1831829,
+      "user_us": 933320,
+      "system_us": 891339,
+      "voluntary": 271,
+      "involuntary": 10
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-ucm5z0cw",
+      "200000"
+    ],
+    "stdout": "foreground_us=2359267 user_us=1086797 system_us=1229105 voluntary=3803 involuntary=4\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2359267,
+      "user_us": 1086797,
+      "system_us": 1229105,
+      "voluntary": 3803,
+      "involuntary": 4
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 3,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-tyeuu2bt",
+      "200000"
+    ],
+    "stdout": "foreground_us=2414080 user_us=1116917 system_us=1264061 voluntary=2566 involuntary=12\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2414080,
+      "user_us": 1116917,
+      "system_us": 1264061,
+      "voluntary": 2566,
+      "involuntary": 12
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-vlelokww",
+      "200000"
+    ],
+    "stdout": "foreground_us=2652466 user_us=1115387 system_us=1449113 voluntary=10138 involuntary=13\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2652466,
+      "user_us": 1115387,
+      "system_us": 1449113,
+      "voluntary": 10138,
+      "involuntary": 13
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-xdi1zi2v",
+      "200000"
+    ],
+    "stdout": "foreground_us=2385803 user_us=1137702 system_us=1212124 voluntary=3129 involuntary=1\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2385803,
+      "user_us": 1137702,
+      "system_us": 1212124,
+      "voluntary": 3129,
+      "involuntary": 1
+    }
+  },
+  {
+    "phase": "plain",
+    "trial": 4,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-bldr03i5",
+      "200000"
+    ],
+    "stdout": "foreground_us=1679838 user_us=907586 system_us=761647 voluntary=282 involuntary=26\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1679838,
+      "user_us": 907586,
+      "system_us": 761647,
+      "voluntary": 282,
+      "involuntary": 26
+    }
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-yz7u0n00",
+      "200000"
+    ],
+    "stdout": "foreground_us=1771958 user_us=917572 system_us=845052 voluntary=280 involuntary=7\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1771958,
+      "user_us": 917572,
+      "system_us": 845052,
+      "voluntary": 280,
+      "involuntary": 7
+    },
+    "symbols": ""
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-ladjw8b2",
+      "200000"
+    ],
+    "stdout": "foreground_us=2421493 user_us=1145543 system_us=1228501 voluntary=4575 involuntary=9\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7fbd11e4d0a8 offset=90a8 ns=11292 count=225\nPROFILE kind=0 site=0x7fbd11e49561 offset=5561 ns=997 count=8\nPROFILE kind=0 site=0x55cd075cd5cf offset=ff5cf ns=24949690 count=200000\nPROFILE kind=0 site=0x7fbd11e4d7a5 offset=97a5 ns=2259 count=18\nPROFILE kind=2 site=0x55cd077451a0 offset=2771a0 ns=847100249 count=400001\nPROFILE kind=1 site=0x55cd075cd5f8 offset=ff5f8 ns=500620873 count=200000\nPROFILE kind=0 site=0x55cd075cdcb1 offset=ffcb1 ns=21200089 count=200000\nPROFILE kind=0 site=0x55cd077cdce4 offset=2ffce4 ns=19217007 count=400003\nPROFILE kind=0 site=0x55cd075cdf01 offset=fff01 ns=37535850 count=200000\nPROFILE kind=0 site=0x7fbd11e46beb offset=2beb ns=3252 count=26\nPROFILE kind=0 site=0x55cd075dec41 offset=110c41 ns=13029769 count=200000\n",
+    "metrics": {
+      "foreground_us": 2421493,
+      "user_us": 1145543,
+      "system_us": 1228501,
+      "voluntary": 4575,
+      "involuntary": 9
+    },
+    "symbols": "?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\n?? ??:0\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\n?? ??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 0,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-13n_17op",
+      "200000"
+    ],
+    "stdout": "foreground_us=2321045 user_us=1079224 system_us=1224142 voluntary=372 involuntary=10\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f4c4c6480a8 offset=90a8 ns=11317 count=225\nPROFILE kind=0 site=0x7f4c4c644561 offset=5561 ns=996 count=8\nPROFILE kind=0 site=0x7f4c4c6487a5 offset=97a5 ns=2234 count=18\nPROFILE kind=0 site=0x557407d555df offset=ff5df ns=12006624 count=200000\nPROFILE kind=1 site=0x557407d55608 offset=ff608 ns=397538654 count=200000\nPROFILE kind=2 site=0x557407ecd1f0 offset=2771f0 ns=899834204 count=400001\nPROFILE kind=0 site=0x7f4c4c641beb offset=2beb ns=3267 count=26\nPROFILE kind=0 site=0x557407d55cc1 offset=ffcc1 ns=13652504 count=200000\nPROFILE kind=0 site=0x557407f55d34 offset=2ffd34 ns=15893243 count=400003\nPROFILE kind=0 site=0x557407d55f11 offset=fff11 ns=17989344 count=200000\nPROFILE kind=0 site=0x557407d66c91 offset=110c91 ns=12236528 count=200000\n",
+    "metrics": {
+      "foreground_us": 2321045,
+      "user_us": 1079224,
+      "system_us": 1224142,
+      "voluntary": 372,
+      "involuntary": 10
+    },
+    "symbols": "?? ??:0\n?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\n?? ??:0\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-_yyp98bl",
+      "200000"
+    ],
+    "stdout": "foreground_us=2384350 user_us=1155715 system_us=1183495 voluntary=3619 involuntary=11\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f652e6290a8 offset=90a8 ns=9857 count=225\nPROFILE kind=0 site=0x7f652e625561 offset=5561 ns=502 count=8\nPROFILE kind=0 site=0x7f652e6297a5 offset=97a5 ns=1129 count=18\nPROFILE kind=0 site=0x5653b2da25cf offset=ff5cf ns=22042630 count=200000\nPROFILE kind=2 site=0x5653b2f1a1a0 offset=2771a0 ns=827455202 count=400001\nPROFILE kind=1 site=0x5653b2da25f8 offset=ff5f8 ns=499930224 count=200000\nPROFILE kind=0 site=0x7f652e622beb offset=2beb ns=1646 count=26\nPROFILE kind=0 site=0x5653b2da2cb1 offset=ffcb1 ns=17651616 count=200000\nPROFILE kind=0 site=0x5653b2fa2ce4 offset=2ffce4 ns=15645949 count=400003\nPROFILE kind=0 site=0x5653b2da2f01 offset=fff01 ns=34284706 count=200000\nPROFILE kind=0 site=0x5653b2db3c41 offset=110c41 ns=12255512 count=200000\n",
+    "metrics": {
+      "foreground_us": 2384350,
+      "user_us": 1155715,
+      "system_us": 1183495,
+      "voluntary": 3619,
+      "involuntary": 11
+    },
+    "symbols": "?? ??:0\n?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\n?? ??:0\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-x07zv_kd",
+      "200000"
+    ],
+    "stdout": "foreground_us=2257736 user_us=1040049 system_us=1198842 voluntary=520 involuntary=12\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7f52ca34c0a8 offset=90a8 ns=10333 count=225\nPROFILE kind=0 site=0x7f52ca348561 offset=5561 ns=807 count=8\nPROFILE kind=0 site=0x7f52ca34c7a5 offset=97a5 ns=1794 count=18\nPROFILE kind=0 site=0x7f52ca345beb offset=2beb ns=2620 count=26\nPROFILE kind=0 site=0x558e22bd65df offset=ff5df ns=12319986 count=200000\nPROFILE kind=1 site=0x558e22bd6608 offset=ff608 ns=373317009 count=200000\nPROFILE kind=2 site=0x558e22d4e1f0 offset=2771f0 ns=883301328 count=400001\nPROFILE kind=0 site=0x558e22bd6cc1 offset=ffcc1 ns=13341886 count=200000\nPROFILE kind=0 site=0x558e22dd6d34 offset=2ffd34 ns=15737581 count=400003\nPROFILE kind=0 site=0x558e22bd6f11 offset=fff11 ns=18937897 count=200000\nPROFILE kind=0 site=0x558e22be7c91 offset=110c91 ns=11749480 count=200000\n",
+    "metrics": {
+      "foreground_us": 2257736,
+      "user_us": 1040049,
+      "system_us": 1198842,
+      "voluntary": 520,
+      "involuntary": 12
+    },
+    "symbols": "?? ??:0\n?? ??:0\n?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 1,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-nd36d6xw",
+      "200000"
+    ],
+    "stdout": "foreground_us=1805058 user_us=939052 system_us=856769 voluntary=359 involuntary=6\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1805058,
+      "user_us": 939052,
+      "system_us": 856769,
+      "voluntary": 359,
+      "involuntary": 6
+    },
+    "symbols": ""
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/tmp/mb-prof-5wqrtms9",
+      "200000"
+    ],
+    "stdout": "foreground_us=2431864 user_us=1230585 system_us=1169897 voluntary=2237 involuntary=11\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x7feaacf850a8 offset=90a8 ns=11412 count=225\nPROFILE kind=0 site=0x7feaacf81561 offset=5561 ns=903 count=8\nPROFILE kind=0 site=0x564128aa15df offset=ff5df ns=20985998 count=200000\nPROFILE kind=0 site=0x7feaacf857a5 offset=97a5 ns=2003 count=18\nPROFILE kind=1 site=0x564128aa1608 offset=ff608 ns=444376360 count=200000\nPROFILE kind=2 site=0x564128c191f0 offset=2771f0 ns=845194514 count=400001\nPROFILE kind=0 site=0x564128aa1cc1 offset=ffcc1 ns=24465312 count=200000\nPROFILE kind=0 site=0x564128ca1d34 offset=2ffd34 ns=15819844 count=400003\nPROFILE kind=0 site=0x564128aa1f11 offset=fff11 ns=34815013 count=200000\nPROFILE kind=0 site=0x7feaacf7ebeb offset=2beb ns=2983 count=26\nPROFILE kind=0 site=0x564128ab2c91 offset=110c91 ns=24505795 count=200000\n",
+    "metrics": {
+      "foreground_us": 2431864,
+      "user_us": 1230585,
+      "system_us": 1169897,
+      "voluntary": 2237,
+      "involuntary": 11
+    },
+    "symbols": "?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\n?? ??:0\nrocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n"
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/tmp/mb-prof-ona4tfna",
+      "200000"
+    ],
+    "stdout": "foreground_us=1684697 user_us=934758 system_us=743155 voluntary=220 involuntary=10\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1684697,
+      "user_us": 934758,
+      "system_us": 743155,
+      "voluntary": 220,
+      "involuntary": 10
+    },
+    "symbols": ""
+  },
+  {
+    "phase": "hooks",
+    "trial": 2,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/tmp/mb-prof-plzllywn",
+      "200000"
+    ],
+    "stdout": "foreground_us=2526437 user_us=1173365 system_us=1298599 voluntary=5090 involuntary=11\nstatus=OK\n",
+    "stderr": "PROFILE kind=0 site=0x55e810d60c41 offset=110c41 ns=14283451 count=200000\nPROFILE kind=0 site=0x7fd2585050a8 offset=90a8 ns=9190 count=225\nPROFILE kind=0 site=0x7fd258501561 offset=5561 ns=422 count=8\nPROFILE kind=0 site=0x7fd2585057a5 offset=97a5 ns=952 count=18\nPROFILE kind=0 site=0x7fd2584febeb offset=2beb ns=1384 count=26\nPROFILE kind=0 site=0x55e810d4f5cf offset=ff5cf ns=25379072 count=200000\nPROFILE kind=2 site=0x55e810ec71a0 offset=2771a0 ns=897696414 count=400001\nPROFILE kind=1 site=0x55e810d4f5f8 offset=ff5f8 ns=521794302 count=200000\nPROFILE kind=0 site=0x55e810d4fcb1 offset=ffcb1 ns=26404981 count=200000\nPROFILE kind=0 site=0x55e810f4fce4 offset=2ffce4 ns=18999056 count=400003\nPROFILE kind=0 site=0x55e810d4ff01 offset=fff01 ns=39772280 count=200000\n",
+    "metrics": {
+      "foreground_us": 2526437,
+      "user_us": 1173365,
+      "system_us": 1298599,
+      "voluntary": 5090,
+      "involuntary": 11
+    },
+    "symbols": "rocksdb::metabypass::MirrorWriter::AppendInternal(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::DataVerificationInfo const*, rocksdb::IODebugContext*) at ??:?\n?? ??:0\n?? ??:0\n?? ??:0\n?? ??:0\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:148\n (inlined by) rocksdb::PosixWritableFile::Append(rocksdb::Slice const&, rocksdb::IOOptions const&, rocksdb::IODebugContext*) at /tmp/metabypass-release-build/env/io_posix.cc:1728\nrocksdb::metabypass::Backup::Finish(rocksdb::metabypass::Backup::Event&&, rocksdb::Status const&) at ??:?\nrocksdb::metabypass::Backup::Error() const at ??:?\nrocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:52\n (inlined by) rocksdb::port::Mutex::Lock() at /tmp/metabypass-release-build/port/port_posix.cc:80\nrocksdb::metabypass::Backup::Reserve(unsigned long) at ??:?\n"
+  },
+  {
+    "phase": "ram",
+    "trial": 0,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/dev/shm/mb-prof-hn067qsz",
+      "200000"
+    ],
+    "stdout": "foreground_us=1203911 user_us=759850 system_us=439790 voluntary=380 involuntary=5\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1203911,
+      "user_us": 759850,
+      "system_us": 439790,
+      "voluntary": 380,
+      "involuntary": 5
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 0,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/dev/shm/mb-prof-p8std26v",
+      "200000"
+    ],
+    "stdout": "foreground_us=2687737 user_us=1034757 system_us=1205022 voluntary=67563 involuntary=5\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2687737,
+      "user_us": 1034757,
+      "system_us": 1205022,
+      "voluntary": 67563,
+      "involuntary": 5
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 0,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/dev/shm/mb-prof-2v44_gi9",
+      "200000"
+    ],
+    "stdout": "foreground_us=1839754 user_us=966721 system_us=846855 voluntary=3760 involuntary=22\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1839754,
+      "user_us": 966721,
+      "system_us": 846855,
+      "voluntary": 3760,
+      "involuntary": 22
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 1,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/dev/shm/mb-prof-3bcxc09x",
+      "200000"
+    ],
+    "stdout": "foreground_us=2203157 user_us=921091 system_us=1061675 voluntary=32021 involuntary=3\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2203157,
+      "user_us": 921091,
+      "system_us": 1061675,
+      "voluntary": 32021,
+      "involuntary": 3
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 1,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/dev/shm/mb-prof-0dbe9jiv",
+      "200000"
+    ],
+    "stdout": "foreground_us=1683795 user_us=938124 system_us=741047 voluntary=514 involuntary=17\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1683795,
+      "user_us": 938124,
+      "system_us": 741047,
+      "voluntary": 514,
+      "involuntary": 17
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 1,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/dev/shm/mb-prof-6646s05y",
+      "200000"
+    ],
+    "stdout": "foreground_us=1200778 user_us=792732 system_us=406278 voluntary=242 involuntary=5\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1200778,
+      "user_us": 792732,
+      "system_us": 406278,
+      "voluntary": 242,
+      "involuntary": 5
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 2,
+    "version": "split-cv",
+    "command": [
+      "/tmp/mb-foreground-profile/split-cv-driver",
+      "/dev/shm/mb-prof-zmet6zew",
+      "200000"
+    ],
+    "stdout": "foreground_us=1876428 user_us=1053800 system_us=795250 voluntary=4387 involuntary=53\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1876428,
+      "user_us": 1053800,
+      "system_us": 795250,
+      "voluntary": 4387,
+      "involuntary": 53
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 2,
+    "version": "baseline",
+    "command": [
+      "/tmp/mb-foreground-profile/baseline-driver",
+      "/dev/shm/mb-prof-4nsg309q",
+      "200000"
+    ],
+    "stdout": "foreground_us=1270308 user_us=834898 system_us=429595 voluntary=362 involuntary=5\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 1270308,
+      "user_us": 834898,
+      "system_us": 429595,
+      "voluntary": 362,
+      "involuntary": 5
+    }
+  },
+  {
+    "phase": "ram",
+    "trial": 2,
+    "version": "current",
+    "command": [
+      "/tmp/mb-foreground-profile/current-driver",
+      "/dev/shm/mb-prof-rp2zgt3u",
+      "200000"
+    ],
+    "stdout": "foreground_us=2675721 user_us=1231498 system_us=985175 voluntary=65644 involuntary=3\nstatus=OK\n",
+    "stderr": "",
+    "metrics": {
+      "foreground_us": 2675721,
+      "user_us": 1231498,
+      "system_us": 985175,
+      "voluntary": 65644,
+      "involuntary": 3
+    }
+  }
+]

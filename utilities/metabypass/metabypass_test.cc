@@ -117,6 +117,81 @@ class MetaBypassTest : public testing::Test {
     ASSERT_EQ(WTERMSIG(status), SIGKILL);
   }
 #endif
+  void StartBackup(std::unique_ptr<metabypass::Backup>* backup) {
+    auto storage = std::make_shared<metabypass::SeparatedStorage>(fs_, index_,
+                                                                  m_.data_dir);
+    ASSERT_OK(storage->Lock());
+    ASSERT_OK(fs_->CreateDir(index_, IOOptions(), nullptr));
+    *backup = std::make_unique<metabypass::Backup>(storage, index_, m_);
+    ASSERT_OK((*backup)->Start(false));
+  }
+  void NotificationScenario(bool pressure, bool fail, bool timer) {
+    m_.queue_capacity = m_.batch_bytes = 4096;
+    m_.interval_ms = timer ? 1 : 60000;
+    TestGate waiting, applying;
+    std::atomic<bool> first{true};
+    std::atomic<int> notifications{0}, blocked{0};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeMirrorWait",
+                                          [&](void*) {
+                                            if (first.exchange(false))
+                                              waiting.Block();
+                                          });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::MirrorNotified",
+                                          [&](void*) { ++notifications; });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure",
+                                          [&](void*) { ++blocked; });
+    if (timer) {
+      SyncPoint::GetInstance()->SetCallBack("MetaBypass::Apply",
+                                            [&](void*) { applying.Block(); });
+    }
+    if (fail) {
+      SyncPoint::GetInstance()->SetCallBack(
+          "MetaBypass::ApplyStatus", [](void* arg) {
+            *static_cast<Status*>(arg) = Status::IOError("mirror failure");
+          });
+    }
+    SyncPoint::GetInstance()->EnableProcessing();
+    std::unique_ptr<metabypass::Backup> backup;
+    ASSERT_NO_FATAL_FAILURE(StartBackup(&backup));
+    waiting.WaitUntilBlocked();
+    waiting.Release();
+    std::unique_ptr<FSWritableFile> file;
+    ASSERT_OK(backup->NewWritableFile(index_ + "/000001.log", FileOptions(),
+                                      &file, nullptr));
+    ASSERT_OK(file->Append(std::string(2000, 'a'), IOOptions(), nullptr));
+    EXPECT_EQ(notifications.load(), 0);
+    if (timer) {
+      // Only the timed wait can drain these below-threshold events.
+      applying.WaitUntilBlocked();
+      applying.Release();
+    }
+    if (pressure) {
+      Status s = file->Append(std::string(3000, 'b'), IOOptions(), nullptr);
+      if (fail)
+        EXPECT_TRUE(s.IsIOError());
+      else
+        EXPECT_OK(s);
+      EXPECT_GT(blocked.load(), 0);
+      EXPECT_GT(notifications.load(), 0);
+    }
+    if (fail) {
+      EXPECT_TRUE(file->Close(IOOptions(), nullptr).IsIOError());
+      EXPECT_TRUE(backup->Sync().IsIOError());
+      EXPECT_TRUE(backup->Stop().IsIOError());
+    } else {
+      EXPECT_OK(file->Close(IOOptions(), nullptr));
+      EXPECT_OK(backup->Stop());
+      std::string bytes;
+      ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log",
+                                 &bytes));
+      EXPECT_EQ(bytes, std::string(2000, 'a') +
+                           (pressure ? std::string(3000, 'b') : ""));
+      auto stats = backup->Stats();
+      EXPECT_OK(stats.error);
+      EXPECT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+    }
+    SyncPoint::GetInstance()->DisableProcessing();
+  }
   void QueueScenario(bool fail) {
     m_.queue_capacity = 4096;
     m_.batch_bytes = 1;
@@ -501,6 +576,85 @@ TEST_F(MetaBypassTest, IncrementalValidationRejectsNewCorruption) {
   ASSERT_TRUE(corrupted);
   ASSERT_TRUE(db_->SyncBackup().IsCorruption());
   ASSERT_FALSE(db_->Close().ok());
+}
+TEST_F(MetaBypassTest, BelowThresholdDrainsOnStopWithoutNotifications) {
+  NotificationScenario(false, false, false);
+}
+TEST_F(MetaBypassTest, BelowThresholdDrainsOnTimer) {
+  NotificationScenario(false, false, true);
+}
+TEST_F(MetaBypassTest, BackpressureDrainsBelowBatchThreshold) {
+  NotificationScenario(true, false, false);
+}
+TEST_F(MetaBypassTest, BelowThresholdFailureWakesReservation) {
+  NotificationScenario(true, true, false);
+}
+TEST_F(MetaBypassTest, CloseDrainsWithValidatorBlocked) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  TestGate validating, closing;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) { validating.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::CloseWaitingForValidation",
+                                        [&](void*) { closing.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::thread close([&] { EXPECT_OK(db_->Close()); });
+  closing.WaitUntilBlocked();
+  closing.Release();
+  validating.WaitUntilBlocked();
+  validating.Release();
+  close.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (bool fail : {false, true}) {
+    TestGate validating, waiters;
+    std::atomic<int> waiting{0};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                          [&](void*) { validating.Block(); });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                          [&](void*) {
+                                            if (++waiting == 4) waiters.Block();
+                                          });
+    if (fail) {
+      SyncPoint::GetInstance()->SetCallBack(
+          "MetaBypass::BeforePointerReplace", [](void* arg) {
+            *static_cast<Status*>(arg) = Status::IOError("publication failure");
+          });
+    }
+    SyncPoint::GetInstance()->EnableProcessing();
+    ASSERT_OK(db_->Put(WriteOptions(), "key", fail ? "new" : "old"));
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 4; ++i) {
+      threads.emplace_back([&] {
+        Status s = db_->SyncBackup();
+        if (fail)
+          EXPECT_TRUE(s.IsIOError());
+        else
+          EXPECT_OK(s);
+      });
+    }
+    waiters.WaitUntilBlocked();
+    waiters.Release();
+    validating.WaitUntilBlocked();
+    validating.Release();
+    for (auto& thread : threads) thread.join();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+  }
+  Check("key", "new");
+  ASSERT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "old");
 }
 TEST_F(MetaBypassTest, QueueCapacityAndOrdering) { QueueScenario(false); }
 TEST_F(MetaBypassTest, MirrorFailureWakesBlockedProducer) {

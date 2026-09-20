@@ -1,0 +1,1 @@
+Reduced Metabypass foreground notification overhead by separating worker and caller wait channels and waking the mirror only for actionable work; capacity pressure triggers immediate draining below the batching threshold.

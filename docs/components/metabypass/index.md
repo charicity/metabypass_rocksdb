@@ -115,6 +115,15 @@ mirror to drain; blocked mirror/candidate-copy I/O can still fill the queue. A b
 waiters, stops publication and rejects subsequent writes while reads remain
 available. Explicit SyncBackup and Close report it.
 
+The backup uses separate wait channels for mirror work, candidate validation,
+queue capacity, and published progress. An enqueue notifies an idle mirror only
+when its work predicate is satisfied.
+A blocked capacity reservation requests immediate draining, even below the
+batch threshold. Below-threshold traffic otherwise uses the interval timer.
+Publication and errors wake every SyncBackup waiter; error and shutdown paths
+also release the relevant worker and capacity waits. Per-event consumption
+only notifies a producer actually waiting for enough capacity.
+
 SyncBackup waits for a point covering writes completed before its call. It
 should be called after the writes whose backup is required. Normal Close first
 closes/destroys the primary DB, then drains the mirror and publishes the final
@@ -207,3 +216,16 @@ Repeat with fresh directories and report host/storage/workload parameters.
 Directory-local SIGKILL experiments do not simulate power loss, controller
 caches, torn sectors or the original Ceph data lifecycle; no real power-failure
 guarantee follows from these results.
+
+See [foreground-time profiling](foreground-profile.md) for the measured cause
+of the pipeline's foreground regression and notification-only controls.
+
+
+See [notification fix validation](notification-validation.md) for the wait
+protocol, concurrency coverage, and before/after measurements.
+
+See [the four-version performance comparison](version-comparison.md) for
+no-backup, original, incremental, and notification-fixed results.
+
+See the [Chinese optimization summary](optimization-summary.zh-CN.md) for a
+compact list of implemented improvements, their rationale, and measured effects.

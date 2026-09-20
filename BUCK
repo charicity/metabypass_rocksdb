@@ -325,6 +325,10 @@ cpp_library_wrapper(name="rocksdb_lib", srcs=[
         "utilities/merge_operators/string_append/stringappend.cc",
         "utilities/merge_operators/string_append/stringappend2.cc",
         "utilities/merge_operators/uint64add.cc",
+        "utilities/metabypass/backup.cc",
+        "utilities/metabypass/metabypass_db.cc",
+        "utilities/metabypass/native_files.cc",
+        "utilities/metabypass/separated_storage.cc",
         "utilities/object_registry.cc",
         "utilities/option_change_migration/option_change_migration.cc",
         "utilities/options/options_util.cc",
@@ -5365,6 +5369,12 @@ cpp_unittest_wrapper(name="merge_test",
 
 cpp_unittest_wrapper(name="merger_test",
             srcs=["table/merger_test.cc"],
+            deps=[":rocksdb_test_lib"],
+            extra_compiler_flags=[])
+
+
+cpp_unittest_wrapper(name="metabypass_test",
+            srcs=["utilities/metabypass/metabypass_test.cc"],
             deps=[":rocksdb_test_lib"],
             extra_compiler_flags=[])
 

@@ -1036,6 +1036,10 @@ set(SOURCES
         utilities/cassandra/cassandra_compaction_filter.cc
         utilities/cassandra/format.cc
         utilities/cassandra/merge_operator.cc
+        utilities/metabypass/native_files.cc
+        utilities/metabypass/separated_storage.cc
+        utilities/metabypass/backup.cc
+        utilities/metabypass/metabypass_db.cc
         utilities/checkpoint/checkpoint_impl.cc
         utilities/compaction_filters.cc
         utilities/sorted_run_builder/sorted_run_builder.cc
@@ -1641,6 +1645,7 @@ if(WITH_TESTS)
         utilities/cassandra/cassandra_format_test.cc
         utilities/cassandra/cassandra_row_merge_test.cc
         utilities/cassandra/cassandra_serialize_test.cc
+        utilities/metabypass/metabypass_test.cc
         utilities/checkpoint/checkpoint_test.cc
         utilities/copy_engine/copy_engine_test.cc
         utilities/sorted_run_builder/sorted_run_builder_test.cc

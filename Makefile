@@ -649,6 +649,7 @@ TESTS_PLATFORM_DEPENDENT := \
 	bloom_test \
 	dynamic_bloom_test \
 	c_test \
+	metabypass_test \
 	checkpoint_test \
 	sorted_run_builder_test \
 	crc32c_test \
@@ -1824,6 +1825,9 @@ prefix_test: $(OBJ_DIR)/db/prefix_test.o $(TEST_LIBRARY) $(LIBRARY)
 	$(AM_LINK)
 
 backup_engine_test: $(OBJ_DIR)/utilities/backup/backup_engine_test.o $(TEST_LIBRARY) $(LIBRARY)
+	$(AM_LINK)
+
+metabypass_test: $(OBJ_DIR)/utilities/metabypass/metabypass_test.o $(TEST_LIBRARY) $(LIBRARY)
 	$(AM_LINK)
 
 checkpoint_test: $(OBJ_DIR)/utilities/checkpoint/checkpoint_test.o $(TEST_LIBRARY) $(LIBRARY)

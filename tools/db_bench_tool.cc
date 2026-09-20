@@ -70,6 +70,7 @@
 #include "rocksdb/table.h"
 #include "rocksdb/tool_hooks.h"
 #include "rocksdb/utilities/backup_engine.h"
+#include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/optimistic_transaction_db.h"
 #include "rocksdb/utilities/options_type.h"
@@ -100,6 +101,7 @@
 #include "utilities/merge_operators.h"
 #include "utilities/merge_operators/bytesxor.h"
 #include "utilities/merge_operators/sortlist.h"
+#include "utilities/metabypass/separated_storage.h"
 #include "utilities/persistent_cache/block_cache_tier.h"
 #include "utilities/trie_index/trie_index_factory.h"
 #ifdef MEMKIND
@@ -1115,6 +1117,17 @@ DEFINE_bool(fifo_compaction_use_kv_ratio_compaction, false,
             "BlobDB. Requires fifo_compaction_max_data_files_size_mb > 0.");
 
 // Stacked BlobDB Options
+DEFINE_string(
+    metabypass_mode, "",
+    "Standalone Metabypass benchmark: write, baseline, restore, verify. "
+    "Uses --db, --num, --value_size, --sync and the metabypass flags.");
+DEFINE_string(metabypass_data_dir, "", "Separate retained blob directory");
+DEFINE_string(metabypass_backup_dir, "", "Native index backup directory");
+DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
+              "Pending event bytes");
+DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
+DEFINE_uint64(metabypass_interval_ms, 1000, "Background trigger interval");
+
 DEFINE_bool(use_blob_db, false, "[Stacked BlobDB] Open a BlobDB instance.");
 
 DEFINE_bool(
@@ -10936,6 +10949,108 @@ class ReadFaultInjectionFS : public FileSystemWrapper {
 };
 }  // namespace
 
+// A deliberately narrow benchmark entry point keeps unsupported DB APIs out
+// of the research prototype. Baseline uses the same separated blob storage.
+static int RunMetaBypassBenchmark() {
+  Options options;
+  options.env = FLAGS_env;
+  options.create_if_missing = true;
+  options.allow_concurrent_memtable_write = false;
+  options.enable_blob_files = true;
+  options.enable_blob_direct_write = true;
+  options.min_blob_size = 0;
+  options.compression = kNoCompression;
+  MetaBypassOptions bypass;
+  bypass.data_dir = FLAGS_metabypass_data_dir;
+  bypass.backup_dir = FLAGS_metabypass_backup_dir;
+  bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
+  bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
+  bypass.interval_ms = FLAGS_metabypass_interval_ms;
+  auto clock = FLAGS_env->GetSystemClock();
+  uint64_t start = clock->NowMicros();
+  if (FLAGS_metabypass_mode == "restore") {
+    Status s = MetaBypassDB::Restore(options, bypass, FLAGS_db);
+    std::unique_ptr<MetaBypassDB> db;
+    if (s.ok()) s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);
+    const uint64_t recovered = clock->NowMicros() - start;
+    if (s.ok()) s = db->Close();
+    printf("metabypass restore_us=%" PRIu64 " status=%s\n", recovered,
+           s.ToString().c_str());
+    return s.ok() ? 0 : 1;
+  }
+  const bool baseline = FLAGS_metabypass_mode == "baseline";
+  const bool verify = FLAGS_metabypass_mode == "verify";
+  if (!baseline && !verify && FLAGS_metabypass_mode != "write") {
+    fprintf(stderr, "Unknown --metabypass_mode\n");
+    return 1;
+  }
+  if (FLAGS_num < 1 || FLAGS_value_size < 0 || FLAGS_disable_wal) {
+    fprintf(stderr, "Metabypass requires num > 0, value_size >= 0 and WAL\n");
+    return 1;
+  }
+  Status s;
+  std::shared_ptr<metabypass::SeparatedStorage> storage;
+  std::unique_ptr<Env> env;
+  std::unique_ptr<DB> raw;
+  std::unique_ptr<MetaBypassDB> db;
+  if (baseline) {
+    options.error_if_exists = true;
+    storage = std::make_shared<metabypass::SeparatedStorage>(
+        FLAGS_env->GetFileSystem(), FLAGS_db, bypass.data_dir);
+    s = storage->Lock();
+    std::vector<std::string> children;
+    if (s.ok())
+      s = FLAGS_env->GetFileSystem()->GetChildren(bypass.data_dir, IOOptions(),
+                                                  &children, nullptr);
+    for (const auto& child : children) {
+      if (child != "." && child != ".." && child != "METABYPASS-LOCK")
+        s = Status::InvalidArgument(
+            "baseline requires an empty data directory");
+    }
+    env = NewCompositeEnv(storage);
+    options.env = env.get();
+    if (s.ok()) s = DB::Open(options, FLAGS_db, &raw);
+  } else {
+    options.error_if_exists = !verify;
+    s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);
+  }
+  const std::string value(FLAGS_value_size, 'v');
+  WriteOptions write;
+  write.sync = FLAGS_sync;
+  start = clock->NowMicros();
+  for (int64_t i = 0; s.ok() && i < FLAGS_num; ++i) {
+    const std::string key = std::to_string(i);
+    if (verify) {
+      std::string actual;
+      s = db->Get(ReadOptions(), key, &actual);
+      if (s.ok() && actual != value)
+        s = Status::Corruption("benchmark value mismatch");
+    } else
+      s = baseline ? raw->Put(write, key, value) : db->Put(write, key, value);
+  }
+  const uint64_t foreground = clock->NowMicros() - start;
+  const uint64_t sync_start = clock->NowMicros();
+  if (s.ok() && db) s = db->SyncBackup();
+  const uint64_t sync_us = clock->NowMicros() - sync_start;
+  const uint64_t close_start = clock->NowMicros();
+  s.UpdateIfOk(db ? db->Close() : raw ? raw->Close() : Status::OK());
+  const uint64_t close_us = clock->NowMicros() - close_start;
+  MetaBypassStats stats;
+  if (db) stats = db->GetBackupStats();
+  stats.error.PermitUncheckedError();
+  printf("metabypass mode=%s ops=%" PRId64 " foreground_us=%" PRIu64
+         " sync_us=%" PRIu64 " close_us=%" PRIu64 " backpressure_us=%" PRIu64
+         " last_point_build_us=%" PRIu64 " last_point_lag_us=%" PRIu64
+         " queue_peak_bytes=%" PRIu64 " mirrored_bytes=%" PRIu64
+         " retained_index_bytes=%" PRIu64 " status=%s\n",
+         FLAGS_metabypass_mode.c_str(), FLAGS_num, foreground, sync_us,
+         close_us, stats.backpressure_micros, stats.last_build_micros,
+         stats.last_point_lag_micros, stats.peak_queued_bytes,
+         stats.mirrored_bytes, stats.retained_index_bytes,
+         s.ToString().c_str());
+  return s.ok() ? 0 : 1;
+}
+
 int db_bench_tool(int argc, char** argv, ToolHooks& hooks) {
   ROCKSDB_NAMESPACE::port::InstallStackTraceHandler();
   ConfigOptions config_options;
@@ -11030,6 +11145,8 @@ int db_bench_tool(int argc, char** argv, ToolHooks& hooks) {
             FLAGS_fault_injection_read_after_reads));
     FLAGS_env = fault_env.get();
   }
+
+  if (!FLAGS_metabypass_mode.empty()) return RunMetaBypassBenchmark();
 
   // Let -readonly imply -use_existing_db
   FLAGS_use_existing_db |= FLAGS_readonly;

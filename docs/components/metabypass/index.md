@@ -44,7 +44,9 @@ writes, pipelined writes, unordered writes and two write queues are rejected.
 Separate WAL/CF paths, WAL recycling/archival, WAL filters and WAL tracking,
 manual WAL flush, direct/mmap
 writes, custom comparators, compaction filters, persistent statistics and an
-external SST file manager are not supported. The DB's own Blob Direct Write
+external SST file manager and remote compaction services are not supported.
+`write_identity_file` must remain enabled. Open and Restore reject these
+unsupported configurations before modifying directories. The DB's own Blob Direct Write
 validation also applies.
 
 Use absolute normalized, disjoint directories without filesystem aliases.
@@ -165,6 +167,8 @@ Recovery rewrites only the destination's native MANIFEST to register previously
 unflushed blob files and advance the next file number beyond every retained
 blob, including orphan files. Interrupted preparation is retryable: an identity
 marker distinguishes an in-progress restore from an arbitrary nonempty target.
+Reopen and restore retries preserve their already validated identity/progress
+markers instead of truncating and rewriting them.
 Call Restore again on that target before Open. It verifies/copies from the
 published point again; already sealed blobs are recognized. Restore never falls
 back silently from corruption in the selected published point.
@@ -248,3 +252,6 @@ the comparison with the notification and experimental split-lock versions.
 
 For the fresh four-version comparison including backup disabled, see
 [channels versus no backup](channel-baseline-comparison.md).
+
+See [identity retry and option validation fixes](review-fixes.md) for the
+review findings, regression coverage and verification results.

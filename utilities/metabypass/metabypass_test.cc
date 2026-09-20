@@ -24,6 +24,31 @@
 namespace ROCKSDB_NAMESPACE {
 namespace {
 std::string executable;
+// Fail after truncation to expose destructive rewrites of protocol markers.
+class MarkerFailureFileSystem : public FileSystemWrapper {
+ public:
+  explicit MarkerFailureFileSystem(const std::shared_ptr<FileSystem>& fs)
+      : FileSystemWrapper(fs) {}
+  const char* Name() const override { return "MarkerFailureFileSystem"; }
+  std::string fail_path;
+  int failures = 0;
+  IOStatus NewWritableFile(const std::string& path, const FileOptions& options,
+                           std::unique_ptr<FSWritableFile>* file,
+                           IODebugContext* dbg) override {
+    IOStatus s = target()->NewWritableFile(path, options, file, dbg);
+    if (s.ok() && path == fail_path) {
+      (*file)->Close(IOOptions(), dbg).PermitUncheckedError();
+      file->reset();
+      ++failures;
+      return IOStatus::IOError("injected failure after truncation");
+    }
+    return s;
+  }
+};
+class UnsupportedCompactionService : public CompactionService {
+ public:
+  const char* Name() const override { return "UnsupportedCompactionService"; }
+};
 class TestGate {
  public:
   void Block() {
@@ -440,6 +465,78 @@ TEST_F(MetaBypassTest, RejectUnsupportedWritesAndOptions) {
   db_.reset();
   o_.allow_concurrent_memtable_write = true;
   ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsNotSupported());
+}
+TEST_F(MetaBypassTest,
+       RejectIdentityAndRemoteCompactionBeforeDirectoryChanges) {
+  for (bool disable_identity : {true, false}) {
+    Options invalid = o_;
+    if (disable_identity) {
+      invalid.write_identity_file = false;
+    } else {
+      invalid.compaction_service =
+          std::make_shared<UnsupportedCompactionService>();
+    }
+    ASSERT_TRUE(MetaBypassDB::Open(invalid, m_, index_, &db_).IsNotSupported());
+    ASSERT_EQ(db_, nullptr);
+    ASSERT_TRUE(MetaBypassDB::Restore(invalid, m_, index_).IsNotSupported());
+    for (const auto& path : {index_, m_.data_dir, m_.backup_dir}) {
+      ASSERT_TRUE(fs_->FileExists(path, IOOptions(), nullptr).IsNotFound());
+    }
+  }
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, ReopenPreservesValidatedIdentityMarker) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  auto faults = std::make_shared<MarkerFailureFileSystem>(fs_);
+  faults->fail_path = index_ + "/METABYPASS";
+  auto env = NewCompositeEnv(faults);
+  Options options = o_;
+  options.env = env.get();
+  // A truncating rewrite would fail this open and corrupt the next one.
+  Status opened = MetaBypassDB::Open(options, m_, index_, &db_);
+  EXPECT_OK(opened);
+  if (opened.ok()) {
+    Check("key", "value");
+    EXPECT_OK(db_->Close());
+  }
+  db_.reset();
+  EXPECT_EQ(faults->failures, 0);
+  ASSERT_NO_FATAL_FAILURE(Open());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, RestoreRetryPreservesValidatedProgressMarker) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  auto faults = std::make_shared<MarkerFailureFileSystem>(fs_);
+  auto env = NewCompositeEnv(faults);
+  Options options = o_;
+  options.env = env.get();
+  // Interrupt after the progress marker is durable but before copying finishes.
+  faults->fail_path = index_ + "/CURRENT";
+  ASSERT_TRUE(MetaBypassDB::Restore(options, m_, index_).IsIOError());
+  ASSERT_EQ(faults->failures, 1);
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsIncomplete());
+  faults->fail_path = index_ + "/METABYPASS-RESTORING";
+  ASSERT_OK(MetaBypassDB::Restore(options, m_, index_));
+  EXPECT_EQ(faults->failures, 1);
+  ASSERT_NO_FATAL_FAILURE(Open());
+  Check("key", "value");
+  ASSERT_OK(db_->Put(WriteOptions(), "after", "retry"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  Check("after", "retry");
 }
 TEST_F(MetaBypassTest, BackgroundBlockedDoesNotBlockSmallForegroundWrite) {
   ASSERT_NO_FATAL_FAILURE(Open());

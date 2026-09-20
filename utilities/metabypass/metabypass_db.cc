@@ -35,6 +35,10 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
       m.batch_bytes > m.queue_capacity || m.interval_ms == 0 ||
       m.interval_ms > std::numeric_limits<int64_t>::max())
     return Status::InvalidArgument("invalid Metabypass queue configuration");
+  if (!o.write_identity_file)
+    return Status::NotSupported("Metabypass requires write_identity_file");
+  if (o.compaction_service)
+    return Status::NotSupported("Metabypass remote compaction service");
   if (o.allow_concurrent_memtable_write || o.enable_pipelined_write ||
       o.unordered_write || o.two_write_queues || o.manual_wal_flush ||
       o.sst_file_manager || o.use_direct_io_for_flush_and_compaction ||
@@ -159,7 +163,8 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   if (s.ok()) {
     std::string identity;
     s = metabypass::Read(fs.get(), index + "/IDENTITY", &identity);
-    if (s.ok())
+    // Reopening must not truncate the identity marker validated above.
+    if (s.ok() && !existing)
       s = metabypass::Write(fs.get(), index + "/METABYPASS", identity);
     if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
     if (s.ok()) s = impl->backup->Activate(identity);
@@ -208,7 +213,9 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
       s = Status::InvalidArgument(
           "restore destination is not empty or resumable");
   }
-  if (s.ok())
+  // A resumed restore already has a verified marker. Preserve it so an
+  // interruption cannot invalidate the next retry.
+  if (s.ok() && !nonempty)
     s = metabypass::Write(fs.get(), index + "/METABYPASS-RESTORING",
                           backup_owner);
   if (s.ok()) s = metabypass::SyncDir(fs.get(), index);

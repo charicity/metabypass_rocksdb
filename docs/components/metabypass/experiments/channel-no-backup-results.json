@@ -1,0 +1,5538 @@
+{
+  "root": "/tmp/mb-scheduling-runs-titdxg6n",
+  "count": 100000,
+  "trials": 5,
+  "build": {
+    "head": "bbd60f2ca9191bb04e9e006dad44f9f8d8ff82f4",
+    "revision": "WORKTREE",
+    "variants": {
+      "channels": {
+        "binary_sha256": "0f438c66d4dd4f7a86b5331e6730efa7a0f55153d3f5107d94f1a9c37bf90638",
+        "backup_cc_sha256": "d8e2c65fa083f7ea8393734b3630dd1cdff0d281341c85b3411ca59eb1073d6f",
+        "backup_h_sha256": "7416f619f5ebf118385273b6c6a3a105fb09d06ea3cda9e9ea26b82a7ee0563a",
+        "link": [
+          "g++",
+          "-O2",
+          "-DNDEBUG",
+          "-fno-rtti",
+          "-std=c++20",
+          "-faligned-new",
+          "-DHAVE_ALIGNED_NEW",
+          "-DROCKSDB_PLATFORM_POSIX",
+          "-DROCKSDB_LIB_IO_POSIX",
+          "-DOS_LINUX",
+          "-fno-builtin-memcmp",
+          "-DROCKSDB_FALLOCATE_PRESENT",
+          "-DSNAPPY",
+          "-DGFLAGS=1",
+          "-DZLIB",
+          "-DBZIP2",
+          "-DLZ4",
+          "-DZSTD",
+          "-DNUMA",
+          "-DROCKSDB_MALLOC_USABLE_SIZE",
+          "-DROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
+          "-DROCKSDB_BACKTRACE",
+          "-DROCKSDB_RANGESYNC_PRESENT",
+          "-DROCKSDB_SCHED_GETCPU_PRESENT",
+          "-DROCKSDB_AUXV_GETAUXVAL_PRESENT",
+          "-march=native",
+          "-DHAVE_UINT128_EXTENSION",
+          "-I/tmp/mb-channels-formal/channels/include",
+          "-I/home/lj/metabypass_rocksdb/include",
+          "-I/home/lj/metabypass_rocksdb",
+          "/home/lj/metabypass_rocksdb/docs/components/metabypass/experiments/scheduling-ab/driver.cc",
+          "/tmp/mb-channels-formal/channels/backup.o",
+          "/tmp/mb-channels-formal/channels/native_files.o",
+          "/tmp/mb-channels-formal/channels/separated_storage.o",
+          "/tmp/mb-channels-formal/channels/metabypass_db.o",
+          "/tmp/metabypass-release-build/librocksdb.a",
+          "-lpthread",
+          "-lrt",
+          "-ldl",
+          "-lsnappy",
+          "-lgflags",
+          "-lz",
+          "-lbz2",
+          "-llz4",
+          "-lzstd",
+          "-lnuma",
+          "-ltcmalloc",
+          "-o",
+          "/tmp/mb-channels-formal/channels/driver"
+        ]
+      },
+      "baseline": {
+        "source_sha256": "faabeedd4b6cf8fa842035afee56d5f44f9a9bca694487383488b2b49e2e08a8",
+        "binary_sha256": "62eee05d17671453768c72d0e055748e50e01e2057dd1bc5e3c1ade383de7667",
+        "link": [
+          "g++",
+          "-O2",
+          "-DNDEBUG",
+          "-fno-rtti",
+          "-std=c++20",
+          "-faligned-new",
+          "-DHAVE_ALIGNED_NEW",
+          "-DROCKSDB_PLATFORM_POSIX",
+          "-DROCKSDB_LIB_IO_POSIX",
+          "-DOS_LINUX",
+          "-fno-builtin-memcmp",
+          "-DROCKSDB_FALLOCATE_PRESENT",
+          "-DSNAPPY",
+          "-DGFLAGS=1",
+          "-DZLIB",
+          "-DBZIP2",
+          "-DLZ4",
+          "-DZSTD",
+          "-DNUMA",
+          "-DROCKSDB_MALLOC_USABLE_SIZE",
+          "-DROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
+          "-DROCKSDB_BACKTRACE",
+          "-DROCKSDB_RANGESYNC_PRESENT",
+          "-DROCKSDB_SCHED_GETCPU_PRESENT",
+          "-DROCKSDB_AUXV_GETAUXVAL_PRESENT",
+          "-march=native",
+          "-DHAVE_UINT128_EXTENSION",
+          "-I/tmp/mb-channels-formal/channels/include",
+          "-I/home/lj/metabypass_rocksdb/include",
+          "-I/home/lj/metabypass_rocksdb",
+          "/tmp/mb-channels-no-backup/baseline/driver.cc",
+          "/tmp/mb-channels-formal/channels/backup.o",
+          "/tmp/mb-channels-formal/channels/native_files.o",
+          "/tmp/mb-channels-formal/channels/separated_storage.o",
+          "/tmp/mb-channels-formal/channels/metabypass_db.o",
+          "/tmp/metabypass-release-build/librocksdb.a",
+          "-lpthread",
+          "-lrt",
+          "-ldl",
+          "-lsnappy",
+          "-lgflags",
+          "-lz",
+          "-lbz2",
+          "-llz4",
+          "-lzstd",
+          "-lnuma",
+          "-ltcmalloc",
+          "-o",
+          "/tmp/mb-channels-no-backup/baseline/driver"
+        ],
+        "semantics": "SeparatedStorage plus raw DB, no Backup, primary retained for verification"
+      }
+    },
+    "source_hashes": {
+      "utilities/metabypass/backup.cc": "d8e2c65fa083f7ea8393734b3630dd1cdff0d281341c85b3411ca59eb1073d6f",
+      "utilities/metabypass/backup.h": "7416f619f5ebf118385273b6c6a3a105fb09d06ea3cda9e9ea26b82a7ee0563a",
+      "utilities/metabypass/native_files.cc": "a9e41fa2d808207036a827b3bea3ec8fac2b1bca5dc9209e018f185c755fae85",
+      "utilities/metabypass/native_files.h": "fa2e2bc54c7b320cb669d78eaad6208705a00b6d2c999011f0707b757f2cf43a",
+      "utilities/metabypass/separated_storage.cc": "6331f5cfcc17e83e8ec2296ee010c57f2fa150c0e23893e839aa5b3dd1b11004",
+      "utilities/metabypass/separated_storage.h": "6b626863b60959da9890da33a332605cd901f0ca284887ca74e15b0e44baaca0",
+      "utilities/metabypass/metabypass_db.cc": "1c123f6a5dffef0fc13a1d2b317b0e1b4a82282a4a80ff26d31027420b723632",
+      "include/rocksdb/utilities/metabypass.h": "94e54fe5ef09289976b130ce5e785a95bfa384831f47f07ae333a989099bd76e"
+    },
+    "controls": {
+      "head": "bbd60f2ca9191bb04e9e006dad44f9f8d8ff82f4",
+      "revision": "bbd60f2ca",
+      "variants": {
+        "current": {
+          "binary_sha256": "83b9ddfc91241abd3ace0a6b826db704882b6430521431bcb3a20fbf31e28193",
+          "backup_cc_sha256": "1d1e4a0267b9ce83dbc259bd440417322f68d836a0ba6542079722053d940ce2",
+          "backup_h_sha256": "66c6ce39fe0b1ef574a8f606a12ccd964beaca961c83939aa752c6d3d7c6cd66",
+          "link": [
+            "g++",
+            "-O2",
+            "-DNDEBUG",
+            "-fno-rtti",
+            "-std=c++20",
+            "-faligned-new",
+            "-DHAVE_ALIGNED_NEW",
+            "-DROCKSDB_PLATFORM_POSIX",
+            "-DROCKSDB_LIB_IO_POSIX",
+            "-DOS_LINUX",
+            "-fno-builtin-memcmp",
+            "-DROCKSDB_FALLOCATE_PRESENT",
+            "-DSNAPPY",
+            "-DGFLAGS=1",
+            "-DZLIB",
+            "-DBZIP2",
+            "-DLZ4",
+            "-DZSTD",
+            "-DNUMA",
+            "-DROCKSDB_MALLOC_USABLE_SIZE",
+            "-DROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
+            "-DROCKSDB_BACKTRACE",
+            "-DROCKSDB_RANGESYNC_PRESENT",
+            "-DROCKSDB_SCHED_GETCPU_PRESENT",
+            "-DROCKSDB_AUXV_GETAUXVAL_PRESENT",
+            "-march=native",
+            "-DHAVE_UINT128_EXTENSION",
+            "-I/tmp/mb-channels-controls/current/include",
+            "-I/home/lj/metabypass_rocksdb/include",
+            "-I/home/lj/metabypass_rocksdb",
+            "/home/lj/metabypass_rocksdb/docs/components/metabypass/experiments/scheduling-ab/driver.cc",
+            "/tmp/mb-channels-controls/current/backup.o",
+            "/tmp/mb-channels-controls/current/native_files.o",
+            "/tmp/mb-channels-controls/current/separated_storage.o",
+            "/tmp/mb-channels-controls/current/metabypass_db.o",
+            "/tmp/metabypass-release-build/librocksdb.a",
+            "-lpthread",
+            "-lrt",
+            "-ldl",
+            "-lsnappy",
+            "-lgflags",
+            "-lz",
+            "-lbz2",
+            "-llz4",
+            "-lzstd",
+            "-lnuma",
+            "-ltcmalloc",
+            "-o",
+            "/tmp/mb-channels-controls/current/driver"
+          ]
+        },
+        "split": {
+          "binary_sha256": "69fa95e3baca0a55961683504daa8b7fa7c206b65fee46fd5adc1676379940c5",
+          "backup_cc_sha256": "225084cf32274e6a014cd3e3fcfe23ceebf962771f3442657e8d261c7b68efb4",
+          "backup_h_sha256": "c7b6c5d8ff0a4de9463adac30ac68b41d22c31728e963ba871b14227a61362ab",
+          "link": [
+            "g++",
+            "-O2",
+            "-DNDEBUG",
+            "-fno-rtti",
+            "-std=c++20",
+            "-faligned-new",
+            "-DHAVE_ALIGNED_NEW",
+            "-DROCKSDB_PLATFORM_POSIX",
+            "-DROCKSDB_LIB_IO_POSIX",
+            "-DOS_LINUX",
+            "-fno-builtin-memcmp",
+            "-DROCKSDB_FALLOCATE_PRESENT",
+            "-DSNAPPY",
+            "-DGFLAGS=1",
+            "-DZLIB",
+            "-DBZIP2",
+            "-DLZ4",
+            "-DZSTD",
+            "-DNUMA",
+            "-DROCKSDB_MALLOC_USABLE_SIZE",
+            "-DROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
+            "-DROCKSDB_BACKTRACE",
+            "-DROCKSDB_RANGESYNC_PRESENT",
+            "-DROCKSDB_SCHED_GETCPU_PRESENT",
+            "-DROCKSDB_AUXV_GETAUXVAL_PRESENT",
+            "-march=native",
+            "-DHAVE_UINT128_EXTENSION",
+            "-I/tmp/mb-channels-controls/split/include",
+            "-I/home/lj/metabypass_rocksdb/include",
+            "-I/home/lj/metabypass_rocksdb",
+            "/home/lj/metabypass_rocksdb/docs/components/metabypass/experiments/scheduling-ab/driver.cc",
+            "/tmp/mb-channels-controls/split/backup.o",
+            "/tmp/mb-channels-controls/split/native_files.o",
+            "/tmp/mb-channels-controls/split/separated_storage.o",
+            "/tmp/mb-channels-controls/split/metabypass_db.o",
+            "/tmp/metabypass-release-build/librocksdb.a",
+            "-lpthread",
+            "-lrt",
+            "-ldl",
+            "-lsnappy",
+            "-lgflags",
+            "-lz",
+            "-lbz2",
+            "-llz4",
+            "-lzstd",
+            "-lnuma",
+            "-ltcmalloc",
+            "-o",
+            "/tmp/mb-channels-controls/split/driver"
+          ]
+        }
+      },
+      "source_hashes": {
+        "utilities/metabypass/backup.cc": "1d1e4a0267b9ce83dbc259bd440417322f68d836a0ba6542079722053d940ce2",
+        "utilities/metabypass/backup.h": "66c6ce39fe0b1ef574a8f606a12ccd964beaca961c83939aa752c6d3d7c6cd66",
+        "utilities/metabypass/native_files.cc": "a9e41fa2d808207036a827b3bea3ec8fac2b1bca5dc9209e018f185c755fae85",
+        "utilities/metabypass/native_files.h": "fa2e2bc54c7b320cb669d78eaad6208705a00b6d2c999011f0707b757f2cf43a",
+        "utilities/metabypass/separated_storage.cc": "6331f5cfcc17e83e8ec2296ee010c57f2fa150c0e23893e839aa5b3dd1b11004",
+        "utilities/metabypass/separated_storage.h": "6b626863b60959da9890da33a332605cd901f0ca284887ca74e15b0e44baaca0",
+        "utilities/metabypass/metabypass_db.cc": "1c123f6a5dffef0fc13a1d2b317b0e1b4a82282a4a80ff26d31027420b723632",
+        "include/rocksdb/utilities/metabypass.h": "94e54fe5ef09289976b130ce5e785a95bfa384831f47f07ae333a989099bd76e"
+      }
+    }
+  },
+  "runs": [
+    {
+      "trial": -1,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-channels",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=97299 sync_us=144919 close_us=144342 p50_ns=7313 p95_ns=11498 p99_ns=22034 max_ns=13016077 backpressure_us=0 peak_bytes=605677 lag_us=143873 points=4 mirrored_bytes=571191 flushes=0 compactions=0 sst_bytes=213623 user_us=39938 system_us=55835 voluntary=26 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.0678904056549072
+      },
+      "metrics": {
+        "foreground_us": 97299,
+        "sync_us": 144919,
+        "close_us": 144342,
+        "p50_ns": 7313,
+        "p95_ns": 11498,
+        "p99_ns": 22034,
+        "max_ns": 13016077,
+        "backpressure_us": 0,
+        "peak_bytes": 605677,
+        "lag_us": 143873,
+        "points": 4,
+        "mirrored_bytes": 571191,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 213623,
+        "user_us": 39938,
+        "system_us": 55835,
+        "voluntary": 26,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-channels",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=303299 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.743990421295166
+      }
+    },
+    {
+      "trial": -1,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-baseline",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=81248 sync_us=0 close_us=47580 p50_ns=6321 p95_ns=9930 p99_ns=13303 max_ns=7227764 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=213623 user_us=34319 system_us=42925 voluntary=1 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.19567537307739258
+      },
+      "metrics": {
+        "foreground_us": 81248,
+        "sync_us": 0,
+        "close_us": 47580,
+        "p50_ns": 6321,
+        "p95_ns": 9930,
+        "p99_ns": 13303,
+        "max_ns": 7227764,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 213623,
+        "user_us": 34319,
+        "system_us": 42925,
+        "voluntary": 1,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-baseline",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=24303 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.13403773307800293
+      }
+    },
+    {
+      "trial": -1,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-current",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=99547 sync_us=140738 close_us=140192 p50_ns=8406 p95_ns=21374 p99_ns=29871 max_ns=796877 backpressure_us=0 peak_bytes=603328 lag_us=139628 points=4 mirrored_bytes=571191 flushes=0 compactions=0 sst_bytes=213623 user_us=63184 system_us=33123 voluntary=234 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5219411849975586
+      },
+      "metrics": {
+        "foreground_us": 99547,
+        "sync_us": 140738,
+        "close_us": 140192,
+        "p50_ns": 8406,
+        "p95_ns": 21374,
+        "p99_ns": 29871,
+        "max_ns": 796877,
+        "backpressure_us": 0,
+        "peak_bytes": 603328,
+        "lag_us": 139628,
+        "points": 4,
+        "mirrored_bytes": 571191,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 213623,
+        "user_us": 63184,
+        "system_us": 33123,
+        "voluntary": 234,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-current",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=307087 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.756791353225708
+      }
+    },
+    {
+      "trial": -1,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-split",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=96328 sync_us=145945 close_us=142084 p50_ns=7343 p95_ns=11365 p99_ns=18688 max_ns=12525892 backpressure_us=0 peak_bytes=627760 lag_us=141562 points=4 mirrored_bytes=571191 flushes=0 compactions=0 sst_bytes=213623 user_us=35778 system_us=57398 voluntary=31 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.529407262802124
+      },
+      "metrics": {
+        "foreground_us": 96328,
+        "sync_us": 145945,
+        "close_us": 142084,
+        "p50_ns": 7343,
+        "p95_ns": 11365,
+        "p99_ns": 18688,
+        "max_ns": 12525892,
+        "backpressure_us": 0,
+        "peak_bytes": 627760,
+        "lag_us": 141562,
+        "points": 4,
+        "mirrored_bytes": 571191,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 213623,
+        "user_us": 35778,
+        "system_us": 57398,
+        "voluntary": 31,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-default-split",
+          "10000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=303674 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.7555661201477051
+      }
+    },
+    {
+      "trial": -1,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-channels",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=211588 sync_us=220770 close_us=92568 p50_ns=11508 p95_ns=26111 p99_ns=32053 max_ns=9846272 backpressure_us=0 peak_bytes=1541462 lag_us=92108 points=5 mirrored_bytes=4751310 flushes=5 compactions=2 sst_bytes=1466385 user_us=52515 system_us=72998 voluntary=54 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6661920547485352
+      },
+      "metrics": {
+        "foreground_us": 211588,
+        "sync_us": 220770,
+        "close_us": 92568,
+        "p50_ns": 11508,
+        "p95_ns": 26111,
+        "p99_ns": 32053,
+        "max_ns": 9846272,
+        "backpressure_us": 0,
+        "peak_bytes": 1541462,
+        "lag_us": 92108,
+        "points": 5,
+        "mirrored_bytes": 4751310,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466385,
+        "user_us": 52515,
+        "system_us": 72998,
+        "voluntary": 54,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-channels",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=380120 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.871851921081543
+      }
+    },
+    {
+      "trial": -1,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-baseline",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=182724 sync_us=0 close_us=46049 p50_ns=8334 p95_ns=19029 p99_ns=25700 max_ns=13134651 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=5 compactions=2 sst_bytes=1466370 user_us=52008 system_us=53872 voluntary=29 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.29521656036376953
+      },
+      "metrics": {
+        "foreground_us": 182724,
+        "sync_us": 0,
+        "close_us": 46049,
+        "p50_ns": 8334,
+        "p95_ns": 19029,
+        "p99_ns": 25700,
+        "max_ns": 13134651,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466370,
+        "user_us": 52008,
+        "system_us": 53872,
+        "voluntary": 29,
+        "involuntary": 2
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-baseline",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=26622 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.13748526573181152
+      }
+    },
+    {
+      "trial": -1,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-current",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=210110 sync_us=258320 close_us=88573 p50_ns=10059 p95_ns=23410 p99_ns=34396 max_ns=13579815 backpressure_us=0 peak_bytes=1223231 lag_us=87853 points=5 mirrored_bytes=4751070 flushes=5 compactions=2 sst_bytes=1466316 user_us=76041 system_us=47759 voluntary=96 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6960959434509277
+      },
+      "metrics": {
+        "foreground_us": 210110,
+        "sync_us": 258320,
+        "close_us": 88573,
+        "p50_ns": 10059,
+        "p95_ns": 23410,
+        "p99_ns": 34396,
+        "max_ns": 13579815,
+        "backpressure_us": 0,
+        "peak_bytes": 1223231,
+        "lag_us": 87853,
+        "points": 5,
+        "mirrored_bytes": 4751070,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466316,
+        "user_us": 76041,
+        "system_us": 47759,
+        "voluntary": 96,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-current",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=372221 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.8597309589385986
+      }
+    },
+    {
+      "trial": -1,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-split",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=215876 sync_us=226525 close_us=88529 p50_ns=9464 p95_ns=26844 p99_ns=34000 max_ns=11081056 backpressure_us=0 peak_bytes=1606422 lag_us=87987 points=5 mirrored_bytes=4750517 flushes=5 compactions=2 sst_bytes=1466341 user_us=63297 system_us=64556 voluntary=57 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6719403266906738
+      },
+      "metrics": {
+        "foreground_us": 215876,
+        "sync_us": 226525,
+        "close_us": 88529,
+        "p50_ns": 9464,
+        "p95_ns": 26844,
+        "p99_ns": 34000,
+        "max_ns": 11081056,
+        "backpressure_us": 0,
+        "peak_bytes": 1606422,
+        "lag_us": 87987,
+        "points": 5,
+        "mirrored_bytes": 4750517,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466341,
+        "user_us": 63297,
+        "system_us": 64556,
+        "voluntary": 57,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-mixed-split",
+          "10000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=379169 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.8727555274963379
+      }
+    },
+    {
+      "trial": -1,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-channels",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=221641 sync_us=210813 close_us=90461 p50_ns=9743 p95_ns=27584 p99_ns=35484 max_ns=11751522 backpressure_us=0 peak_bytes=2035252 lag_us=89859 points=5 mirrored_bytes=4752071 flushes=5 compactions=2 sst_bytes=1466272 user_us=60665 system_us=67556 voluntary=67 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6678249835968018
+      },
+      "metrics": {
+        "foreground_us": 221641,
+        "sync_us": 210813,
+        "close_us": 90461,
+        "p50_ns": 9743,
+        "p95_ns": 27584,
+        "p99_ns": 35484,
+        "max_ns": 11751522,
+        "backpressure_us": 0,
+        "peak_bytes": 2035252,
+        "lag_us": 89859,
+        "points": 5,
+        "mirrored_bytes": 4752071,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466272,
+        "user_us": 60665,
+        "system_us": 67556,
+        "voluntary": 67,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-channels",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=382075 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.8756692409515381
+      }
+    },
+    {
+      "trial": -1,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-baseline",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=180755 sync_us=0 close_us=48215 p50_ns=8829 p95_ns=18346 p99_ns=26331 max_ns=10111571 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=5 compactions=2 sst_bytes=1466340 user_us=58146 system_us=43857 voluntary=31 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.29782938957214355
+      },
+      "metrics": {
+        "foreground_us": 180755,
+        "sync_us": 0,
+        "close_us": 48215,
+        "p50_ns": 8829,
+        "p95_ns": 18346,
+        "p99_ns": 26331,
+        "max_ns": 10111571,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466340,
+        "user_us": 58146,
+        "system_us": 43857,
+        "voluntary": 31,
+        "involuntary": 0
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-baseline",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=22534 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.13462448120117188
+      }
+    },
+    {
+      "trial": -1,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-current",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=211899 sync_us=246386 close_us=92708 p50_ns=9435 p95_ns=30274 p99_ns=39543 max_ns=10576577 backpressure_us=0 peak_bytes=997423 lag_us=92087 points=5 mirrored_bytes=4752557 flushes=5 compactions=2 sst_bytes=1466328 user_us=75434 system_us=57258 voluntary=103 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6910529136657715
+      },
+      "metrics": {
+        "foreground_us": 211899,
+        "sync_us": 246386,
+        "close_us": 92708,
+        "p50_ns": 9435,
+        "p95_ns": 30274,
+        "p99_ns": 39543,
+        "max_ns": 10576577,
+        "backpressure_us": 0,
+        "peak_bytes": 997423,
+        "lag_us": 92087,
+        "points": 5,
+        "mirrored_bytes": 4752557,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466328,
+        "user_us": 75434,
+        "system_us": 57258,
+        "voluntary": 103,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-current",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=379062 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.8636152744293213
+      }
+    },
+    {
+      "trial": -1,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-split",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=208296 sync_us=244004 close_us=92665 p50_ns=10934 p95_ns=23377 p99_ns=34447 max_ns=13179934 backpressure_us=0 peak_bytes=1190727 lag_us=92156 points=5 mirrored_bytes=4751869 flushes=5 compactions=2 sst_bytes=1466364 user_us=78870 system_us=51854 voluntary=64 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.6873223781585693
+      },
+      "metrics": {
+        "foreground_us": 208296,
+        "sync_us": 244004,
+        "close_us": 92665,
+        "p50_ns": 10934,
+        "p95_ns": 23377,
+        "p99_ns": 34447,
+        "max_ns": 13179934,
+        "backpressure_us": 0,
+        "peak_bytes": 1190727,
+        "lag_us": 92156,
+        "points": 5,
+        "mirrored_bytes": 4751869,
+        "flushes": 5,
+        "compactions": 2,
+        "sst_bytes": 1466364,
+        "user_us": 78870,
+        "system_us": 51854,
+        "voluntary": 64,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/-1-pressure-split",
+          "10000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=368032 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.860612154006958
+      }
+    },
+    {
+      "trial": 0,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=731149 sync_us=0 close_us=211367 p50_ns=6334 p95_ns=9833 p99_ns=14019 max_ns=469771 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=2160883 user_us=374670 system_us=352716 voluntary=0 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.0183207988739014
+      },
+      "metrics": {
+        "foreground_us": 731149,
+        "sync_us": 0,
+        "close_us": 211367,
+        "p50_ns": 6334,
+        "p95_ns": 9833,
+        "p99_ns": 14019,
+        "max_ns": 469771,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 374670,
+        "system_us": 352716,
+        "voluntary": 0,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=26328 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.42548465728759766
+      }
+    },
+    {
+      "trial": 0,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=836616 sync_us=320076 close_us=628828 p50_ns=7281 p95_ns=11389 p99_ns=19121 max_ns=4749067 backpressure_us=0 peak_bytes=1115028 lag_us=577260 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=489657 system_us=339874 voluntary=207 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.9428672790527344
+      },
+      "metrics": {
+        "foreground_us": 836616,
+        "sync_us": 320076,
+        "close_us": 628828,
+        "p50_ns": 7281,
+        "p95_ns": 11389,
+        "p99_ns": 19121,
+        "max_ns": 4749067,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 577260,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 489657,
+        "system_us": 339874,
+        "voluntary": 207,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1135820 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.510711908340454
+      }
+    },
+    {
+      "trial": 0,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=815918 sync_us=322728 close_us=615010 p50_ns=7117 p95_ns=11221 p99_ns=19054 max_ns=784963 backpressure_us=0 peak_bytes=1115028 lag_us=568262 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=459312 system_us=350137 voluntary=189 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.916733980178833
+      },
+      "metrics": {
+        "foreground_us": 815918,
+        "sync_us": 322728,
+        "close_us": 615010,
+        "p50_ns": 7117,
+        "p95_ns": 11221,
+        "p99_ns": 19054,
+        "max_ns": 784963,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 568262,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 459312,
+        "system_us": 350137,
+        "voluntary": 189,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1137815 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.514483690261841
+      }
+    },
+    {
+      "trial": 0,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=843027 sync_us=303695 close_us=620999 p50_ns=7383 p95_ns=11409 p99_ns=18951 max_ns=2578817 backpressure_us=0 peak_bytes=1115028 lag_us=569884 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=443633 system_us=393272 voluntary=194 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.926112174987793
+      },
+      "metrics": {
+        "foreground_us": 843027,
+        "sync_us": 303695,
+        "close_us": 620999,
+        "p50_ns": 7383,
+        "p95_ns": 11409,
+        "p99_ns": 18951,
+        "max_ns": 2578817,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 569884,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 443633,
+        "system_us": 393272,
+        "voluntary": 194,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1142916 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.797319173812866
+      }
+    },
+    {
+      "trial": 0,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2004499 sync_us=0 close_us=34617 p50_ns=9130 p95_ns=21169 p99_ns=29153 max_ns=18508167 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628043 user_us=628645 system_us=488189 voluntary=487 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.117807388305664
+      },
+      "metrics": {
+        "foreground_us": 2004499,
+        "sync_us": 0,
+        "close_us": 34617,
+        "p50_ns": 9130,
+        "p95_ns": 21169,
+        "p99_ns": 29153,
+        "max_ns": 18508167,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628043,
+        "user_us": 628645,
+        "system_us": 488189,
+        "voluntary": 487,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=51333 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5291569232940674
+      }
+    },
+    {
+      "trial": 0,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2230233 sync_us=424385 close_us=109453 p50_ns=10063 p95_ns=24093 p99_ns=35923 max_ns=46927406 backpressure_us=0 peak_bytes=2331681 lag_us=108770 points=9 mirrored_bytes=51540802 flushes=63 compactions=63 sst_bytes=14627969 user_us=703619 system_us=536490 voluntary=1233 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9229938983917236
+      },
+      "metrics": {
+        "foreground_us": 2230233,
+        "sync_us": 424385,
+        "close_us": 109453,
+        "p50_ns": 10063,
+        "p95_ns": 24093,
+        "p99_ns": 35923,
+        "max_ns": 46927406,
+        "backpressure_us": 0,
+        "peak_bytes": 2331681,
+        "lag_us": 108770,
+        "points": 9,
+        "mirrored_bytes": 51540802,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627969,
+        "user_us": 703619,
+        "system_us": 536490,
+        "voluntary": 1233,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1873351 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.723254442214966
+      }
+    },
+    {
+      "trial": 0,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2186276 sync_us=444128 close_us=112844 p50_ns=10565 p95_ns=22868 p99_ns=33866 max_ns=24502616 backpressure_us=0 peak_bytes=2030884 lag_us=112220 points=9 mirrored_bytes=51770163 flushes=63 compactions=63 sst_bytes=14628091 user_us=675290 system_us=573464 voluntary=686 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9029340744018555
+      },
+      "metrics": {
+        "foreground_us": 2186276,
+        "sync_us": 444128,
+        "close_us": 112844,
+        "p50_ns": 10565,
+        "p95_ns": 22868,
+        "p99_ns": 33866,
+        "max_ns": 24502616,
+        "backpressure_us": 0,
+        "peak_bytes": 2030884,
+        "lag_us": 112220,
+        "points": 9,
+        "mirrored_bytes": 51770163,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628091,
+        "user_us": 675290,
+        "system_us": 573464,
+        "voluntary": 686,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1900531 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7943038940429688
+      }
+    },
+    {
+      "trial": 0,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2196186 sync_us=494341 close_us=114083 p50_ns=10475 p95_ns=24535 p99_ns=35206 max_ns=24600243 backpressure_us=0 peak_bytes=1944137 lag_us=113469 points=9 mirrored_bytes=51757330 flushes=63 compactions=63 sst_bytes=14627522 user_us=680874 system_us=596990 voluntary=704 involuntary=368 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.966109275817871
+      },
+      "metrics": {
+        "foreground_us": 2196186,
+        "sync_us": 494341,
+        "close_us": 114083,
+        "p50_ns": 10475,
+        "p95_ns": 24535,
+        "p99_ns": 35206,
+        "max_ns": 24600243,
+        "backpressure_us": 0,
+        "peak_bytes": 1944137,
+        "lag_us": 113469,
+        "points": 9,
+        "mirrored_bytes": 51757330,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627522,
+        "user_us": 680874,
+        "system_us": 596990,
+        "voluntary": 704,
+        "involuntary": 368
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1885481 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7456278800964355
+      }
+    },
+    {
+      "trial": 0,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2001930 sync_us=0 close_us=27062 p50_ns=9260 p95_ns=20833 p99_ns=29344 max_ns=41348181 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=64 compactions=63 sst_bytes=14627926 user_us=580088 system_us=545823 voluntary=447 involuntary=10 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.1099162101745605
+      },
+      "metrics": {
+        "foreground_us": 2001930,
+        "sync_us": 0,
+        "close_us": 27062,
+        "p50_ns": 9260,
+        "p95_ns": 20833,
+        "p99_ns": 29344,
+        "max_ns": 41348181,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 64,
+        "compactions": 63,
+        "sst_bytes": 14627926,
+        "user_us": 580088,
+        "system_us": 545823,
+        "voluntary": 447,
+        "involuntary": 10
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=49003 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5262975692749023
+      }
+    },
+    {
+      "trial": 0,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2193511 sync_us=522795 close_us=99253 p50_ns=10361 p95_ns=23082 p99_ns=37664 max_ns=25351049 backpressure_us=2436 peak_bytes=2097012 lag_us=98617 points=10 mirrored_bytes=52028144 flushes=63 compactions=64 sst_bytes=14627906 user_us=655809 system_us=584226 voluntary=1137 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9702889919281006
+      },
+      "metrics": {
+        "foreground_us": 2193511,
+        "sync_us": 522795,
+        "close_us": 99253,
+        "p50_ns": 10361,
+        "p95_ns": 23082,
+        "p99_ns": 37664,
+        "max_ns": 25351049,
+        "backpressure_us": 2436,
+        "peak_bytes": 2097012,
+        "lag_us": 98617,
+        "points": 10,
+        "mirrored_bytes": 52028144,
+        "flushes": 63,
+        "compactions": 64,
+        "sst_bytes": 14627906,
+        "user_us": 655809,
+        "system_us": 584226,
+        "voluntary": 1137,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1886309 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.778855562210083
+      }
+    },
+    {
+      "trial": 0,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2224423 sync_us=419648 close_us=106299 p50_ns=10610 p95_ns=22706 p99_ns=32449 max_ns=37492852 backpressure_us=0 peak_bytes=1794721 lag_us=105619 points=9 mirrored_bytes=51722993 flushes=63 compactions=63 sst_bytes=14627975 user_us=652465 system_us=590337 voluntary=603 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9090800285339355
+      },
+      "metrics": {
+        "foreground_us": 2224423,
+        "sync_us": 419648,
+        "close_us": 106299,
+        "p50_ns": 10610,
+        "p95_ns": 22706,
+        "p99_ns": 32449,
+        "max_ns": 37492852,
+        "backpressure_us": 0,
+        "peak_bytes": 1794721,
+        "lag_us": 105619,
+        "points": 9,
+        "mirrored_bytes": 51722993,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627975,
+        "user_us": 652465,
+        "system_us": 590337,
+        "voluntary": 603,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1880249 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.757441520690918
+      }
+    },
+    {
+      "trial": 0,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2194088 sync_us=444500 close_us=109618 p50_ns=10407 p95_ns=23565 p99_ns=33353 max_ns=24703625 backpressure_us=0 peak_bytes=1708100 lag_us=109013 points=9 mirrored_bytes=51728322 flushes=63 compactions=63 sst_bytes=14628069 user_us=713355 system_us=557588 voluntary=680 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9107754230499268
+      },
+      "metrics": {
+        "foreground_us": 2194088,
+        "sync_us": 444500,
+        "close_us": 109618,
+        "p50_ns": 10407,
+        "p95_ns": 23565,
+        "p99_ns": 33353,
+        "max_ns": 24703625,
+        "backpressure_us": 0,
+        "peak_bytes": 1708100,
+        "lag_us": 109013,
+        "points": 9,
+        "mirrored_bytes": 51728322,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628069,
+        "user_us": 713355,
+        "system_us": 557588,
+        "voluntary": 680,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/0-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1886980 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.766230821609497
+      }
+    },
+    {
+      "trial": 1,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=845387 sync_us=333294 close_us=630951 p50_ns=7350 p95_ns=11949 p99_ns=15638 max_ns=13994113 backpressure_us=0 peak_bytes=1115028 lag_us=580398 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=459539 system_us=381018 voluntary=193 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.9690678119659424
+      },
+      "metrics": {
+        "foreground_us": 845387,
+        "sync_us": 333294,
+        "close_us": 630951,
+        "p50_ns": 7350,
+        "p95_ns": 11949,
+        "p99_ns": 15638,
+        "max_ns": 13994113,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 580398,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 459539,
+        "system_us": 381018,
+        "voluntary": 193,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1149961 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5375704765319824
+      }
+    },
+    {
+      "trial": 1,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=945680 sync_us=325246 close_us=644665 p50_ns=8390 p95_ns=14731 p99_ns=19795 max_ns=901524 backpressure_us=0 peak_bytes=1115028 lag_us=595718 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=474741 system_us=460476 voluntary=497 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0667967796325684
+      },
+      "metrics": {
+        "foreground_us": 945680,
+        "sync_us": 325246,
+        "close_us": 644665,
+        "p50_ns": 8390,
+        "p95_ns": 14731,
+        "p99_ns": 19795,
+        "max_ns": 901524,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 595718,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 474741,
+        "system_us": 460476,
+        "voluntary": 497,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1153043 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5672147274017334
+      }
+    },
+    {
+      "trial": 1,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=962520 sync_us=310487 close_us=618812 p50_ns=8519 p95_ns=15254 p99_ns=21476 max_ns=724418 backpressure_us=0 peak_bytes=1114439 lag_us=567715 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=492666 system_us=457244 voluntary=1113 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.045764684677124
+      },
+      "metrics": {
+        "foreground_us": 962520,
+        "sync_us": 310487,
+        "close_us": 618812,
+        "p50_ns": 8519,
+        "p95_ns": 15254,
+        "p99_ns": 21476,
+        "max_ns": 724418,
+        "backpressure_us": 0,
+        "peak_bytes": 1114439,
+        "lag_us": 567715,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 492666,
+        "system_us": 457244,
+        "voluntary": 1113,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1145592 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5449132919311523
+      }
+    },
+    {
+      "trial": 1,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=751592 sync_us=0 close_us=229729 p50_ns=6398 p95_ns=9927 p99_ns=14729 max_ns=9376023 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=2160883 user_us=369734 system_us=378060 voluntary=0 involuntary=4 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.0570869445800781
+      },
+      "metrics": {
+        "foreground_us": 751592,
+        "sync_us": 0,
+        "close_us": 229729,
+        "p50_ns": 6398,
+        "p95_ns": 9927,
+        "p99_ns": 14729,
+        "max_ns": 9376023,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 369734,
+        "system_us": 378060,
+        "voluntary": 0,
+        "involuntary": 4
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=24205 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.4334714412689209
+      }
+    },
+    {
+      "trial": 1,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2215675 sync_us=450708 close_us=111887 p50_ns=9996 p95_ns=24239 p99_ns=39624 max_ns=23968228 backpressure_us=0 peak_bytes=1602190 lag_us=111216 points=9 mirrored_bytes=51727211 flushes=63 compactions=63 sst_bytes=14628134 user_us=689247 system_us=565693 voluntary=1139 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.934575080871582
+      },
+      "metrics": {
+        "foreground_us": 2215675,
+        "sync_us": 450708,
+        "close_us": 111887,
+        "p50_ns": 9996,
+        "p95_ns": 24239,
+        "p99_ns": 39624,
+        "max_ns": 23968228,
+        "backpressure_us": 0,
+        "peak_bytes": 1602190,
+        "lag_us": 111216,
+        "points": 9,
+        "mirrored_bytes": 51727211,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628134,
+        "user_us": 689247,
+        "system_us": 565693,
+        "voluntary": 1139,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1902404 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.779611825942993
+      }
+    },
+    {
+      "trial": 1,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2186310 sync_us=405599 close_us=181673 p50_ns=10802 p95_ns=23909 p99_ns=33772 max_ns=14752794 backpressure_us=0 peak_bytes=2245798 lag_us=181077 points=10 mirrored_bytes=51771316 flushes=63 compactions=63 sst_bytes=14628172 user_us=753946 system_us=523778 voluntary=851 involuntary=6 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.92885684967041
+      },
+      "metrics": {
+        "foreground_us": 2186310,
+        "sync_us": 405599,
+        "close_us": 181673,
+        "p50_ns": 10802,
+        "p95_ns": 23909,
+        "p99_ns": 33772,
+        "max_ns": 14752794,
+        "backpressure_us": 0,
+        "peak_bytes": 2245798,
+        "lag_us": 181077,
+        "points": 10,
+        "mirrored_bytes": 51771316,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628172,
+        "user_us": 753946,
+        "system_us": 523778,
+        "voluntary": 851,
+        "involuntary": 6
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1898326 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7676572799682617
+      }
+    },
+    {
+      "trial": 1,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2198854 sync_us=435316 close_us=104933 p50_ns=11095 p95_ns=23468 p99_ns=34593 max_ns=24656711 backpressure_us=0 peak_bytes=1529118 lag_us=104432 points=9 mirrored_bytes=51724142 flushes=63 compactions=63 sst_bytes=14627911 user_us=683083 system_us=592543 voluntary=860 involuntary=561 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.89803409576416
+      },
+      "metrics": {
+        "foreground_us": 2198854,
+        "sync_us": 435316,
+        "close_us": 104933,
+        "p50_ns": 11095,
+        "p95_ns": 23468,
+        "p99_ns": 34593,
+        "max_ns": 24656711,
+        "backpressure_us": 0,
+        "peak_bytes": 1529118,
+        "lag_us": 104432,
+        "points": 9,
+        "mirrored_bytes": 51724142,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627911,
+        "user_us": 683083,
+        "system_us": 592543,
+        "voluntary": 860,
+        "involuntary": 561
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1920304 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.8004884719848633
+      }
+    },
+    {
+      "trial": 1,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2001381 sync_us=0 close_us=25916 p50_ns=9616 p95_ns=19718 p99_ns=29361 max_ns=30350741 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628278 user_us=629372 system_us=492470 voluntary=439 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.1046669483184814
+      },
+      "metrics": {
+        "foreground_us": 2001381,
+        "sync_us": 0,
+        "close_us": 25916,
+        "p50_ns": 9616,
+        "p95_ns": 19718,
+        "p99_ns": 29361,
+        "max_ns": 30350741,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628278,
+        "user_us": 629372,
+        "system_us": 492470,
+        "voluntary": 439,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=52884 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5350959300994873
+      }
+    },
+    {
+      "trial": 1,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2196006 sync_us=473467 close_us=101977 p50_ns=10230 p95_ns=24218 p99_ns=40995 max_ns=39930054 backpressure_us=0 peak_bytes=1999912 lag_us=101395 points=9 mirrored_bytes=51771030 flushes=63 compactions=63 sst_bytes=14628148 user_us=647178 system_us=600937 voluntary=1994 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9207000732421875
+      },
+      "metrics": {
+        "foreground_us": 2196006,
+        "sync_us": 473467,
+        "close_us": 101977,
+        "p50_ns": 10230,
+        "p95_ns": 24218,
+        "p99_ns": 40995,
+        "max_ns": 39930054,
+        "backpressure_us": 0,
+        "peak_bytes": 1999912,
+        "lag_us": 101395,
+        "points": 9,
+        "mirrored_bytes": 51771030,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628148,
+        "user_us": 647178,
+        "system_us": 600937,
+        "voluntary": 1994,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1922274 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.802835702896118
+      }
+    },
+    {
+      "trial": 1,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2160731 sync_us=469584 close_us=112059 p50_ns=10374 p95_ns=22441 p99_ns=31839 max_ns=27052525 backpressure_us=0 peak_bytes=2052440 lag_us=111330 points=9 mirrored_bytes=51790218 flushes=63 compactions=63 sst_bytes=14628183 user_us=643226 system_us=576629 voluntary=663 involuntary=5 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9021902084350586
+      },
+      "metrics": {
+        "foreground_us": 2160731,
+        "sync_us": 469584,
+        "close_us": 112059,
+        "p50_ns": 10374,
+        "p95_ns": 22441,
+        "p99_ns": 31839,
+        "max_ns": 27052525,
+        "backpressure_us": 0,
+        "peak_bytes": 2052440,
+        "lag_us": 111330,
+        "points": 9,
+        "mirrored_bytes": 51790218,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628183,
+        "user_us": 643226,
+        "system_us": 576629,
+        "voluntary": 663,
+        "involuntary": 5
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1942267 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.833531141281128
+      }
+    },
+    {
+      "trial": 1,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2164017 sync_us=454350 close_us=112047 p50_ns=10593 p95_ns=22708 p99_ns=33003 max_ns=17653804 backpressure_us=4179 peak_bytes=2096028 lag_us=111487 points=9 mirrored_bytes=51719744 flushes=63 compactions=63 sst_bytes=14628247 user_us=688944 system_us=563201 voluntary=1302 involuntary=9 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.8864593505859375
+      },
+      "metrics": {
+        "foreground_us": 2164017,
+        "sync_us": 454350,
+        "close_us": 112047,
+        "p50_ns": 10593,
+        "p95_ns": 22708,
+        "p99_ns": 33003,
+        "max_ns": 17653804,
+        "backpressure_us": 4179,
+        "peak_bytes": 2096028,
+        "lag_us": 111487,
+        "points": 9,
+        "mirrored_bytes": 51719744,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628247,
+        "user_us": 688944,
+        "system_us": 563201,
+        "voluntary": 1302,
+        "involuntary": 9
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1895617 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.786423683166504
+      }
+    },
+    {
+      "trial": 1,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1965774 sync_us=0 close_us=31505 p50_ns=9026 p95_ns=20716 p99_ns=29162 max_ns=22448949 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628096 user_us=532158 system_us=564171 voluntary=477 involuntary=4 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0977041721343994
+      },
+      "metrics": {
+        "foreground_us": 1965774,
+        "sync_us": 0,
+        "close_us": 31505,
+        "p50_ns": 9026,
+        "p95_ns": 20716,
+        "p99_ns": 29162,
+        "max_ns": 22448949,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628096,
+        "user_us": 532158,
+        "system_us": 564171,
+        "voluntary": 477,
+        "involuntary": 4
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/1-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=55239 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5276069641113281
+      }
+    },
+    {
+      "trial": 2,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=946590 sync_us=305995 close_us=612793 p50_ns=8199 p95_ns=14850 p99_ns=21878 max_ns=582374 backpressure_us=0 peak_bytes=1114439 lag_us=562712 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=526738 system_us=406105 voluntary=1129 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0190412998199463
+      },
+      "metrics": {
+        "foreground_us": 946590,
+        "sync_us": 305995,
+        "close_us": 612793,
+        "p50_ns": 8199,
+        "p95_ns": 14850,
+        "p99_ns": 21878,
+        "max_ns": 582374,
+        "backpressure_us": 0,
+        "peak_bytes": 1114439,
+        "lag_us": 562712,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 526738,
+        "system_us": 406105,
+        "voluntary": 1129,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1142829 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5509543418884277
+      }
+    },
+    {
+      "trial": 2,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=841602 sync_us=307171 close_us=626941 p50_ns=7302 p95_ns=11500 p99_ns=17525 max_ns=519956 backpressure_us=0 peak_bytes=1115028 lag_us=575717 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=495578 system_us=331022 voluntary=164 involuntary=322 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.93638014793396
+      },
+      "metrics": {
+        "foreground_us": 841602,
+        "sync_us": 307171,
+        "close_us": 626941,
+        "p50_ns": 7302,
+        "p95_ns": 11500,
+        "p99_ns": 17525,
+        "max_ns": 519956,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 575717,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 495578,
+        "system_us": 331022,
+        "voluntary": 164,
+        "involuntary": 322
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1152920 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5763943195343018
+      }
+    },
+    {
+      "trial": 2,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=741744 sync_us=0 close_us=202040 p50_ns=6384 p95_ns=9849 p99_ns=12290 max_ns=6876505 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=2160883 user_us=387619 system_us=350269 voluntary=0 involuntary=4 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.0360987186431885
+      },
+      "metrics": {
+        "foreground_us": 741744,
+        "sync_us": 0,
+        "close_us": 202040,
+        "p50_ns": 6384,
+        "p95_ns": 9849,
+        "p99_ns": 12290,
+        "max_ns": 6876505,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 387619,
+        "system_us": 350269,
+        "voluntary": 0,
+        "involuntary": 4
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=22150 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.4245576858520508
+      }
+    },
+    {
+      "trial": 2,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=815134 sync_us=315148 close_us=623493 p50_ns=7165 p95_ns=11094 p99_ns=18721 max_ns=612829 backpressure_us=0 peak_bytes=1115028 lag_us=570136 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=457242 system_us=348976 voluntary=175 involuntary=3 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.9069979190826416
+      },
+      "metrics": {
+        "foreground_us": 815134,
+        "sync_us": 315148,
+        "close_us": 623493,
+        "p50_ns": 7165,
+        "p95_ns": 11094,
+        "p99_ns": 18721,
+        "max_ns": 612829,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 570136,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 457242,
+        "system_us": 348976,
+        "voluntary": 175,
+        "involuntary": 3
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1139852 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5367181301116943
+      }
+    },
+    {
+      "trial": 2,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2149620 sync_us=527373 close_us=105097 p50_ns=10182 p95_ns=21052 p99_ns=30046 max_ns=26230267 backpressure_us=0 peak_bytes=2056141 lag_us=104428 points=9 mirrored_bytes=52050196 flushes=63 compactions=64 sst_bytes=14628019 user_us=668181 system_us=515141 voluntary=665 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.960967779159546
+      },
+      "metrics": {
+        "foreground_us": 2149620,
+        "sync_us": 527373,
+        "close_us": 105097,
+        "p50_ns": 10182,
+        "p95_ns": 21052,
+        "p99_ns": 30046,
+        "max_ns": 26230267,
+        "backpressure_us": 0,
+        "peak_bytes": 2056141,
+        "lag_us": 104428,
+        "points": 9,
+        "mirrored_bytes": 52050196,
+        "flushes": 63,
+        "compactions": 64,
+        "sst_bytes": 14628019,
+        "user_us": 668181,
+        "system_us": 515141,
+        "voluntary": 665,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1892692 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7515339851379395
+      }
+    },
+    {
+      "trial": 2,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2157443 sync_us=472897 close_us=112157 p50_ns=10594 p95_ns=23112 p99_ns=33724 max_ns=24022607 backpressure_us=0 peak_bytes=1835438 lag_us=111482 points=9 mirrored_bytes=51762443 flushes=63 compactions=63 sst_bytes=14628140 user_us=684601 system_us=570002 voluntary=1377 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.8951475620269775
+      },
+      "metrics": {
+        "foreground_us": 2157443,
+        "sync_us": 472897,
+        "close_us": 112157,
+        "p50_ns": 10594,
+        "p95_ns": 23112,
+        "p99_ns": 33724,
+        "max_ns": 24022607,
+        "backpressure_us": 0,
+        "peak_bytes": 1835438,
+        "lag_us": 111482,
+        "points": 9,
+        "mirrored_bytes": 51762443,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628140,
+        "user_us": 684601,
+        "system_us": 570002,
+        "voluntary": 1377,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1887527 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.766937255859375
+      }
+    },
+    {
+      "trial": 2,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1986457 sync_us=0 close_us=28575 p50_ns=9333 p95_ns=21039 p99_ns=29261 max_ns=20132602 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14627884 user_us=663961 system_us=465670 voluntary=474 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0964865684509277
+      },
+      "metrics": {
+        "foreground_us": 1986457,
+        "sync_us": 0,
+        "close_us": 28575,
+        "p50_ns": 9333,
+        "p95_ns": 21039,
+        "p99_ns": 29261,
+        "max_ns": 20132602,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627884,
+        "user_us": 663961,
+        "system_us": 465670,
+        "voluntary": 474,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=46938 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5196719169616699
+      }
+    },
+    {
+      "trial": 2,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2222592 sync_us=541497 close_us=109526 p50_ns=9871 p95_ns=23324 p99_ns=38441 max_ns=30343149 backpressure_us=0 peak_bytes=2330610 lag_us=108906 points=10 mirrored_bytes=51757414 flushes=63 compactions=63 sst_bytes=14627951 user_us=507800 system_us=693053 voluntary=2038 involuntary=296 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.030404567718506
+      },
+      "metrics": {
+        "foreground_us": 2222592,
+        "sync_us": 541497,
+        "close_us": 109526,
+        "p50_ns": 9871,
+        "p95_ns": 23324,
+        "p99_ns": 38441,
+        "max_ns": 30343149,
+        "backpressure_us": 0,
+        "peak_bytes": 2330610,
+        "lag_us": 108906,
+        "points": 10,
+        "mirrored_bytes": 51757414,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627951,
+        "user_us": 507800,
+        "system_us": 693053,
+        "voluntary": 2038,
+        "involuntary": 296
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1910970 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.812727451324463
+      }
+    },
+    {
+      "trial": 2,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2192578 sync_us=423870 close_us=107768 p50_ns=10323 p95_ns=23694 p99_ns=33527 max_ns=30435768 backpressure_us=0 peak_bytes=1787285 lag_us=107179 points=9 mirrored_bytes=51766654 flushes=63 compactions=63 sst_bytes=14627838 user_us=654512 system_us=593260 voluntary=972 involuntary=236 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.875181198120117
+      },
+      "metrics": {
+        "foreground_us": 2192578,
+        "sync_us": 423870,
+        "close_us": 107768,
+        "p50_ns": 10323,
+        "p95_ns": 23694,
+        "p99_ns": 33527,
+        "max_ns": 30435768,
+        "backpressure_us": 0,
+        "peak_bytes": 1787285,
+        "lag_us": 107179,
+        "points": 9,
+        "mirrored_bytes": 51766654,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627838,
+        "user_us": 654512,
+        "system_us": 593260,
+        "voluntary": 972,
+        "involuntary": 236
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1897366 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7599544525146484
+      }
+    },
+    {
+      "trial": 2,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2184985 sync_us=489390 close_us=107998 p50_ns=10011 p95_ns=22861 p99_ns=33626 max_ns=32119431 backpressure_us=14255 peak_bytes=2097023 lag_us=107412 points=9 mirrored_bytes=51770454 flushes=63 compactions=63 sst_bytes=14628023 user_us=675204 system_us=533125 voluntary=694 involuntary=66 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9340786933898926
+      },
+      "metrics": {
+        "foreground_us": 2184985,
+        "sync_us": 489390,
+        "close_us": 107998,
+        "p50_ns": 10011,
+        "p95_ns": 22861,
+        "p99_ns": 33626,
+        "max_ns": 32119431,
+        "backpressure_us": 14255,
+        "peak_bytes": 2097023,
+        "lag_us": 107412,
+        "points": 9,
+        "mirrored_bytes": 51770454,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628023,
+        "user_us": 675204,
+        "system_us": 533125,
+        "voluntary": 694,
+        "involuntary": 66
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1892600 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7630250453948975
+      }
+    },
+    {
+      "trial": 2,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1990346 sync_us=0 close_us=30737 p50_ns=9341 p95_ns=20677 p99_ns=29068 max_ns=23633181 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628059 user_us=610442 system_us=496649 voluntary=481 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.1052253246307373
+      },
+      "metrics": {
+        "foreground_us": 1990346,
+        "sync_us": 0,
+        "close_us": 30737,
+        "p50_ns": 9341,
+        "p95_ns": 20677,
+        "p99_ns": 29068,
+        "max_ns": 23633181,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628059,
+        "user_us": 610442,
+        "system_us": 496649,
+        "voluntary": 481,
+        "involuntary": 1
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=51055 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5292174816131592
+      }
+    },
+    {
+      "trial": 2,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2236305 sync_us=492394 close_us=111922 p50_ns=9891 p95_ns=24930 p99_ns=38178 max_ns=30847693 backpressure_us=692 peak_bytes=1959905 lag_us=111187 points=9 mirrored_bytes=51721914 flushes=63 compactions=63 sst_bytes=14627924 user_us=705394 system_us=536494 voluntary=1523 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9957869052886963
+      },
+      "metrics": {
+        "foreground_us": 2236305,
+        "sync_us": 492394,
+        "close_us": 111922,
+        "p50_ns": 9891,
+        "p95_ns": 24930,
+        "p99_ns": 38178,
+        "max_ns": 30847693,
+        "backpressure_us": 692,
+        "peak_bytes": 1959905,
+        "lag_us": 111187,
+        "points": 9,
+        "mirrored_bytes": 51721914,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627924,
+        "user_us": 705394,
+        "system_us": 536494,
+        "voluntary": 1523,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/2-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1964444 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.8444912433624268
+      }
+    },
+    {
+      "trial": 3,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=907866 sync_us=373104 close_us=610721 p50_ns=7759 p95_ns=13361 p99_ns=20191 max_ns=16113271 backpressure_us=0 peak_bytes=1114731 lag_us=558534 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=477943 system_us=421487 voluntary=231 involuntary=9 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.051948070526123
+      },
+      "metrics": {
+        "foreground_us": 907866,
+        "sync_us": 373104,
+        "close_us": 610721,
+        "p50_ns": 7759,
+        "p95_ns": 13361,
+        "p99_ns": 20191,
+        "max_ns": 16113271,
+        "backpressure_us": 0,
+        "peak_bytes": 1114731,
+        "lag_us": 558534,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 477943,
+        "system_us": 421487,
+        "voluntary": 231,
+        "involuntary": 9
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1149267 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5353198051452637
+      }
+    },
+    {
+      "trial": 3,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=749588 sync_us=0 close_us=203274 p50_ns=6343 p95_ns=10571 p99_ns=16559 max_ns=506956 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=2160883 user_us=408341 system_us=340481 voluntary=1 involuntary=3 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.033524513244629
+      },
+      "metrics": {
+        "foreground_us": 749588,
+        "sync_us": 0,
+        "close_us": 203274,
+        "p50_ns": 6343,
+        "p95_ns": 10571,
+        "p99_ns": 16559,
+        "max_ns": 506956,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 408341,
+        "system_us": 340481,
+        "voluntary": 1,
+        "involuntary": 3
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=22454 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.43947649002075195
+      }
+    },
+    {
+      "trial": 3,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=883705 sync_us=285073 close_us=626957 p50_ns=7275 p95_ns=11459 p99_ns=17806 max_ns=23838296 backpressure_us=0 peak_bytes=1115028 lag_us=576677 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=479317 system_us=396757 voluntary=286 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.9729373455047607
+      },
+      "metrics": {
+        "foreground_us": 883705,
+        "sync_us": 285073,
+        "close_us": 626957,
+        "p50_ns": 7275,
+        "p95_ns": 11459,
+        "p99_ns": 17806,
+        "max_ns": 23838296,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 576677,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 479317,
+        "system_us": 396757,
+        "voluntary": 286,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1146894 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.517587661743164
+      }
+    },
+    {
+      "trial": 3,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=889200 sync_us=361876 close_us=634582 p50_ns=7304 p95_ns=11458 p99_ns=17741 max_ns=18287952 backpressure_us=0 peak_bytes=1115028 lag_us=583286 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=530892 system_us=348576 voluntary=190 involuntary=0 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.035149574279785
+      },
+      "metrics": {
+        "foreground_us": 889200,
+        "sync_us": 361876,
+        "close_us": 634582,
+        "p50_ns": 7304,
+        "p95_ns": 11458,
+        "p99_ns": 17741,
+        "max_ns": 18287952,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 583286,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 530892,
+        "system_us": 348576,
+        "voluntary": 190,
+        "involuntary": 0
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1144507 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5516624450683594
+      }
+    },
+    {
+      "trial": 3,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2244012 sync_us=423860 close_us=112658 p50_ns=9947 p95_ns=24717 p99_ns=35325 max_ns=29294565 backpressure_us=0 peak_bytes=2296368 lag_us=111973 points=9 mirrored_bytes=52100260 flushes=63 compactions=64 sst_bytes=14628110 user_us=675130 system_us=570509 voluntary=727 involuntary=52 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9420347213745117
+      },
+      "metrics": {
+        "foreground_us": 2244012,
+        "sync_us": 423860,
+        "close_us": 112658,
+        "p50_ns": 9947,
+        "p95_ns": 24717,
+        "p99_ns": 35325,
+        "max_ns": 29294565,
+        "backpressure_us": 0,
+        "peak_bytes": 2296368,
+        "lag_us": 111973,
+        "points": 9,
+        "mirrored_bytes": 52100260,
+        "flushes": 63,
+        "compactions": 64,
+        "sst_bytes": 14628110,
+        "user_us": 675130,
+        "system_us": 570509,
+        "voluntary": 727,
+        "involuntary": 52
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1903417 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.802582025527954
+      }
+    },
+    {
+      "trial": 3,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1974968 sync_us=0 close_us=32295 p50_ns=9021 p95_ns=20525 p99_ns=29495 max_ns=21445187 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628013 user_us=569375 system_us=517679 voluntary=501 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0826873779296875
+      },
+      "metrics": {
+        "foreground_us": 1974968,
+        "sync_us": 0,
+        "close_us": 32295,
+        "p50_ns": 9021,
+        "p95_ns": 20525,
+        "p99_ns": 29495,
+        "max_ns": 21445187,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628013,
+        "user_us": 569375,
+        "system_us": 517679,
+        "voluntary": 501,
+        "involuntary": 2
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=77545 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.562159538269043
+      }
+    },
+    {
+      "trial": 3,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2296598 sync_us=477404 close_us=179790 p50_ns=10011 p95_ns=26869 p99_ns=42288 max_ns=34126885 backpressure_us=0 peak_bytes=2120859 lag_us=179098 points=10 mirrored_bytes=51749856 flushes=63 compactions=63 sst_bytes=14628176 user_us=703627 system_us=599487 voluntary=1465 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.1139309406280518
+      },
+      "metrics": {
+        "foreground_us": 2296598,
+        "sync_us": 477404,
+        "close_us": 179790,
+        "p50_ns": 10011,
+        "p95_ns": 26869,
+        "p99_ns": 42288,
+        "max_ns": 34126885,
+        "backpressure_us": 0,
+        "peak_bytes": 2120859,
+        "lag_us": 179098,
+        "points": 10,
+        "mirrored_bytes": 51749856,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628176,
+        "user_us": 703627,
+        "system_us": 599487,
+        "voluntary": 1465,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=2013749 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.931466817855835
+      }
+    },
+    {
+      "trial": 3,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2191930 sync_us=466588 close_us=108019 p50_ns=9832 p95_ns=24141 p99_ns=33287 max_ns=32493297 backpressure_us=0 peak_bytes=2426401 lag_us=107301 points=9 mirrored_bytes=52057481 flushes=63 compactions=64 sst_bytes=14627957 user_us=654254 system_us=575405 voluntary=693 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9230763912200928
+      },
+      "metrics": {
+        "foreground_us": 2191930,
+        "sync_us": 466588,
+        "close_us": 108019,
+        "p50_ns": 9832,
+        "p95_ns": 24141,
+        "p99_ns": 33287,
+        "max_ns": 32493297,
+        "backpressure_us": 0,
+        "peak_bytes": 2426401,
+        "lag_us": 107301,
+        "points": 9,
+        "mirrored_bytes": 52057481,
+        "flushes": 63,
+        "compactions": 64,
+        "sst_bytes": 14627957,
+        "user_us": 654254,
+        "system_us": 575405,
+        "voluntary": 693,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1909997 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7902305126190186
+      }
+    },
+    {
+      "trial": 3,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2187028 sync_us=513311 close_us=110205 p50_ns=10085 p95_ns=22808 p99_ns=36103 max_ns=24534013 backpressure_us=17710 peak_bytes=2096997 lag_us=109456 points=9 mirrored_bytes=51770997 flushes=63 compactions=63 sst_bytes=14628033 user_us=739673 system_us=469967 voluntary=720 involuntary=904 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9624812602996826
+      },
+      "metrics": {
+        "foreground_us": 2187028,
+        "sync_us": 513311,
+        "close_us": 110205,
+        "p50_ns": 10085,
+        "p95_ns": 22808,
+        "p99_ns": 36103,
+        "max_ns": 24534013,
+        "backpressure_us": 17710,
+        "peak_bytes": 2096997,
+        "lag_us": 109456,
+        "points": 9,
+        "mirrored_bytes": 51770997,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628033,
+        "user_us": 739673,
+        "system_us": 469967,
+        "voluntary": 720,
+        "involuntary": 904
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1952864 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.821784257888794
+      }
+    },
+    {
+      "trial": 3,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2015087 sync_us=0 close_us=26152 p50_ns=9317 p95_ns=22484 p99_ns=32241 max_ns=31747701 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14627990 user_us=623829 system_us=523223 voluntary=453 involuntary=3 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.1210098266601562
+      },
+      "metrics": {
+        "foreground_us": 2015087,
+        "sync_us": 0,
+        "close_us": 26152,
+        "p50_ns": 9317,
+        "p95_ns": 22484,
+        "p99_ns": 32241,
+        "max_ns": 31747701,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627990,
+        "user_us": 623829,
+        "system_us": 523223,
+        "voluntary": 453,
+        "involuntary": 3
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=47388 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5223965644836426
+      }
+    },
+    {
+      "trial": 3,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2169495 sync_us=498919 close_us=108066 p50_ns=9904 p95_ns=21984 p99_ns=36655 max_ns=22005205 backpressure_us=7286 peak_bytes=1965647 lag_us=107325 points=9 mirrored_bytes=51767345 flushes=63 compactions=63 sst_bytes=14627862 user_us=619166 system_us=557313 voluntary=1173 involuntary=357 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9374871253967285
+      },
+      "metrics": {
+        "foreground_us": 2169495,
+        "sync_us": 498919,
+        "close_us": 108066,
+        "p50_ns": 9904,
+        "p95_ns": 21984,
+        "p99_ns": 36655,
+        "max_ns": 22005205,
+        "backpressure_us": 7286,
+        "peak_bytes": 1965647,
+        "lag_us": 107325,
+        "points": 9,
+        "mirrored_bytes": 51767345,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627862,
+        "user_us": 619166,
+        "system_us": 557313,
+        "voluntary": 1173,
+        "involuntary": 357
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1903669 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7981314659118652
+      }
+    },
+    {
+      "trial": 3,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2203420 sync_us=420693 close_us=183611 p50_ns=10478 p95_ns=25049 p99_ns=35530 max_ns=28210302 backpressure_us=54532 peak_bytes=2097143 lag_us=182998 points=10 mirrored_bytes=51766777 flushes=63 compactions=63 sst_bytes=14627812 user_us=676809 system_us=610256 voluntary=967 involuntary=6 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9665496349334717
+      },
+      "metrics": {
+        "foreground_us": 2203420,
+        "sync_us": 420693,
+        "close_us": 183611,
+        "p50_ns": 10478,
+        "p95_ns": 25049,
+        "p99_ns": 35530,
+        "max_ns": 28210302,
+        "backpressure_us": 54532,
+        "peak_bytes": 2097143,
+        "lag_us": 182998,
+        "points": 10,
+        "mirrored_bytes": 51766777,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627812,
+        "user_us": 676809,
+        "system_us": 610256,
+        "voluntary": 967,
+        "involuntary": 6
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/3-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1893808 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.8195114135742188
+      }
+    },
+    {
+      "trial": 4,
+      "case": "default",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=736221 sync_us=0 close_us=208672 p50_ns=6337 p95_ns=9978 p99_ns=13502 max_ns=744312 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=0 compactions=0 sst_bytes=2160883 user_us=420512 system_us=311770 voluntary=1 involuntary=3 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.0248565673828125
+      },
+      "metrics": {
+        "foreground_us": 736221,
+        "sync_us": 0,
+        "close_us": 208672,
+        "p50_ns": 6337,
+        "p95_ns": 9978,
+        "p99_ns": 13502,
+        "max_ns": 744312,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 420512,
+        "system_us": 311770,
+        "voluntary": 1,
+        "involuntary": 3
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-baseline",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=26456 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.42508864402770996
+      }
+    },
+    {
+      "trial": 4,
+      "case": "default",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=890409 sync_us=355987 close_us=629604 p50_ns=7476 p95_ns=13713 p99_ns=22281 max_ns=716293 backpressure_us=0 peak_bytes=1115028 lag_us=579508 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=539163 system_us=331196 voluntary=2180 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.030440330505371
+      },
+      "metrics": {
+        "foreground_us": 890409,
+        "sync_us": 355987,
+        "close_us": 629604,
+        "p50_ns": 7476,
+        "p95_ns": 13713,
+        "p99_ns": 22281,
+        "max_ns": 716293,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 579508,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 539163,
+        "system_us": 331196,
+        "voluntary": 2180,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-current",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1142385 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5457112789154053
+      }
+    },
+    {
+      "trial": 4,
+      "case": "default",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=863509 sync_us=361159 close_us=614989 p50_ns=7219 p95_ns=12618 p99_ns=21454 max_ns=533955 backpressure_us=0 peak_bytes=1115028 lag_us=564552 points=9 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=484759 system_us=369744 voluntary=398 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.000945806503296
+      },
+      "metrics": {
+        "foreground_us": 863509,
+        "sync_us": 361159,
+        "close_us": 614989,
+        "p50_ns": 7219,
+        "p95_ns": 12618,
+        "p99_ns": 21454,
+        "max_ns": 533955,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 564552,
+        "points": 9,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 484759,
+        "system_us": 369744,
+        "voluntary": 398,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-split",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1152407 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5417468547821045
+      }
+    },
+    {
+      "trial": 4,
+      "case": "default",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=834599 sync_us=306060 close_us=618975 p50_ns=7311 p95_ns=11464 p99_ns=19163 max_ns=725572 backpressure_us=0 peak_bytes=1115028 lag_us=568887 points=8 mirrored_bytes=5759130 flushes=0 compactions=0 sst_bytes=2160883 user_us=492896 system_us=337327 voluntary=138 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 1.917996883392334
+      },
+      "metrics": {
+        "foreground_us": 834599,
+        "sync_us": 306060,
+        "close_us": 618975,
+        "p50_ns": 7311,
+        "p95_ns": 11464,
+        "p99_ns": 19163,
+        "max_ns": 725572,
+        "backpressure_us": 0,
+        "peak_bytes": 1115028,
+        "lag_us": 568887,
+        "points": 8,
+        "mirrored_bytes": 5759130,
+        "flushes": 0,
+        "compactions": 0,
+        "sst_bytes": 2160883,
+        "user_us": 492896,
+        "system_us": 337327,
+        "voluntary": 138,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-default-channels",
+          "100000",
+          "default",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1139723 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.5428080558776855
+      }
+    },
+    {
+      "trial": 4,
+      "case": "mixed",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1938603 sync_us=0 close_us=28717 p50_ns=9239 p95_ns=20252 p99_ns=29468 max_ns=21466010 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628184 user_us=593165 system_us=496463 voluntary=445 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.050581455230713
+      },
+      "metrics": {
+        "foreground_us": 1938603,
+        "sync_us": 0,
+        "close_us": 28717,
+        "p50_ns": 9239,
+        "p95_ns": 20252,
+        "p99_ns": 29468,
+        "max_ns": 21466010,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628184,
+        "user_us": 593165,
+        "system_us": 496463,
+        "voluntary": 445,
+        "involuntary": 2
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-baseline",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=53332 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5572974681854248
+      }
+    },
+    {
+      "trial": 4,
+      "case": "mixed",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2200819 sync_us=475659 close_us=109729 p50_ns=10164 p95_ns=27098 p99_ns=41380 max_ns=25268454 backpressure_us=0 peak_bytes=2104278 lag_us=109015 points=9 mirrored_bytes=51760680 flushes=63 compactions=63 sst_bytes=14628136 user_us=697558 system_us=591738 voluntary=1918 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9544668197631836
+      },
+      "metrics": {
+        "foreground_us": 2200819,
+        "sync_us": 475659,
+        "close_us": 109729,
+        "p50_ns": 10164,
+        "p95_ns": 27098,
+        "p99_ns": 41380,
+        "max_ns": 25268454,
+        "backpressure_us": 0,
+        "peak_bytes": 2104278,
+        "lag_us": 109015,
+        "points": 9,
+        "mirrored_bytes": 51760680,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628136,
+        "user_us": 697558,
+        "system_us": 591738,
+        "voluntary": 1918,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-current",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1873630 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.8243248462677
+      }
+    },
+    {
+      "trial": 4,
+      "case": "mixed",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2174998 sync_us=507094 close_us=111545 p50_ns=10284 p95_ns=23322 p99_ns=32862 max_ns=23295415 backpressure_us=0 peak_bytes=1789800 lag_us=111007 points=10 mirrored_bytes=51759958 flushes=63 compactions=63 sst_bytes=14628043 user_us=726928 system_us=521535 voluntary=627 involuntary=2 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.954604387283325
+      },
+      "metrics": {
+        "foreground_us": 2174998,
+        "sync_us": 507094,
+        "close_us": 111545,
+        "p50_ns": 10284,
+        "p95_ns": 23322,
+        "p99_ns": 32862,
+        "max_ns": 23295415,
+        "backpressure_us": 0,
+        "peak_bytes": 1789800,
+        "lag_us": 111007,
+        "points": 10,
+        "mirrored_bytes": 51759958,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628043,
+        "user_us": 726928,
+        "system_us": 521535,
+        "voluntary": 627,
+        "involuntary": 2
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-split",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1885937 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.729992628097534
+      }
+    },
+    {
+      "trial": 4,
+      "case": "mixed",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2192800 sync_us=467389 close_us=112444 p50_ns=10563 p95_ns=25492 p99_ns=35003 max_ns=28989017 backpressure_us=0 peak_bytes=1717572 lag_us=111754 points=9 mirrored_bytes=52013754 flushes=63 compactions=64 sst_bytes=14628064 user_us=699798 system_us=598295 voluntary=922 involuntary=1 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9246037006378174
+      },
+      "metrics": {
+        "foreground_us": 2192800,
+        "sync_us": 467389,
+        "close_us": 112444,
+        "p50_ns": 10563,
+        "p95_ns": 25492,
+        "p99_ns": 35003,
+        "max_ns": 28989017,
+        "backpressure_us": 0,
+        "peak_bytes": 1717572,
+        "lag_us": 111754,
+        "points": 9,
+        "mirrored_bytes": 52013754,
+        "flushes": 63,
+        "compactions": 64,
+        "sst_bytes": 14628064,
+        "user_us": 699798,
+        "system_us": 598295,
+        "voluntary": 922,
+        "involuntary": 1
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-mixed-channels",
+          "100000",
+          "mixed",
+          "67108864"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1936627 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.8450183868408203
+      }
+    },
+    {
+      "trial": 4,
+      "case": "pressure",
+      "variant": "baseline",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=1948133 sync_us=0 close_us=33087 p50_ns=9438 p95_ns=20369 p99_ns=28720 max_ns=20879649 backpressure_us=0 peak_bytes=0 lag_us=0 points=0 mirrored_bytes=0 flushes=63 compactions=63 sst_bytes=14628108 user_us=593808 system_us=518534 voluntary=468 involuntary=3 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.0616793632507324
+      },
+      "metrics": {
+        "foreground_us": 1948133,
+        "sync_us": 0,
+        "close_us": 33087,
+        "p50_ns": 9438,
+        "p95_ns": 20369,
+        "p99_ns": 28720,
+        "max_ns": 20879649,
+        "backpressure_us": 0,
+        "peak_bytes": 0,
+        "lag_us": 0,
+        "points": 0,
+        "mirrored_bytes": 0,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628108,
+        "user_us": 593808,
+        "system_us": 518534,
+        "voluntary": 468,
+        "involuntary": 3
+      },
+      "verify": {
+        "command": [
+          "/tmp/mb-channels-no-backup/baseline/driver",
+          "verify",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-baseline",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "verify_open_us=53177 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.5291883945465088
+      }
+    },
+    {
+      "trial": 4,
+      "case": "pressure",
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2209272 sync_us=483147 close_us=110109 p50_ns=9843 p95_ns=25013 p99_ns=38614 max_ns=15217737 backpressure_us=5133 peak_bytes=2096933 lag_us=109375 points=9 mirrored_bytes=51763571 flushes=63 compactions=63 sst_bytes=14628076 user_us=702072 system_us=537668 voluntary=1524 involuntary=22 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9665026664733887
+      },
+      "metrics": {
+        "foreground_us": 2209272,
+        "sync_us": 483147,
+        "close_us": 110109,
+        "p50_ns": 9843,
+        "p95_ns": 25013,
+        "p99_ns": 38614,
+        "max_ns": 15217737,
+        "backpressure_us": 5133,
+        "peak_bytes": 2096933,
+        "lag_us": 109375,
+        "points": 9,
+        "mirrored_bytes": 51763571,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628076,
+        "user_us": 702072,
+        "system_us": 537668,
+        "voluntary": 1524,
+        "involuntary": 22
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-current",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1922112 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.818403720855713
+      }
+    },
+    {
+      "trial": 4,
+      "case": "pressure",
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2182858 sync_us=500617 close_us=101631 p50_ns=10496 p95_ns=23724 p99_ns=33592 max_ns=21403285 backpressure_us=11388 peak_bytes=2097009 lag_us=101171 points=10 mirrored_bytes=51732322 flushes=63 compactions=63 sst_bytes=14628021 user_us=741085 system_us=519656 voluntary=1105 involuntary=20 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9273202419281006
+      },
+      "metrics": {
+        "foreground_us": 2182858,
+        "sync_us": 500617,
+        "close_us": 101631,
+        "p50_ns": 10496,
+        "p95_ns": 23724,
+        "p99_ns": 33592,
+        "max_ns": 21403285,
+        "backpressure_us": 11388,
+        "peak_bytes": 2097009,
+        "lag_us": 101171,
+        "points": 10,
+        "mirrored_bytes": 51732322,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14628021,
+        "user_us": 741085,
+        "system_us": 519656,
+        "voluntary": 1105,
+        "involuntary": 20
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-split",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1836578 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.6641478538513184
+      }
+    },
+    {
+      "trial": 4,
+      "case": "pressure",
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "write",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "foreground_us=2244740 sync_us=483212 close_us=107784 p50_ns=10690 p95_ns=23126 p99_ns=34507 max_ns=55289721 backpressure_us=0 peak_bytes=1684682 lag_us=107179 points=9 mirrored_bytes=51767927 flushes=63 compactions=63 sst_bytes=14627587 user_us=705073 system_us=555438 voluntary=921 involuntary=402 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 2.9836089611053467
+      },
+      "metrics": {
+        "foreground_us": 2244740,
+        "sync_us": 483212,
+        "close_us": 107784,
+        "p50_ns": 10690,
+        "p95_ns": 23126,
+        "p99_ns": 34507,
+        "max_ns": 55289721,
+        "backpressure_us": 0,
+        "peak_bytes": 1684682,
+        "lag_us": 107179,
+        "points": 9,
+        "mirrored_bytes": 51767927,
+        "flushes": 63,
+        "compactions": 63,
+        "sst_bytes": 14627587,
+        "user_us": 705073,
+        "system_us": 555438,
+        "voluntary": 921,
+        "involuntary": 402
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/4-pressure-channels",
+          "100000",
+          "pressure",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=1927012 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 3.7976901531219482
+      }
+    }
+  ],
+  "crashes": [
+    {
+      "variant": "current",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "crash",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-current",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": -9,
+        "stdout": "synced-before-sigkill\n",
+        "stderr": "",
+        "wall_seconds": 0.6021213531494141
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-current",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=408750 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.9079630374908447
+      }
+    },
+    {
+      "variant": "split",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/split/driver",
+          "crash",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-split",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": -9,
+        "stdout": "synced-before-sigkill\n",
+        "stderr": "",
+        "wall_seconds": 0.5743074417114258
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-split",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=412358 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.907498836517334
+      }
+    },
+    {
+      "variant": "channels",
+      "write": {
+        "command": [
+          "/tmp/mb-channels-no-backup/channels/driver",
+          "crash",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-channels",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": -9,
+        "stdout": "synced-before-sigkill\n",
+        "stderr": "",
+        "wall_seconds": 0.5992076396942139
+      },
+      "restore": {
+        "command": [
+          "/tmp/mb-channels-no-backup/current/driver",
+          "restore",
+          "/tmp/mb-scheduling-runs-titdxg6n/crash-channels",
+          "10000",
+          "mixed",
+          "2097152"
+        ],
+        "returncode": 0,
+        "stdout": "restore_us=405654 status=OK\n",
+        "stderr": "",
+        "wall_seconds": 0.9004287719726562
+      }
+    }
+  ],
+  "summary": {
+    "default": {
+      "baseline": {
+        "foreground_us": {
+          "median": 741744,
+          "min": 731149,
+          "max": 751592
+        },
+        "sync_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "close_us": {
+          "median": 208672,
+          "min": 202040,
+          "max": 229729
+        },
+        "p50_ns": {
+          "median": 6343,
+          "min": 6334,
+          "max": 6398
+        },
+        "p95_ns": {
+          "median": 9927,
+          "min": 9833,
+          "max": 10571
+        },
+        "p99_ns": {
+          "median": 14019,
+          "min": 12290,
+          "max": 16559
+        },
+        "max_ns": {
+          "median": 744312,
+          "min": 469771,
+          "max": 9376023
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "lag_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "points": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mirrored_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "flushes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "compactions": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "sst_bytes": {
+          "median": 2160883,
+          "min": 2160883,
+          "max": 2160883
+        },
+        "user_us": {
+          "median": 387619,
+          "min": 369734,
+          "max": 420512
+        },
+        "system_us": {
+          "median": 350269,
+          "min": 311770,
+          "max": 378060
+        },
+        "voluntary": {
+          "median": 0,
+          "min": 0,
+          "max": 1
+        },
+        "involuntary": {
+          "median": 3,
+          "min": 1,
+          "max": 4
+        },
+        "total_us": {
+          "median": 944893,
+          "min": 942516,
+          "max": 981321
+        },
+        "verify_open_us": {
+          "median": 24205,
+          "min": 22150,
+          "max": 26456
+        }
+      },
+      "current": {
+        "foreground_us": {
+          "median": 845387,
+          "min": 815134,
+          "max": 890409
+        },
+        "sync_us": {
+          "median": 320076,
+          "min": 285073,
+          "max": 355987
+        },
+        "close_us": {
+          "median": 628828,
+          "min": 623493,
+          "max": 630951
+        },
+        "p50_ns": {
+          "median": 7281,
+          "min": 7165,
+          "max": 7476
+        },
+        "p95_ns": {
+          "median": 11459,
+          "min": 11094,
+          "max": 13713
+        },
+        "p99_ns": {
+          "median": 18721,
+          "min": 15638,
+          "max": 22281
+        },
+        "max_ns": {
+          "median": 4749067,
+          "min": 612829,
+          "max": 23838296
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 1115028,
+          "min": 1115028,
+          "max": 1115028
+        },
+        "lag_us": {
+          "median": 577260,
+          "min": 570136,
+          "max": 580398
+        },
+        "points": {
+          "median": 8,
+          "min": 8,
+          "max": 9
+        },
+        "mirrored_bytes": {
+          "median": 5759130,
+          "min": 5759130,
+          "max": 5759130
+        },
+        "flushes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "compactions": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "sst_bytes": {
+          "median": 2160883,
+          "min": 2160883,
+          "max": 2160883
+        },
+        "user_us": {
+          "median": 479317,
+          "min": 457242,
+          "max": 539163
+        },
+        "system_us": {
+          "median": 348976,
+          "min": 331196,
+          "max": 396757
+        },
+        "voluntary": {
+          "median": 207,
+          "min": 175,
+          "max": 2180
+        },
+        "involuntary": {
+          "median": 2,
+          "min": 0,
+          "max": 3
+        },
+        "total_us": {
+          "median": 1795735,
+          "min": 1753775,
+          "max": 1876000
+        },
+        "restore_us": {
+          "median": 1142385,
+          "min": 1135820,
+          "max": 1149961
+        }
+      },
+      "split": {
+        "foreground_us": {
+          "median": 889200,
+          "min": 815918,
+          "max": 946590
+        },
+        "sync_us": {
+          "median": 325246,
+          "min": 305995,
+          "max": 361876
+        },
+        "close_us": {
+          "median": 615010,
+          "min": 612793,
+          "max": 644665
+        },
+        "p50_ns": {
+          "median": 7304,
+          "min": 7117,
+          "max": 8390
+        },
+        "p95_ns": {
+          "median": 12618,
+          "min": 11221,
+          "max": 14850
+        },
+        "p99_ns": {
+          "median": 19795,
+          "min": 17741,
+          "max": 21878
+        },
+        "max_ns": {
+          "median": 784963,
+          "min": 533955,
+          "max": 18287952
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 1115028,
+          "min": 1114439,
+          "max": 1115028
+        },
+        "lag_us": {
+          "median": 568262,
+          "min": 562712,
+          "max": 595718
+        },
+        "points": {
+          "median": 9,
+          "min": 8,
+          "max": 9
+        },
+        "mirrored_bytes": {
+          "median": 5759130,
+          "min": 5759130,
+          "max": 5759130
+        },
+        "flushes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "compactions": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "sst_bytes": {
+          "median": 2160883,
+          "min": 2160883,
+          "max": 2160883
+        },
+        "user_us": {
+          "median": 484759,
+          "min": 459312,
+          "max": 530892
+        },
+        "system_us": {
+          "median": 369744,
+          "min": 348576,
+          "max": 460476
+        },
+        "voluntary": {
+          "median": 398,
+          "min": 189,
+          "max": 1129
+        },
+        "involuntary": {
+          "median": 1,
+          "min": 0,
+          "max": 2
+        },
+        "total_us": {
+          "median": 1865378,
+          "min": 1753656,
+          "max": 1915591
+        },
+        "restore_us": {
+          "median": 1144507,
+          "min": 1137815,
+          "max": 1153043
+        }
+      },
+      "channels": {
+        "foreground_us": {
+          "median": 843027,
+          "min": 834599,
+          "max": 962520
+        },
+        "sync_us": {
+          "median": 307171,
+          "min": 303695,
+          "max": 373104
+        },
+        "close_us": {
+          "median": 618975,
+          "min": 610721,
+          "max": 626941
+        },
+        "p50_ns": {
+          "median": 7383,
+          "min": 7302,
+          "max": 8519
+        },
+        "p95_ns": {
+          "median": 11500,
+          "min": 11409,
+          "max": 15254
+        },
+        "p99_ns": {
+          "median": 19163,
+          "min": 17525,
+          "max": 21476
+        },
+        "max_ns": {
+          "median": 725572,
+          "min": 519956,
+          "max": 16113271
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 1115028,
+          "min": 1114439,
+          "max": 1115028
+        },
+        "lag_us": {
+          "median": 568887,
+          "min": 558534,
+          "max": 575717
+        },
+        "points": {
+          "median": 8,
+          "min": 8,
+          "max": 9
+        },
+        "mirrored_bytes": {
+          "median": 5759130,
+          "min": 5759130,
+          "max": 5759130
+        },
+        "flushes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "compactions": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "sst_bytes": {
+          "median": 2160883,
+          "min": 2160883,
+          "max": 2160883
+        },
+        "user_us": {
+          "median": 492666,
+          "min": 443633,
+          "max": 495578
+        },
+        "system_us": {
+          "median": 393272,
+          "min": 331022,
+          "max": 457244
+        },
+        "voluntary": {
+          "median": 194,
+          "min": 138,
+          "max": 1113
+        },
+        "involuntary": {
+          "median": 1,
+          "min": 0,
+          "max": 322
+        },
+        "total_us": {
+          "median": 1775714,
+          "min": 1759634,
+          "max": 1891819
+        },
+        "restore_us": {
+          "median": 1145592,
+          "min": 1139723,
+          "max": 1152920
+        }
+      }
+    },
+    "mixed": {
+      "baseline": {
+        "foreground_us": {
+          "median": 1986457,
+          "min": 1938603,
+          "max": 2004499
+        },
+        "sync_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "close_us": {
+          "median": 28717,
+          "min": 25916,
+          "max": 34617
+        },
+        "p50_ns": {
+          "median": 9239,
+          "min": 9021,
+          "max": 9616
+        },
+        "p95_ns": {
+          "median": 20525,
+          "min": 19718,
+          "max": 21169
+        },
+        "p99_ns": {
+          "median": 29361,
+          "min": 29153,
+          "max": 29495
+        },
+        "max_ns": {
+          "median": 21445187,
+          "min": 18508167,
+          "max": 30350741
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "lag_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "points": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mirrored_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "sst_bytes": {
+          "median": 14628043,
+          "min": 14627884,
+          "max": 14628278
+        },
+        "user_us": {
+          "median": 628645,
+          "min": 569375,
+          "max": 663961
+        },
+        "system_us": {
+          "median": 492470,
+          "min": 465670,
+          "max": 517679
+        },
+        "voluntary": {
+          "median": 474,
+          "min": 439,
+          "max": 501
+        },
+        "involuntary": {
+          "median": 1,
+          "min": 1,
+          "max": 2
+        },
+        "total_us": {
+          "median": 2015032,
+          "min": 1967320,
+          "max": 2039116
+        },
+        "verify_open_us": {
+          "median": 52884,
+          "min": 46938,
+          "max": 77545
+        }
+      },
+      "current": {
+        "foreground_us": {
+          "median": 2222592,
+          "min": 2200819,
+          "max": 2296598
+        },
+        "sync_us": {
+          "median": 475659,
+          "min": 424385,
+          "max": 541497
+        },
+        "close_us": {
+          "median": 109729,
+          "min": 109453,
+          "max": 179790
+        },
+        "p50_ns": {
+          "median": 10011,
+          "min": 9871,
+          "max": 10164
+        },
+        "p95_ns": {
+          "median": 24239,
+          "min": 23324,
+          "max": 27098
+        },
+        "p99_ns": {
+          "median": 39624,
+          "min": 35923,
+          "max": 42288
+        },
+        "max_ns": {
+          "median": 30343149,
+          "min": 23968228,
+          "max": 46927406
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 2120859,
+          "min": 1602190,
+          "max": 2331681
+        },
+        "lag_us": {
+          "median": 109015,
+          "min": 108770,
+          "max": 179098
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 10
+        },
+        "mirrored_bytes": {
+          "median": 51749856,
+          "min": 51540802,
+          "max": 51760680
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "sst_bytes": {
+          "median": 14628134,
+          "min": 14627951,
+          "max": 14628176
+        },
+        "user_us": {
+          "median": 697558,
+          "min": 507800,
+          "max": 703627
+        },
+        "system_us": {
+          "median": 591738,
+          "min": 536490,
+          "max": 693053
+        },
+        "voluntary": {
+          "median": 1465,
+          "min": 1139,
+          "max": 2038
+        },
+        "involuntary": {
+          "median": 2,
+          "min": 1,
+          "max": 296
+        },
+        "total_us": {
+          "median": 2786207,
+          "min": 2764071,
+          "max": 2953792
+        },
+        "restore_us": {
+          "median": 1902404,
+          "min": 1873351,
+          "max": 2013749
+        }
+      },
+      "split": {
+        "foreground_us": {
+          "median": 2186276,
+          "min": 2149620,
+          "max": 2191930
+        },
+        "sync_us": {
+          "median": 466588,
+          "min": 405599,
+          "max": 527373
+        },
+        "close_us": {
+          "median": 111545,
+          "min": 105097,
+          "max": 181673
+        },
+        "p50_ns": {
+          "median": 10284,
+          "min": 9832,
+          "max": 10802
+        },
+        "p95_ns": {
+          "median": 23322,
+          "min": 21052,
+          "max": 24141
+        },
+        "p99_ns": {
+          "median": 33287,
+          "min": 30046,
+          "max": 33866
+        },
+        "max_ns": {
+          "median": 24502616,
+          "min": 14752794,
+          "max": 32493297
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 2056141,
+          "min": 1789800,
+          "max": 2426401
+        },
+        "lag_us": {
+          "median": 111007,
+          "min": 104428,
+          "max": 181077
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 10
+        },
+        "mirrored_bytes": {
+          "median": 51771316,
+          "min": 51759958,
+          "max": 52057481
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 64
+        },
+        "sst_bytes": {
+          "median": 14628043,
+          "min": 14627957,
+          "max": 14628172
+        },
+        "user_us": {
+          "median": 675290,
+          "min": 654254,
+          "max": 753946
+        },
+        "system_us": {
+          "median": 523778,
+          "min": 515141,
+          "max": 575405
+        },
+        "voluntary": {
+          "median": 686,
+          "min": 627,
+          "max": 851
+        },
+        "involuntary": {
+          "median": 1,
+          "min": 0,
+          "max": 6
+        },
+        "total_us": {
+          "median": 2773582,
+          "min": 2743248,
+          "max": 2793637
+        },
+        "restore_us": {
+          "median": 1898326,
+          "min": 1885937,
+          "max": 1909997
+        }
+      },
+      "channels": {
+        "foreground_us": {
+          "median": 2196186,
+          "min": 2157443,
+          "max": 2244012
+        },
+        "sync_us": {
+          "median": 467389,
+          "min": 423860,
+          "max": 494341
+        },
+        "close_us": {
+          "median": 112444,
+          "min": 104933,
+          "max": 114083
+        },
+        "p50_ns": {
+          "median": 10563,
+          "min": 9947,
+          "max": 11095
+        },
+        "p95_ns": {
+          "median": 24535,
+          "min": 23112,
+          "max": 25492
+        },
+        "p99_ns": {
+          "median": 35003,
+          "min": 33724,
+          "max": 35325
+        },
+        "max_ns": {
+          "median": 24656711,
+          "min": 24022607,
+          "max": 29294565
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 1835438,
+          "min": 1529118,
+          "max": 2296368
+        },
+        "lag_us": {
+          "median": 111754,
+          "min": 104432,
+          "max": 113469
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 9
+        },
+        "mirrored_bytes": {
+          "median": 51762443,
+          "min": 51724142,
+          "max": 52100260
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 64
+        },
+        "sst_bytes": {
+          "median": 14628064,
+          "min": 14627522,
+          "max": 14628140
+        },
+        "user_us": {
+          "median": 683083,
+          "min": 675130,
+          "max": 699798
+        },
+        "system_us": {
+          "median": 592543,
+          "min": 570002,
+          "max": 598295
+        },
+        "voluntary": {
+          "median": 860,
+          "min": 704,
+          "max": 1377
+        },
+        "involuntary": {
+          "median": 52,
+          "min": 1,
+          "max": 561
+        },
+        "total_us": {
+          "median": 2772633,
+          "min": 2739103,
+          "max": 2804610
+        },
+        "restore_us": {
+          "median": 1903417,
+          "min": 1885481,
+          "max": 1936627
+        }
+      }
+    },
+    "pressure": {
+      "baseline": {
+        "foreground_us": {
+          "median": 1990346,
+          "min": 1948133,
+          "max": 2015087
+        },
+        "sync_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "close_us": {
+          "median": 30737,
+          "min": 26152,
+          "max": 33087
+        },
+        "p50_ns": {
+          "median": 9317,
+          "min": 9026,
+          "max": 9438
+        },
+        "p95_ns": {
+          "median": 20716,
+          "min": 20369,
+          "max": 22484
+        },
+        "p99_ns": {
+          "median": 29162,
+          "min": 28720,
+          "max": 32241
+        },
+        "max_ns": {
+          "median": 23633181,
+          "min": 20879649,
+          "max": 41348181
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "peak_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "lag_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "points": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mirrored_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 64
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "sst_bytes": {
+          "median": 14628059,
+          "min": 14627926,
+          "max": 14628108
+        },
+        "user_us": {
+          "median": 593808,
+          "min": 532158,
+          "max": 623829
+        },
+        "system_us": {
+          "median": 523223,
+          "min": 496649,
+          "max": 564171
+        },
+        "voluntary": {
+          "median": 468,
+          "min": 447,
+          "max": 481
+        },
+        "involuntary": {
+          "median": 3,
+          "min": 1,
+          "max": 10
+        },
+        "total_us": {
+          "median": 2021083,
+          "min": 1981220,
+          "max": 2041239
+        },
+        "verify_open_us": {
+          "median": 51055,
+          "min": 47388,
+          "max": 55239
+        }
+      },
+      "current": {
+        "foreground_us": {
+          "median": 2196006,
+          "min": 2169495,
+          "max": 2236305
+        },
+        "sync_us": {
+          "median": 492394,
+          "min": 473467,
+          "max": 522795
+        },
+        "close_us": {
+          "median": 108066,
+          "min": 99253,
+          "max": 111922
+        },
+        "p50_ns": {
+          "median": 9904,
+          "min": 9843,
+          "max": 10361
+        },
+        "p95_ns": {
+          "median": 24218,
+          "min": 21984,
+          "max": 25013
+        },
+        "p99_ns": {
+          "median": 38178,
+          "min": 36655,
+          "max": 40995
+        },
+        "max_ns": {
+          "median": 25351049,
+          "min": 15217737,
+          "max": 39930054
+        },
+        "backpressure_us": {
+          "median": 2436,
+          "min": 0,
+          "max": 7286
+        },
+        "peak_bytes": {
+          "median": 1999912,
+          "min": 1959905,
+          "max": 2097012
+        },
+        "lag_us": {
+          "median": 107325,
+          "min": 98617,
+          "max": 111187
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 10
+        },
+        "mirrored_bytes": {
+          "median": 51767345,
+          "min": 51721914,
+          "max": 52028144
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 64
+        },
+        "sst_bytes": {
+          "median": 14627924,
+          "min": 14627862,
+          "max": 14628148
+        },
+        "user_us": {
+          "median": 655809,
+          "min": 619166,
+          "max": 705394
+        },
+        "system_us": {
+          "median": 557313,
+          "min": 536494,
+          "max": 600937
+        },
+        "voluntary": {
+          "median": 1523,
+          "min": 1137,
+          "max": 1994
+        },
+        "involuntary": {
+          "median": 2,
+          "min": 1,
+          "max": 357
+        },
+        "total_us": {
+          "median": 2802528,
+          "min": 2771450,
+          "max": 2840621
+        },
+        "restore_us": {
+          "median": 1922112,
+          "min": 1886309,
+          "max": 1964444
+        }
+      },
+      "split": {
+        "foreground_us": {
+          "median": 2192578,
+          "min": 2160731,
+          "max": 2224423
+        },
+        "sync_us": {
+          "median": 423870,
+          "min": 419648,
+          "max": 500617
+        },
+        "close_us": {
+          "median": 107768,
+          "min": 101631,
+          "max": 183611
+        },
+        "p50_ns": {
+          "median": 10478,
+          "min": 10323,
+          "max": 10610
+        },
+        "p95_ns": {
+          "median": 23694,
+          "min": 22441,
+          "max": 25049
+        },
+        "p99_ns": {
+          "median": 33527,
+          "min": 31839,
+          "max": 35530
+        },
+        "max_ns": {
+          "median": 28210302,
+          "min": 21403285,
+          "max": 37492852
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 54532
+        },
+        "peak_bytes": {
+          "median": 2052440,
+          "min": 1787285,
+          "max": 2097143
+        },
+        "lag_us": {
+          "median": 107179,
+          "min": 101171,
+          "max": 182998
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 10
+        },
+        "mirrored_bytes": {
+          "median": 51766654,
+          "min": 51722993,
+          "max": 51790218
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "sst_bytes": {
+          "median": 14627975,
+          "min": 14627812,
+          "max": 14628183
+        },
+        "user_us": {
+          "median": 654512,
+          "min": 643226,
+          "max": 741085
+        },
+        "system_us": {
+          "median": 590337,
+          "min": 519656,
+          "max": 610256
+        },
+        "voluntary": {
+          "median": 967,
+          "min": 603,
+          "max": 1105
+        },
+        "involuntary": {
+          "median": 6,
+          "min": 2,
+          "max": 236
+        },
+        "total_us": {
+          "median": 2750370,
+          "min": 2724216,
+          "max": 2807724
+        },
+        "restore_us": {
+          "median": 1893808,
+          "min": 1836578,
+          "max": 1942267
+        }
+      },
+      "channels": {
+        "foreground_us": {
+          "median": 2187028,
+          "min": 2164017,
+          "max": 2244740
+        },
+        "sync_us": {
+          "median": 483212,
+          "min": 444500,
+          "max": 513311
+        },
+        "close_us": {
+          "median": 109618,
+          "min": 107784,
+          "max": 112047
+        },
+        "p50_ns": {
+          "median": 10407,
+          "min": 10011,
+          "max": 10690
+        },
+        "p95_ns": {
+          "median": 22861,
+          "min": 22708,
+          "max": 23565
+        },
+        "p99_ns": {
+          "median": 33626,
+          "min": 33003,
+          "max": 36103
+        },
+        "max_ns": {
+          "median": 24703625,
+          "min": 17653804,
+          "max": 55289721
+        },
+        "backpressure_us": {
+          "median": 4179,
+          "min": 0,
+          "max": 17710
+        },
+        "peak_bytes": {
+          "median": 2096028,
+          "min": 1684682,
+          "max": 2097023
+        },
+        "lag_us": {
+          "median": 109013,
+          "min": 107179,
+          "max": 111487
+        },
+        "points": {
+          "median": 9,
+          "min": 9,
+          "max": 9
+        },
+        "mirrored_bytes": {
+          "median": 51767927,
+          "min": 51719744,
+          "max": 51770997
+        },
+        "flushes": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "compactions": {
+          "median": 63,
+          "min": 63,
+          "max": 63
+        },
+        "sst_bytes": {
+          "median": 14628033,
+          "min": 14627587,
+          "max": 14628247
+        },
+        "user_us": {
+          "median": 705073,
+          "min": 675204,
+          "max": 739673
+        },
+        "system_us": {
+          "median": 555438,
+          "min": 469967,
+          "max": 563201
+        },
+        "voluntary": {
+          "median": 720,
+          "min": 680,
+          "max": 1302
+        },
+        "involuntary": {
+          "median": 66,
+          "min": 1,
+          "max": 904
+        },
+        "total_us": {
+          "median": 2782373,
+          "min": 2730414,
+          "max": 2835736
+        },
+        "restore_us": {
+          "median": 1895617,
+          "min": 1886980,
+          "max": 1952864
+        }
+      }
+    }
+  }
+}

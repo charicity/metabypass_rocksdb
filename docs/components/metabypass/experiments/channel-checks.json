@@ -1,0 +1,575 @@
+{
+  "commands": {
+    "normal": "AUTO_CLEAN=1 make -j24 check J=24 TEST_TMPDIR=/tmp/mb-channels-normal-tests DRIVER=\"timeout 60\"",
+    "status": "AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j24 check J=24 TEST_TMPDIR=/tmp/mb-channels-status-tests DRIVER=\"timeout 60\"",
+    "normal_unit": "build_tools/rocksptest.sh metabypass_test --timeout_per_test=60",
+    "status_unit": "build_tools/gtest-parallel ./metabypass_test --timeout_per_test=60 -w8",
+    "coerce": "COERCE_CONTEXT_SWITCH=1 build_tools/rocksptest.sh metabypass_test --timeout_per_test=60 -r100",
+    "retry": "TEST_TMPDIR=/dev/shm/mb-channels-<mode>-retry build_tools/gtest-parallel ./compaction_service_test ./external_sst_file_test ./column_family_test -w4 --timeout_per_test=60 --gtest_filter=\"*CorruptedOutputVerifyOutputFlags:*ZeroAndNonZeroSeqno/1:*ZeroAndNonZeroSeqno/2:*ZeroAndNonZeroSeqno/3:*ZeroAndNonZeroSeqno/6:*ReadDroppedColumnFamily*\"",
+    "release": "AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j16 db_bench"
+  },
+  "full": {
+    "normal": {
+      "shards": 3322,
+      "failed_shards": [
+        {
+          "Seq": "831",
+          "Host": ":",
+          "Starttime": "1789914470.377",
+          "JobRuntime": "    14.444",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\"",
+          "output": "Note: This is test shard 4 of 12.\n[==========] Running 9 tests from 7 test cases.\n[----------] Global test environment set-up.\n[----------] 2 tests from DBBloomFilterTest\n[ RUN      ] DBBloomFilterTest.MutatingRibbonFilterPolicy\ndb/db_bloom_filter_test.cc:1976: Failure\nThe difference between filter_bytes * 8.0 / maxKey and expected_bpk is 1.2479999999999993, which exceeds 0.3, where\nfilter_bytes * 8.0 / maxKey evaluates to 8.2479999999999993,\nexpected_bpk evaluates to 7, and\n0.3 evaluates to 0.29999999999999999.\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy (1078 ms)\n[ RUN      ] DBBloomFilterTest.DynamicBloomFilterNewColumnFamily\n[       OK ] DBBloomFilterTest.DynamicBloomFilterNewColumnFamily (1055 ms)\n[----------] 2 tests from DBBloomFilterTest (2133 ms total)\n\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam\n[ RUN      ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/0\n[       OK ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/0 (473 ms)\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam (473 ms total)\n\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/0\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/0 (4574 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (4574 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0 (4185 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (4185 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0 (351 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (351 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0 (753 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5 (1534 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (2287 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2 (375 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (375 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (14378 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy\n\n 1 FAILED TEST\n"
+        },
+        {
+          "Seq": "832",
+          "Host": ":",
+          "Starttime": "1789914471.350",
+          "JobRuntime": "    17.014",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\"",
+          "output": "Note: This is test shard 5 of 12.\n[==========] Running 9 tests from 7 test cases.\n[----------] Global test environment set-up.\n[----------] 2 tests from DBBloomFilterTest\n[ RUN      ] DBBloomFilterTest.MutableFilterPolicy\ndb/db_bloom_filter_test.cc:2054: Failure\nThe difference between filter_bytes * 8.0 / maxKey and expected_bpk is 1.2479999999999993, which exceeds 0.3, where\nfilter_bytes * 8.0 / maxKey evaluates to 8.2479999999999993,\nexpected_bpk evaluates to 7, and\n0.3 evaluates to 0.29999999999999999.\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy (1326 ms)\n[ RUN      ] DBBloomFilterTest.DynamicBloomFilterOptions\n[       OK ] DBBloomFilterTest.DynamicBloomFilterOptions (1179 ms)\n[----------] 2 tests from DBBloomFilterTest (2505 ms total)\n\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam\n[ RUN      ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/1\n[       OK ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/1 (420 ms)\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam (420 ms total)\n\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/1\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/1 (4463 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (4463 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1 (4106 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (4106 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1 (831 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (831 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1 (2695 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6 (1528 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (4223 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3 (403 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (404 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (16960 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy\n\n 1 FAILED TEST\n"
+        },
+        {
+          "Seq": "779",
+          "Host": ":",
+          "Starttime": "1789914456.199",
+          "JobRuntime": "    60.080",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\"",
+          "output": "Note: This is test shard 16 of 46.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from CompactionServiceTest\n[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "1495",
+          "Host": ":",
+          "Starttime": "1789914700.529",
+          "JobRuntime": "    60.513",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-253 >& t/log-run-external_sst_file_test-shard-253 || bash -c \"cat t/log-run-external_sst_file_test-shard-253; exit $?\"",
+          "output": "Note: This is test shard 254 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "1496",
+          "Host": ":",
+          "Starttime": "1789914702.352",
+          "JobRuntime": "    60.394",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-external_sst_file_test-shard-254 >& t/log-run-external_sst_file_test-shard-254 || bash -c \"cat t/log-run-external_sst_file_test-shard-254; exit $?\"",
+          "output": "Note: This is test shard 255 of 286.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from VaryingOptions/IngestDBGeneratedFileTest2\n[ RUN      ] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "2552",
+          "Host": ":",
+          "Starttime": "1789915110.645",
+          "JobRuntime": "    60.039",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\"",
+          "output": "Note: This is test shard 5 of 13.\n[==========] Running 10 tests from 4 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet\n[       OK ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet (120 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (120 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.AddDrop/0\n[       OK ] FormatDef/ColumnFamilyTest.AddDrop/0 (343 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0\n[       OK ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0 (210 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0 (286 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0 (205 ms)\n[----------] 4 tests from FormatDef/ColumnFamilyTest (1044 ms total)\n\n[----------] 4 tests from FormatLatest/ColumnFamilyTest\n[ RUN      ] FormatLatest/ColumnFamilyTest.BulkAddDrop/0\n[       OK ] FormatLatest/ColumnFamilyTest.BulkAddDrop/0 (57628 ms)\n[ RUN      ] FormatLatest/ColumnFamilyTest.MultipleManualCompactions/0\n[       OK ] FormatLatest/ColumnFamilyTest.MultipleManualCompactions/0 (447 ms)\n[ RUN      ] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "2554",
+          "Host": ":",
+          "Starttime": "1789915111.215",
+          "JobRuntime": "    60.173",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\"",
+          "output": "Note: This is test shard 7 of 13.\n[==========] Running 9 tests from 3 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall\n[       OK ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall (179 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (179 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.BulkAddDrop/0\n[       OK ] FormatDef/ColumnFamilyTest.BulkAddDrop/0 (57723 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.MultipleManualCompactions/0\n[       OK ] FormatDef/ColumnFamilyTest.MultipleManualCompactions/0 (490 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "3112",
+          "Host": ":",
+          "Starttime": "1789915231.814",
+          "JobRuntime": "     0.770",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "139",
+          "Signal": "0",
+          "Command": "t/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\"",
+          "output": "Note: This is test shard 9 of 11.\n[==========] Running 10 tests from 5 test cases.\n[----------] Global test environment set-up.\n[----------] 6 tests from PrefetchTest/PrefetchTest\n[ RUN      ] PrefetchTest/PrefetchTest.Basic/0\nfile/prefetch_test.cc:352: Failure\nExpected: (post_compaction_prefetch_bytes.max) >= (expected_compaction_readahead_size * 0.9), actual: 1.31891e+06 vs 1.88744e+06\nReceived signal 11 (Segmentation fault)\nInvoking GDB for stack trace...\nGDB failed; falling back on backtrace+addr2line...\n#0   [0x55e7f6128a20] ??\t??:0\t\ntimeout: the monitored command dumped core\nSegmentation fault\n"
+        }
+      ]
+    },
+    "status": {
+      "shards": 3303,
+      "failed_shards": [
+        {
+          "Seq": "831",
+          "Host": ":",
+          "Starttime": "1789914490.052",
+          "JobRuntime": "    16.655",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\"",
+          "output": "Note: This is test shard 4 of 12.\n[==========] Running 9 tests from 7 test cases.\n[----------] Global test environment set-up.\n[----------] 2 tests from DBBloomFilterTest\n[ RUN      ] DBBloomFilterTest.MutatingRibbonFilterPolicy\ndb/db_bloom_filter_test.cc:1976: Failure\nThe difference between filter_bytes * 8.0 / maxKey and expected_bpk is 1.2479999999999993, which exceeds 0.3, where\nfilter_bytes * 8.0 / maxKey evaluates to 8.2479999999999993,\nexpected_bpk evaluates to 7, and\n0.3 evaluates to 0.29999999999999999.\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy (1301 ms)\n[ RUN      ] DBBloomFilterTest.DynamicBloomFilterNewColumnFamily\n[       OK ] DBBloomFilterTest.DynamicBloomFilterNewColumnFamily (1500 ms)\n[----------] 2 tests from DBBloomFilterTest (2801 ms total)\n\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam\n[ RUN      ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/0\n[       OK ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/0 (590 ms)\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam (590 ms total)\n\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/0\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/0 (5083 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (5083 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/0 (4492 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (4492 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/0 (404 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (404 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/0 (825 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/5 (1991 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (2816 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/2 (421 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (421 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (16607 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutatingRibbonFilterPolicy\n\n 1 FAILED TEST\n"
+        },
+        {
+          "Seq": "832",
+          "Host": ":",
+          "Starttime": "1789914490.950",
+          "JobRuntime": "    19.901",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "1",
+          "Signal": "0",
+          "Command": "t/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\"",
+          "output": "Note: This is test shard 5 of 12.\n[==========] Running 9 tests from 7 test cases.\n[----------] Global test environment set-up.\n[----------] 2 tests from DBBloomFilterTest\n[ RUN      ] DBBloomFilterTest.MutableFilterPolicy\ndb/db_bloom_filter_test.cc:2054: Failure\nThe difference between filter_bytes * 8.0 / maxKey and expected_bpk is 1.2479999999999993, which exceeds 0.3, where\nfilter_bytes * 8.0 / maxKey evaluates to 8.2479999999999993,\nexpected_bpk evaluates to 7, and\n0.3 evaluates to 0.29999999999999999.\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy (1630 ms)\n[ RUN      ] DBBloomFilterTest.DynamicBloomFilterOptions\n[       OK ] DBBloomFilterTest.DynamicBloomFilterOptions (1679 ms)\n[----------] 2 tests from DBBloomFilterTest (3309 ms total)\n\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam\n[ RUN      ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/1\n[       OK ] DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam.GetFilterByPrefixBloomCustomPrefixExtractor/1 (585 ms)\n[----------] 1 test from DBBloomFilterTestWithPartitioningParam/DBBloomFilterTestWithPartitioningParam (585 ms total)\n\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/1\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatDef/DBBloomFilterTestWithFormatParams.BloomFilter/1 (4971 ms)\n[----------] 1 test from FormatDef/DBBloomFilterTestWithFormatParams (4971 ms total)\n\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams\n[ RUN      ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39920 reads\n10000 missing => 20166 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n10000 present => 39821 reads\n10000 missing => 20065 reads\n[       OK ] FormatLatest/DBBloomFilterTestWithFormatParams.BloomFilter/1 (4609 ms)\n[----------] 1 test from FormatLatest/DBBloomFilterTestWithFormatParams (4609 ms total)\n\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam\n[ RUN      ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1\n[       OK ] ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam.Basic/1 (1307 ms)\n[----------] 1 test from ChargeFilterConstructionTestWithParam/ChargeFilterConstructionTestWithParam (1307 ms total)\n\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DetectCorruption/1 (2806 ms)\n[ RUN      ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6\n[       OK ] DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam.DynamicallyTurnOnAndOffDetectConstructCorruption/6 (1764 ms)\n[----------] 2 tests from DBFilterConstructionCorruptionTestWithParam/DBFilterConstructionCorruptionTestWithParam (4570 ms total)\n\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam\n[ RUN      ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3\n[       OK ] BloomStatsTestWithParam/BloomStatsTestWithParam.BloomStatsTest/3 (390 ms)\n[----------] 1 test from BloomStatsTestWithParam/BloomStatsTestWithParam (390 ms total)\n\n[----------] Global test environment tear-down\n[==========] 9 tests from 7 test cases ran. (19742 ms total)\n[  PASSED  ] 8 tests.\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] DBBloomFilterTest.MutableFilterPolicy\n\n 1 FAILED TEST\n"
+        },
+        {
+          "Seq": "779",
+          "Host": ":",
+          "Starttime": "1789914476.649",
+          "JobRuntime": "    60.047",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\"",
+          "output": "Note: This is test shard 16 of 46.\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from CompactionServiceTest\n[ RUN      ] CompactionServiceTest.CorruptedOutputVerifyOutputFlags\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "2551",
+          "Host": ":",
+          "Starttime": "1789915143.158",
+          "JobRuntime": "    60.052",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\"",
+          "output": "Note: This is test shard 5 of 13.\n[==========] Running 10 tests from 4 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet\n[       OK ] AutoFlushRetainUDTTest.FullHistoryTsLowNotSet (129 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (129 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.AddDrop/0\n[       OK ] FormatDef/ColumnFamilyTest.AddDrop/0 (372 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0\n[       OK ] FormatDef/ColumnFamilyTest.DifferentMergeOperators/0 (226 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateMissingColumnFamilies/0 (313 ms)\n[ RUN      ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0\n[       OK ] FormatDef/ColumnFamilyTest.CreateDropAndDestroy/0 (217 ms)\n[----------] 4 tests from FormatDef/ColumnFamilyTest (1128 ms total)\n\n[----------] 4 tests from FormatLatest/ColumnFamilyTest\n[ RUN      ] FormatLatest/ColumnFamilyTest.BulkAddDrop/0\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "2553",
+          "Host": ":",
+          "Starttime": "1789915143.395",
+          "JobRuntime": "    60.065",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "124",
+          "Signal": "0",
+          "Command": "t/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\"",
+          "output": "Note: This is test shard 7 of 13.\n[==========] Running 9 tests from 3 test cases.\n[----------] Global test environment set-up.\n[----------] 1 test from AutoFlushRetainUDTTest\n[ RUN      ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall\n[       OK ] AutoFlushRetainUDTTest.NotAllKeysExpiredFlushToAvoidWriteStall (172 ms)\n[----------] 1 test from AutoFlushRetainUDTTest (172 ms total)\n\n[----------] 4 tests from FormatDef/ColumnFamilyTest\n[ RUN      ] FormatDef/ColumnFamilyTest.BulkAddDrop/0\nReceived signal 15 (Terminated)\n"
+        },
+        {
+          "Seq": "3096",
+          "Host": ":",
+          "Starttime": "1789915263.879",
+          "JobRuntime": "     0.694",
+          "Send": "0",
+          "Receive": "0",
+          "Exitval": "139",
+          "Signal": "0",
+          "Command": "t/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\"",
+          "output": "Note: This is test shard 9 of 11.\n[==========] Running 10 tests from 5 test cases.\n[----------] Global test environment set-up.\n[----------] 6 tests from PrefetchTest/PrefetchTest\n[ RUN      ] PrefetchTest/PrefetchTest.Basic/0\nfile/prefetch_test.cc:352: Failure\nExpected: (post_compaction_prefetch_bytes.max) >= (expected_compaction_readahead_size * 0.9), actual: 1.31891e+06 vs 1.88744e+06\nReceived signal 11 (Segmentation fault)\nInvoking GDB for stack trace...\nGDB failed; falling back on backtrace+addr2line...\n#0   [0x559d35ae8a20] ??\t??:0\t\ntimeout: the monitored command dumped core\nSegmentation fault\n"
+        }
+      ]
+    }
+  },
+  "logs": {
+    "unit-final": {
+      "path": "/tmp/mb-channels-unit-final.log",
+      "sha256": "449776640602684f2da9297fd7cadd04a85253ffeffef63037bcef190311f198",
+      "tail": [
+        "[23/34] MetaBypassTest.CloseDrainsWithValidatorBlocked (1023 ms)",
+        "[24/34] MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint (1120 ms)",
+        "[25/34] MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure (1126 ms)",
+        "[26/34] MetaBypassTest.FragmentedWalBatchIsAtomic (1173 ms)",
+        "[27/34] MetaBypassTest.InterruptedBlobPreparationIsRetryable (1221 ms)",
+        "[28/34] MetaBypassTest.ConcurrentBatchesFlushAndSync (1323 ms)",
+        "[29/34] MetaBypassTest.SigkillUnflushedBatchRecovery (1588 ms)",
+        "[30/34] MetaBypassTest.CloseRestoreAppendAndReopen (1645 ms)",
+        "[31/34] MetaBypassTest.IncrementalValidationReusesPrefixesAndTables (1696 ms)",
+        "[32/34] MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles (1888 ms)",
+        "[33/34] MetaBypassTest.RotationCompactionAndRetention (2440 ms)",
+        "[34/34] MetaBypassTest.SigkillPublicationStages (3334 ms)"
+      ]
+    },
+    "status-unit": {
+      "path": "/tmp/mb-channels-status-unit.log",
+      "sha256": "e6d25636c81f2386b1ba6ec1f551f235065a2f46371542ef68407d95d363d334",
+      "tail": [
+        "[23/34] MetaBypassTest.ChannelWalPassesSstCapacityWait (64 ms)",
+        "[24/34] MetaBypassTest.RejectUnsupportedWritesAndOptions (716 ms)",
+        "[25/34] MetaBypassTest.QueueCapacityAndOrdering (64 ms)",
+        "[26/34] MetaBypassTest.BackpressureDrainsBelowBatchThreshold (65 ms)",
+        "[27/34] MetaBypassTest.ChannelMergeOrdersControlOperations (64 ms)",
+        "[28/34] MetaBypassTest.ChannelFailureRetainsOutstandingReservation (64 ms)",
+        "[29/34] MetaBypassTest.CandidateRejectsMismatchedBlobHeader (565 ms)",
+        "[30/34] MetaBypassTest.BelowThresholdFailureWakesReservation (120 ms)",
+        "[31/34] MetaBypassTest.MirrorFailureWakesBlockedProducer (64 ms)",
+        "[32/34] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (64 ms)",
+        "[33/34] MetaBypassTest.MirrorFailureWhileValidatingDoesNotPublish (716 ms)",
+        "[34/34] MetaBypassTest.SigkillPublicationStages (7486 ms)"
+      ]
+    },
+    "coerce": {
+      "path": "/tmp/mb-channels-coerce.log",
+      "sha256": "08bdae89451a27a3114ace7f80ad3fc69408875076d92abae297029386a8e5fc",
+      "tail": [
+        "[3389/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (78 ms)",
+        "[3390/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (77 ms)",
+        "[3391/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (78 ms)",
+        "[3392/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (87 ms)",
+        "[3393/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (77 ms)",
+        "[3394/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (80 ms)",
+        "[3395/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (81 ms)",
+        "[3396/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (87 ms)",
+        "[3397/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (82 ms)",
+        "[3398/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (80 ms)",
+        "[3399/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (82 ms)",
+        "[3400/3400] MetaBypassTest.ChannelBothCapacityWaitersWakeOnFailure (80 ms)"
+      ]
+    },
+    "normal-check": {
+      "path": "/tmp/mb-channels-normal-check.log",
+      "sha256": "0a3ac327b6f82a1beb6fe326e08af2a452f9cf02053b5b354e521836a576b135",
+      "tail": [
+        "Seq\tHost\tStarttime\tJobRuntime\tSend\tReceive\tExitval\tSignal\tCommand",
+        "831\t:\t1789914470.377\t    14.444\t0\t0\t1\t0\tt/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\"",
+        "832\t:\t1789914471.350\t    17.014\t0\t0\t1\t0\tt/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\"",
+        "779\t:\t1789914456.199\t    60.080\t0\t0\t124\t0\tt/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\"",
+        "1495\t:\t1789914700.529\t    60.513\t0\t0\t124\t0\tt/run-external_sst_file_test-shard-253 >& t/log-run-external_sst_file_test-shard-253 || bash -c \"cat t/log-run-external_sst_file_test-shard-253; exit $?\"",
+        "1496\t:\t1789914702.352\t    60.394\t0\t0\t124\t0\tt/run-external_sst_file_test-shard-254 >& t/log-run-external_sst_file_test-shard-254 || bash -c \"cat t/log-run-external_sst_file_test-shard-254; exit $?\"",
+        "2552\t:\t1789915110.645\t    60.039\t0\t0\t124\t0\tt/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\"",
+        "2554\t:\t1789915111.215\t    60.173\t0\t0\t124\t0\tt/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\"",
+        "3112\t:\t1789915231.814\t     0.770\t0\t0\t139\t0\tt/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\"",
+        "make[1]: *** [Makefile:1036: check_0] Error 1",
+        "make[1]: Leaving directory '/home/lj/metabypass_rocksdb'",
+        "make: *** [Makefile:1104: check] Error 2"
+      ]
+    },
+    "status-check": {
+      "path": "/tmp/mb-channels-status-check.log",
+      "sha256": "9ed1b037a956fdc4028d7c491e6779c2a7e863156e67986550f7034022bc397e",
+      "tail": [
+        "ETA: 53s Left: 213 AVG: 0.25s  local:24/3090/100%/0.3s ",
+        "ETA: 0s Left: 0 AVG: 0.24s  local:0/3303/100%/0.3s ",
+        "Seq\tHost\tStarttime\tJobRuntime\tSend\tReceive\tExitval\tSignal\tCommand",
+        "831\t:\t1789914490.052\t    16.655\t0\t0\t1\t0\tt/run-db_bloom_filter_test-shard-3 >& t/log-run-db_bloom_filter_test-shard-3 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-3; exit $?\"",
+        "832\t:\t1789914490.950\t    19.901\t0\t0\t1\t0\tt/run-db_bloom_filter_test-shard-4 >& t/log-run-db_bloom_filter_test-shard-4 || bash -c \"cat t/log-run-db_bloom_filter_test-shard-4; exit $?\"",
+        "779\t:\t1789914476.649\t    60.047\t0\t0\t124\t0\tt/run-compaction_service_test-shard-15 >& t/log-run-compaction_service_test-shard-15 || bash -c \"cat t/log-run-compaction_service_test-shard-15; exit $?\"",
+        "2551\t:\t1789915143.158\t    60.052\t0\t0\t124\t0\tt/run-column_family_test-shard-4 >& t/log-run-column_family_test-shard-4 || bash -c \"cat t/log-run-column_family_test-shard-4; exit $?\"",
+        "2553\t:\t1789915143.395\t    60.065\t0\t0\t124\t0\tt/run-column_family_test-shard-6 >& t/log-run-column_family_test-shard-6 || bash -c \"cat t/log-run-column_family_test-shard-6; exit $?\"",
+        "3096\t:\t1789915263.879\t     0.694\t0\t0\t139\t0\tt/run-prefetch_test-shard-8 >& t/log-run-prefetch_test-shard-8 || bash -c \"cat t/log-run-prefetch_test-shard-8; exit $?\"",
+        "make[1]: *** [Makefile:1036: check_0] Error 1",
+        "make[1]: Leaving directory '/tmp/metabypass-status-check'",
+        "make: *** [Makefile:1104: check] Error 2"
+      ]
+    },
+    "normal-retry": {
+      "path": "/tmp/mb-channels-normal-retry.log",
+      "sha256": "479bab42c2cd1f33a1df39fcd7046c125ad1a821a1bedeabe79c8e91560fc324",
+      "tail": [
+        "[0/7] Running tests...",
+        "[1/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2 (5834 ms)",
+        "[2/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3 (5933 ms)",
+        "[3/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6 (5943 ms)",
+        "[4/7] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0 (867 ms)",
+        "[5/7] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0 (966 ms)",
+        "[6/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1 (5442 ms)",
+        "[7/7] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (12980 ms)"
+      ]
+    },
+    "status-retry": {
+      "path": "/tmp/mb-channels-status-retry.log",
+      "sha256": "f17e12a2288a9a49c2a42e9c79c7beb809f11c7ac425f1e22ad0b5062a9efa4d",
+      "tail": [
+        "[0/7] Running tests...",
+        "[1/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/3 (5934 ms)",
+        "[2/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/2 (5983 ms)",
+        "[3/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/6 (6094 ms)",
+        "[4/7] FormatDef/ColumnFamilyTest.ReadDroppedColumnFamily/0 (1025 ms)",
+        "[5/7] FormatLatest/ColumnFamilyTest.ReadDroppedColumnFamily/0 (917 ms)",
+        "[6/7] VaryingOptions/IngestDBGeneratedFileTest2.ZeroAndNonZeroSeqno/1 (4935 ms)",
+        "[7/7] CompactionServiceTest.CorruptedOutputVerifyOutputFlags (12770 ms)"
+      ]
+    },
+    "sources": {
+      "path": "/tmp/mb-channels-sources.log",
+      "sha256": "f38cbed763c76330a0c13a95b6540b9546b2d83bc4da4fa69672029d1a87d64b",
+      "tail": [
+        "timestamped_snapshot_test utilities/transactions/timestamped_snapshot_test.cc",
+        "ttl_test utilities/ttl/ttl_test.cc",
+        "trie_index_db_test utilities/trie_index/trie_index_db_test.cc",
+        "trie_index_test utilities/trie_index/trie_index_test.cc",
+        "types_util_test utilities/types_util_test.cc",
+        "util_merge_operators_test utilities/util_merge_operators_test.cc",
+        "write_batch_with_index_test utilities/write_batch_with_index/write_batch_with_index_test.cc",
+        "faiss_ivf_index_test utilities/secondary_index/faiss_ivf_index_test.cc [FAISS]",
+        "\u001b[94mGenerated BUCK Summary:\u001b[0m",
+        "\u001b[94m- 10 libs\u001b[0m",
+        "\u001b[94m- 7 binarys\u001b[0m",
+        "\u001b[94m- 221 tests\u001b[0m"
+      ]
+    },
+    "format": {
+      "path": "/tmp/mb-channels-format.log",
+      "sha256": "37efb5797d37d104de6b12fc5c9d519cd9f641a9e0d93153570f2bf580659c34",
+      "tail": [
+        "\u001b[0;32m+    EXPECT_TRUE(\u001b[0m",
+        "\u001b[0;32m+        sst->Append(std::string(3000, 'b'), IOOptions(), nullptr).IsIOError());\u001b[0m",
+        "   });",
+        "   std::thread wal_writer([&] {",
+        "\u001b[0;31m-    EXPECT_TRUE(wal->Append(std::string(3000, 'w'), IOOptions(), nullptr)\u001b[0m",
+        "\u001b[0;31m-                    .IsIOError());\u001b[0m",
+        "\u001b[0;32m+    EXPECT_TRUE(\u001b[0m",
+        "\u001b[0;32m+        wal->Append(std::string(3000, 'w'), IOOptions(), nullptr).IsIOError());\u001b[0m",
+        "   });",
+        "   blocked.WaitUntilBlocked();",
+        "   blocked.Release();",
+        "Files reformatted!"
+      ]
+    },
+    "release": {
+      "path": "/tmp/mb-channels-release.log",
+      "sha256": "c8ca319288145089f110380b9dfac53f6c1773e8cc7dc369465fc582b1469669",
+      "tail": [
+        "$DEBUG_LEVEL is 0, $LIB_MODE is static",
+        "$DEBUG_LEVEL is 0, $LIB_MODE is static",
+        "  CC       utilities/metabypass/backup.o",
+        "  CC       utilities/metabypass/metabypass_db.o",
+        "  GEN      util/build_version.cc",
+        "  CC       util/build_version.o",
+        "  AR       librocksdb.a",
+        "/usr/bin/ar: creating librocksdb.a",
+        "  CCLD     db_bench"
+      ]
+    },
+    "final-source": {
+      "path": "/tmp/mb-channels-final-source.log",
+      "sha256": "0a26e5bb1582f4dd9bca509af127b70d2580db475e92bf80bd73b02d265c844b",
+      "tail": [
+        "$DEBUG_LEVEL is 1, $LIB_MODE is shared",
+        "Makefile:184: Warning: Compiling in debug mode. Don't use the resulting binary in production",
+        "build_tools/format-diff.sh -c",
+        "Checking format of uncommitted changes...",
+        "Checking for copyright headers in new files...",
+        "No new files to check for copyright headers.",
+        "Nothing needs to be reformatted!",
+        "build_tools/check-sources.sh"
+      ]
+    }
+  },
+  "source_sha256": {
+    "utilities/metabypass/backup.cc": "d8e2c65fa083f7ea8393734b3630dd1cdff0d281341c85b3411ca59eb1073d6f",
+    "utilities/metabypass/backup.h": "7416f619f5ebf118385273b6c6a3a105fb09d06ea3cda9e9ea26b82a7ee0563a",
+    "utilities/metabypass/metabypass_test.cc": "942ccc7f3ef148ca07ff05f4438946f70ba852268b35753432b7dfc955fee680"
+  },
+  "extra_checks": [
+    {
+      "command": [
+        "python3",
+        "tools/check_all_python.py"
+      ],
+      "returncode": 0,
+      "log": "/tmp/mb-channels-extra-0.log",
+      "sha256": "29c172367b9bcd39fafcd5200c142f66346c68c0255adec1c3c228e75fa8d26b",
+      "tail": [
+        "No syntax errors in 60 .py files"
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "tools/ldb_test.py"
+      ],
+      "returncode": 0,
+      "log": "/tmp/mb-channels-extra-1.log",
+      "sha256": "6a18f2bfb39b4239b966d54833eaf79aa3aa0408118ef9e9704823f6d32668d9",
+      "tail": [
+        "Running testDumpLiveFiles...",
+        "Running testDumpLoad...",
+        "Running testGetProperty...",
+        "Running testHexPutGet...",
+        "Running testIDumpBasics...",
+        "Running testIDumpDecodeBlobIndex...",
+        "Running testIngestExternalSst...",
+        "Running testInvalidCmdLines...",
+        "Running testListColumnFamilies...",
+        "Running testListLiveFilesMetadata...",
+        "Running testManifestDump...",
+        "Running testMiscAdminTask...",
+        "Running testSSTDump...",
+        "Running testSimpleStringPutGet...",
+        "Running testStringBatchPut...",
+        "Running testTtlPutGet...",
+        "Running testTxnPutGet...",
+        "Running testWALDump..."
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "tools/db_crashtest_test.py"
+      ],
+      "returncode": 0,
+      "log": "/tmp/mb-channels-extra-2.log",
+      "sha256": "c4d7c0b3780114b58daecc6f3d0e42766873d3a5d0da3aaf9a2ae8b51ecf163e",
+      "tail": [
+        "Start with random seed 11171328258280223691",
+        "Start with random seed 11255123720312942451",
+        "Start with random seed 9945145069304772826",
+        "Start with random seed 9960726045015017562",
+        "Start with random seed 936986306061857217",
+        "Start with random seed 5079049678473951680",
+        "Start with random seed 1314579375597707600",
+        "Start with random seed 17800448717041368092",
+        "Start with random seed 5067472616325818216",
+        "Start with random seed 3620990582682580201",
+        "Start with random seed 13110320654717460275",
+        "Start with random seed 8642245228030464795",
+        "Start with random seed 11299107055619167065",
+        "Start with random seed 3776377101775734080",
+        "Start with random seed 8181628550930193170",
+        "Start with random seed 16259428616630712040",
+        "Start with random seed 17340743232302173037",
+        "Start with random seed 11247522241196815859"
+      ]
+    },
+    {
+      "command": [
+        "sh",
+        "tools/rocksdb_dump_test.sh"
+      ],
+      "returncode": 0,
+      "log": "/tmp/mb-channels-extra-3.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tail": []
+    },
+    {
+      "command": [
+        "make",
+        "check-format"
+      ],
+      "returncode": 0,
+      "log": "/tmp/mb-channels-extra-4.log",
+      "sha256": "1103ecea15502533dbc4fe672992f23c09eda1b11e7183f2e075fe0d5924e033",
+      "tail": [
+        "$DEBUG_LEVEL is 1, $LIB_MODE is shared",
+        "Makefile:184: Warning: Compiling in debug mode. Don't use the resulting binary in production",
+        "build_tools/format-diff.sh -c",
+        "Checking format of uncommitted changes...",
+        "Checking for copyright headers in new files...",
+        "No new files to check for copyright headers.",
+        "Nothing needs to be reformatted!"
+      ]
+    },
+    {
+      "command": [
+        "make",
+        "check-workflow-yaml"
+      ],
+      "returncode": 2,
+      "log": "/tmp/mb-channels-extra-5.log",
+      "sha256": "9e78db4cd69371341fd668ff94dfe194b2cbfb846d450a801b3b298f7e89de7a",
+      "tail": [
+        "$DEBUG_LEVEL is 1, $LIB_MODE is shared",
+        "Makefile:184: Warning: Compiling in debug mode. Don't use the resulting binary in production",
+        "build_tools/check-workflow-yaml.sh",
+        "ruby is required to validate GitHub Actions workflow YAML",
+        "On CentOS Stream: sudo dnf install ruby rubygems rubygem-psych",
+        "make: *** [Makefile:1473: check-workflow-yaml] Error 1"
+      ]
+    },
+    {
+      "command": [
+        "make",
+        "check-c-api-gen"
+      ],
+      "returncode": 2,
+      "log": "/tmp/mb-channels-extra-6.log",
+      "sha256": "8be13e516c654eea5569726081cf02bc69e7fd4eecc496a8c74685869d263fc3",
+      "tail": [
+        "  - rocksdb_options_set_blob_file_writable_file_max_buffer_size",
+        "  - rocksdb_options_set_periodic_compaction_phase_recovery_percent",
+        "  - rocksdb_options_set_remote_compaction_manifest_floor",
+        "  - rocksdb_options_set_use_session_tmp_dir_for_remote_compaction",
+        "  - rocksdb_pinnable_multi_get_count",
+        "  - rocksdb_pinnable_multi_get_destroy",
+        "  - rocksdb_pinnable_multi_get_result",
+        "  - rocksdb_table_properties_lsm_info_at_creation",
+        "error: 5 public C API symbol(s) (enum constants / typedefs) present at 'main' are missing now (backward-incompatible removal):",
+        "  - rocksdb_pinnable_multi_get_error",
+        "  - rocksdb_pinnable_multi_get_found",
+        "  - rocksdb_pinnable_multi_get_not_found",
+        "  - rocksdb_pinnable_multi_get_out_of_bounds",
+        "  - rocksdb_pinnable_multi_get_t",
+        "",
+        "If a change is intentional and reviewed, record it in",
+        "tools/c_api_gen/api_compatibility_allowlist.json with a reason; otherwise restore the original declaration (see tools/c_api_gen/abi_type_overrides.json for pinning a generated C type).",
+        "make: *** [Makefile:1166: check-c-api-gen] Error 1"
+      ]
+    }
+  ],
+  "db_bench_smoke": [
+    {
+      "command": [
+        "/tmp/metabypass-release-build/db_bench",
+        "--metabypass_mode=write",
+        "--db=/tmp/mb-channels-dbbench-qrf4iovs/index",
+        "--metabypass_data_dir=/tmp/mb-channels-dbbench-qrf4iovs/data",
+        "--metabypass_backup_dir=/tmp/mb-channels-dbbench-qrf4iovs/backup",
+        "--num=10000",
+        "--value_size=1024"
+      ],
+      "returncode": 0,
+      "stdout": "metabypass mode=write ops=10000 foreground_us=140817 sync_us=282325 close_us=285723 backpressure_us=0 last_point_build_us=238472 last_point_lag_us=285287 queue_peak_bytes=535081 mirrored_bytes=571190 retained_index_bytes=804805 validated_blob_bytes=10598952 reused_tables=0 status=OK\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/tmp/metabypass-release-build/db_bench",
+        "--metabypass_mode=restore",
+        "--db=/tmp/mb-channels-dbbench-qrf4iovs/index",
+        "--metabypass_data_dir=/tmp/mb-channels-dbbench-qrf4iovs/data",
+        "--metabypass_backup_dir=/tmp/mb-channels-dbbench-qrf4iovs/backup",
+        "--num=10000",
+        "--value_size=1024"
+      ],
+      "returncode": 0,
+      "stdout": "metabypass restore_us=767710 status=OK\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/tmp/metabypass-release-build/db_bench",
+        "--metabypass_mode=verify",
+        "--db=/tmp/mb-channels-dbbench-qrf4iovs/index",
+        "--metabypass_data_dir=/tmp/mb-channels-dbbench-qrf4iovs/data",
+        "--metabypass_backup_dir=/tmp/mb-channels-dbbench-qrf4iovs/backup",
+        "--num=10000",
+        "--value_size=1024"
+      ],
+      "returncode": 0,
+      "stdout": "metabypass mode=verify ops=10000 foreground_us=41690 sync_us=1 close_us=208454 backpressure_us=0 last_point_build_us=206901 last_point_lag_us=207197 queue_peak_bytes=12912 mirrored_bytes=9280 retained_index_bytes=699987 validated_blob_bytes=10598952 reused_tables=1 status=OK\n",
+      "stderr": ""
+    }
+  ],
+  "notes": [
+    "Initial stop test expected ShutdownInProgress, but existing filesystem conversion returns IOError; assertions corrected, production conversion unchanged.",
+    "Status/coerce test source differs from final source only by line wrapping of two EXPECT_TRUE expressions after formatting. Production sources match byte-for-byte."
+  ]
+}

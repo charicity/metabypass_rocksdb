@@ -58,11 +58,20 @@ class Backup : public FileSystemWrapper {
     uint64_t queued_micros = 0;
     size_t charge = 0;
   };
+  struct Channel {
+    // Serializes primary operations through enqueue. Never acquired by workers.
+    std::mutex operations;
+    // The remaining fields are protected by Backup::mutex_.
+    std::deque<Event> queue;
+    std::condition_variable capacity;
+    size_t waiting_charge = 0;
+  };
+  Channel& ChannelFor(const std::string& name);
   bool Tracked(const std::string& path) const;
   std::string Base(const std::string& path) const;
-  Status Reserve(size_t charge);
+  Status Reserve(Channel& channel, size_t charge);
   void Fail(const Status& status);
-  void Finish(Event&& event, const Status& primary);
+  void Finish(Channel& channel, Event&& event, const Status& primary);
   Status Apply(const Event& event);
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
@@ -75,6 +84,9 @@ class Backup : public FileSystemWrapper {
   // Called with mutex_ held. Each wait channel has a distinct predicate.
   bool MirrorReady() const;
   void WakeMirror();
+  void WakeCapacity();
+  Channel* NextChannel();
+  bool QueuesEmpty() const;
   void Run();
   void ValidateLoop();
   struct TableValidation {
@@ -97,19 +109,13 @@ class Backup : public FileSystemWrapper {
   const MetaBypassOptions options_;
   const Options db_options_;
   const std::string work_;
-  // Serializes successful primary operations and queue insertion. Worker never
-  // acquires this mutex or any DB lock, including while persisting
-  // dependencies.
-  std::mutex operations_;
+  Channel wal_channel_, metadata_channel_;
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
   mutable std::mutex mutex_;
-  std::condition_variable mirror_cv_, validator_cv_, space_cv_, sync_cv_;
+  std::condition_variable mirror_cv_, validator_cv_, sync_cv_;
   bool mirror_waiting_ = false;
-  // operations_ serializes reservations, so at most one producer waits.
-  size_t waiting_charge_ = 0;
-  std::deque<Event> queue_;
   MetaBypassStats stats_;
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
   uint64_t generation_ = 0;

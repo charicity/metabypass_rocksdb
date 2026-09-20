@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #include "utilities/metabypass/backup.h"
 
+#include <cassert>
 #include <chrono>
 #include <sstream>
 
@@ -30,10 +31,11 @@ bool SafeName(const std::string& s) {
 class MirrorWriter : public FSWritableFileOwnerWrapper {
  public:
   MirrorWriter(std::unique_ptr<FSWritableFile> file, Backup* backup,
-               std::string name)
+               std::string name, Backup::Channel& channel)
       : FSWritableFileOwnerWrapper(std::move(file)),
         backup_(backup),
-        name_(std::move(name)) {}
+        name_(std::move(name)),
+        channel_(channel) {}
   IOStatus Append(const Slice& bytes, const IOOptions& o,
                   IODebugContext* d) override {
     return AppendInternal(bytes, o, nullptr, d);
@@ -64,25 +66,26 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   IOStatus AppendInternal(const Slice& bytes, const IOOptions& o,
                           const DataVerificationInfo* verification,
                           IODebugContext* d) {
-    std::lock_guard<std::mutex> serial(backup_->operations_);
+    std::lock_guard<std::mutex> serial(channel_.operations);
     Backup::Event e{Backup::Kind::kAppend, name_, {}, {}};
     e.charge = sizeof(e) + name_.size() + bytes.size();
-    Status s = backup_->Reserve(e.charge);
+    Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) return AsIO(s);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::PrimaryReserved", &e.name);
     e.bytes.assign(bytes.data(), bytes.size());
     IOStatus primary = verification
                            ? target()->Append(bytes, o, *verification, d)
                            : target()->Append(bytes, o, d);
-    backup_->Finish(std::move(e), primary);
+    backup_->Finish(channel_, std::move(e), primary);
     return primary;
   }
   IOStatus Control(Backup::Kind kind, uint64_t n, const IOOptions& o,
                    IODebugContext* d) {
-    std::lock_guard<std::mutex> serial(backup_->operations_);
+    std::lock_guard<std::mutex> serial(channel_.operations);
     Backup::Event e{kind, name_, {}, {}};
     e.size = n;
     e.charge = sizeof(e) + name_.size();
-    Status s = backup_->Reserve(e.charge);
+    Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) {
       if (kind == Backup::Kind::kClose)
         target()->Close(o, d).PermitUncheckedError();
@@ -91,11 +94,12 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
     IOStatus primary = kind == Backup::Kind::kClose
                            ? target()->Close(o, d)
                            : target()->Truncate(n, o, d);
-    backup_->Finish(std::move(e), primary);
+    backup_->Finish(channel_, std::move(e), primary);
     return primary;
   }
   Backup* backup_;
   std::string name_;
+  Backup::Channel& channel_;
 };
 Backup::Backup(std::shared_ptr<SeparatedStorage> storage, std::string index,
                MetaBypassOptions options, Options db_options)
@@ -123,6 +127,13 @@ bool Backup::Tracked(const std::string& path) const {
   return type == kWalFile || type == kTableFile || type == kDescriptorFile ||
          type == kCurrentFile || type == kOptionsFile ||
          type == kIdentityFile || type == kTempFile;
+}
+Backup::Channel& Backup::ChannelFor(const std::string& name) {
+  uint64_t number;
+  FileType type;
+  const bool parsed = ParseFileName(name, &number, &type);
+  assert(parsed);
+  return parsed && type == kWalFile ? wal_channel_ : metadata_channel_;
 }
 Status Backup::Start(bool existing) {
   Status s = EnsureDir(disk_, options_.backup_dir);
@@ -208,7 +219,7 @@ Status Backup::Activate(const std::string& identity) {
   WakeMirror();
   return Status::OK();
 }
-Status Backup::Reserve(size_t charge) {
+Status Backup::Reserve(Channel& channel, size_t charge) {
   std::unique_lock<std::mutex> lock(mutex_);
   if (charge > options_.queue_capacity)
     return Status::InvalidArgument(
@@ -216,16 +227,17 @@ Status Backup::Reserve(size_t charge) {
   const uint64_t start = Now();
   const bool blocked = stats_.queued_bytes > options_.queue_capacity - charge;
   if (blocked) {
-    waiting_charge_ = charge;
+    assert(channel.waiting_charge == 0);
+    channel.waiting_charge = charge;
     // A reservation can run out of space before reaching batch_bytes.
     // Drain immediately rather than waiting for the batching timer.
     WakeMirror();
     TEST_SYNC_POINT("MetaBypass::Backpressure");
-    space_cv_.wait(lock, [&] {
+    channel.capacity.wait(lock, [&] {
       return stopping_ || !stats_.error.ok() ||
              stats_.queued_bytes <= options_.queue_capacity - charge;
     });
-    waiting_charge_ = 0;
+    channel.waiting_charge = 0;
     stats_.backpressure_micros += Now() - start;
   }
   if (!stats_.error.ok()) return stats_.error;
@@ -241,20 +253,22 @@ void Backup::Fail(const Status& status) {
   if (stats_.error.ok()) stats_.error = status;
   WakeMirror();
   validator_cv_.notify_one();
-  space_cv_.notify_one();
+  WakeCapacity();
   sync_cv_.notify_all();
 }
-void Backup::Finish(Event&& e, const Status& primary) {
+void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
   if (!primary.ok()) Fail(primary);
   std::lock_guard<std::mutex> lock(mutex_);
-  if (primary.ok()) {
+  if (primary.ok() && stats_.error.ok() && !stopping_) {
     e.seq = ++accepted_;
     e.queued_micros = Now();
-    queue_.push_back(std::move(e));
+    channel.queue.push_back(std::move(e));
   } else {
+    // Failure cleanup owns queued events, but a producer still owns its
+    // reservation until Finish. Do not enqueue after either worker has failed.
+    assert(stats_.queued_bytes >= e.charge);
     stats_.queued_bytes -= e.charge;
-    // A failed primary append can leave a partial file. Never publish across
-    // it.
+    WakeCapacity();
   }
   WakeMirror();
 }
@@ -262,24 +276,29 @@ IOStatus Backup::NewWritableFile(const std::string& p, const FileOptions& o,
                                  std::unique_ptr<FSWritableFile>* r,
                                  IODebugContext* d) {
   if (!Tracked(p)) return target()->NewWritableFile(p, o, r, d);
-  std::lock_guard<std::mutex> serial(operations_);
+  Channel& channel = ChannelFor(Base(p));
+  std::lock_guard<std::mutex> serial(channel.operations);
   Event e{Kind::kCreate, Base(p), {}, {}};
   e.charge = sizeof(e) + e.name.size();
-  Status s = Reserve(e.charge);
+  Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->NewWritableFile(p, o, r, d);
-  Finish(std::move(e), primary);
-  if (primary.ok()) r->reset(new MirrorWriter(std::move(*r), this, Base(p)));
+  Finish(channel, std::move(e), primary);
+  if (primary.ok())
+    r->reset(new MirrorWriter(std::move(*r), this, Base(p), channel));
   return primary;
 }
 IOStatus Backup::ReopenWritableFile(const std::string& p, const FileOptions& o,
                                     std::unique_ptr<FSWritableFile>* r,
                                     IODebugContext* d) {
   if (!Tracked(p)) return target()->ReopenWritableFile(p, o, r, d);
+  Channel& channel = ChannelFor(Base(p));
+  std::lock_guard<std::mutex> serial(channel.operations);
   Status s = Error();
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->ReopenWritableFile(p, o, r, d);
-  if (primary.ok()) r->reset(new MirrorWriter(std::move(*r), this, Base(p)));
+  if (primary.ok())
+    r->reset(new MirrorWriter(std::move(*r), this, Base(p), channel));
   return primary;
 }
 IOStatus Backup::ReuseWritableFile(const std::string&, const std::string&,
@@ -291,13 +310,14 @@ IOStatus Backup::ReuseWritableFile(const std::string&, const std::string&,
 IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
                             IODebugContext* d) {
   if (!Tracked(p)) return target()->DeleteFile(p, o, d);
-  std::lock_guard<std::mutex> serial(operations_);
+  Channel& channel = ChannelFor(Base(p));
+  std::lock_guard<std::mutex> serial(channel.operations);
   Event e{Kind::kDelete, Base(p), {}, {}};
   e.charge = sizeof(e) + e.name.size();
-  Status s = Reserve(e.charge);
+  Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->DeleteFile(p, o, d);
-  Finish(std::move(e), primary);
+  Finish(channel, std::move(e), primary);
   return primary;
 }
 IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
@@ -305,13 +325,24 @@ IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
   if (!Tracked(a) && !Tracked(b)) return target()->RenameFile(a, b, o, d);
   if (!Tracked(a) || !Tracked(b))
     return IOStatus::NotSupported("cross-boundary rename");
-  std::lock_guard<std::mutex> serial(operations_);
+  Channel& source = ChannelFor(Base(a));
+  Channel& destination = ChannelFor(Base(b));
+  std::unique_lock<std::mutex> first(source.operations, std::defer_lock);
+  std::unique_lock<std::mutex> second(destination.operations, std::defer_lock);
+  if (&source == &destination) {
+    first.lock();
+  } else {
+    std::lock(first, second);
+  }
+  // A cross-channel rename is one globally ordered control event. Holding
+  // both operation locks prevents either file from being modified around it.
+  Channel& channel = &source == &destination ? source : metadata_channel_;
   Event e{Kind::kRename, Base(a), Base(b), {}};
   e.charge = sizeof(e) + e.name.size() + e.other.size();
-  Status s = Reserve(e.charge);
+  Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->RenameFile(a, b, o, d);
-  Finish(std::move(e), primary);
+  Finish(channel, std::move(e), primary);
   return primary;
 }
 IOStatus Backup::LinkFile(const std::string& a, const std::string& b,
@@ -322,6 +353,10 @@ IOStatus Backup::LinkFile(const std::string& a, const std::string& b,
 }
 Status Backup::Apply(const Event& e) {
   TEST_SYNC_POINT("MetaBypass::Apply");
+#ifndef NDEBUG
+  uint64_t sequence = e.seq;
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::ApplySequence", &sequence);
+#endif
   Status injected;
   TEST_SYNC_POINT_CALLBACK("MetaBypass::ApplyStatus", &injected);
   if (!injected.ok()) return injected;
@@ -601,14 +636,37 @@ Status Backup::Publish(const Candidate& candidate) {
 }
 bool Backup::MirrorReady() const {
   return stopping_ || !stats_.error.ok() ||
-         (!queue_.empty() && (waiting_charge_ != 0 || requested_ > published_ ||
-                              stats_.queued_bytes >= options_.batch_bytes)) ||
+         (!QueuesEmpty() &&
+          (wal_channel_.waiting_charge != 0 ||
+           metadata_channel_.waiting_charge != 0 || requested_ > published_ ||
+           stats_.queued_bytes >= options_.batch_bytes)) ||
          (active_ && !candidate_busy_ && applied_ > captured_);
 }
 void Backup::WakeMirror() {
   if (mirror_waiting_ && MirrorReady()) {
     TEST_SYNC_POINT("MetaBypass::MirrorNotified");
     mirror_cv_.notify_one();
+  }
+}
+bool Backup::QueuesEmpty() const {
+  return wal_channel_.queue.empty() && metadata_channel_.queue.empty();
+}
+Backup::Channel* Backup::NextChannel() {
+  if (wal_channel_.queue.empty())
+    return metadata_channel_.queue.empty() ? nullptr : &metadata_channel_;
+  if (metadata_channel_.queue.empty()) return &wal_channel_;
+  return wal_channel_.queue.front().seq < metadata_channel_.queue.front().seq
+             ? &wal_channel_
+             : &metadata_channel_;
+}
+void Backup::WakeCapacity() {
+  for (auto* channel : {&wal_channel_, &metadata_channel_}) {
+    if (channel->waiting_charge != 0 &&
+        (stopping_ || !stats_.error.ok() ||
+         stats_.queued_bytes <=
+             options_.queue_capacity - channel->waiting_charge)) {
+      channel->capacity.notify_one();
+    }
   }
 }
 void Backup::Run() {
@@ -626,25 +684,26 @@ void Backup::Run() {
     mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
     const uint64_t boundary = accepted_;
-    while (!queue_.empty() && queue_.front().seq <= boundary) {
-      Event e = std::move(queue_.front());
-      queue_.pop_front();
+    while (auto* channel = NextChannel()) {
+      if (channel->queue.front().seq > boundary) break;
+      Event e = std::move(channel->queue.front());
+      channel->queue.pop_front();
       if (!oldest_unpublished_micros_)
         oldest_unpublished_micros_ = e.queued_micros;
       lock.unlock();
       Status s = Apply(e);
       lock.lock();
+      assert(stats_.queued_bytes >= e.charge);
       stats_.queued_bytes -= e.charge;
       stats_.mirrored_bytes += e.bytes.size();
+      assert(e.seq == applied_ + 1);
       applied_ = e.seq;
       if (!s.ok()) {
         fail(s);
         break;
       }
-      if (waiting_charge_ != 0 &&
-          stats_.queued_bytes <= options_.queue_capacity - waiting_charge_) {
-        space_cv_.notify_one();
-      }
+      WakeCapacity();
+      if (!stats_.error.ok()) break;
     }
     if (!stats_.error.ok()) break;
     if (active_ && !candidate_busy_ && applied_ > captured_) {
@@ -665,7 +724,7 @@ void Backup::Run() {
       candidate_ = std::move(candidate);
       validator_cv_.notify_one();
     }
-    if (stopping_ && queue_.empty()) {
+    if (stopping_ && QueuesEmpty()) {
       if (candidate_busy_) {
         TEST_SYNC_POINT("MetaBypass::CloseWaitingForValidation");
         mirror_waiting_ = true;
@@ -679,8 +738,15 @@ void Backup::Run() {
       }
     }
   }
-  queue_.clear();
-  stats_.queued_bytes = 0;
+  for (auto* channel : {&wal_channel_, &metadata_channel_}) {
+    for (const auto& e : channel->queue) {
+      assert(stats_.queued_bytes >= e.charge);
+      stats_.queued_bytes -= e.charge;
+    }
+    channel->queue.clear();
+  }
+  // Outstanding primary operations retain their charges until Finish.
+  TEST_SYNC_POINT("MetaBypass::QueuesDiscarded");
   mirror_done_ = true;
   validator_cv_.notify_one();
   lock.unlock();
@@ -732,7 +798,7 @@ Status Backup::Stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     stopping_ = true;
     WakeMirror();
-    space_cv_.notify_one();
+    WakeCapacity();
     sync_cv_.notify_all();
   }
   if (thread_.joinable()) thread_.join();

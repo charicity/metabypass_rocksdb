@@ -125,7 +125,28 @@ class MetaBypassTest : public testing::Test {
     *backup = std::make_unique<metabypass::Backup>(storage, index_, m_);
     ASSERT_OK((*backup)->Start(false));
   }
-  void NotificationScenario(bool pressure, bool fail, bool timer) {
+  void BlockFirstApply(TestGate* gate) {
+    // Only the single mirror thread invokes this callback.
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::Apply",
+                                          [gate, first = true](void*) mutable {
+                                            if (first) {
+                                              first = false;
+                                              gate->Block();
+                                            }
+                                          });
+  }
+  void StartBackupFiles(std::unique_ptr<metabypass::Backup>* backup,
+                        std::unique_ptr<FSWritableFile>* wal,
+                        std::unique_ptr<FSWritableFile>* sst) {
+    ASSERT_NO_FATAL_FAILURE(StartBackup(backup));
+    ASSERT_OK((*backup)->NewWritableFile(index_ + "/000001.log", FileOptions(),
+                                         wal, nullptr));
+    ASSERT_OK((*backup)->NewWritableFile(index_ + "/000002.sst", FileOptions(),
+                                         sst, nullptr));
+  }
+  void NotificationScenario(bool pressure, bool fail, bool timer,
+                            bool metadata = false) {
+    const std::string file_name = metadata ? "000001.sst" : "000001.log";
     m_.queue_capacity = m_.batch_bytes = 4096;
     m_.interval_ms = timer ? 1 : 60000;
     TestGate waiting, applying;
@@ -156,7 +177,7 @@ class MetaBypassTest : public testing::Test {
     waiting.WaitUntilBlocked();
     waiting.Release();
     std::unique_ptr<FSWritableFile> file;
-    ASSERT_OK(backup->NewWritableFile(index_ + "/000001.log", FileOptions(),
+    ASSERT_OK(backup->NewWritableFile(index_ + "/" + file_name, FileOptions(),
                                       &file, nullptr));
     ASSERT_OK(file->Append(std::string(2000, 'a'), IOOptions(), nullptr));
     EXPECT_EQ(notifications.load(), 0);
@@ -182,8 +203,8 @@ class MetaBypassTest : public testing::Test {
       EXPECT_OK(file->Close(IOOptions(), nullptr));
       EXPECT_OK(backup->Stop());
       std::string bytes;
-      ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log",
-                                 &bytes));
+      ASSERT_OK(metabypass::Read(fs_.get(),
+                                 m_.backup_dir + "/work/" + file_name, &bytes));
       EXPECT_EQ(bytes, std::string(2000, 'a') +
                            (pressure ? std::string(3000, 'b') : ""));
       auto stats = backup->Stats();
@@ -656,6 +677,276 @@ TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("key", "old");
 }
+
+TEST_F(MetaBypassTest, ChannelMetadataOnlyDrainsOnTimer) {
+  NotificationScenario(false, false, true, true);
+}
+TEST_F(MetaBypassTest, ChannelWalPassesBlockedPrimarySst) {
+  m_.queue_capacity = 8192;
+  m_.batch_bytes = 1;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  TestGate primary;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::PrimaryReserved", [&](void* arg) {
+        if (*static_cast<std::string*>(arg) == "000002.sst") primary.Block();
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::thread writer(
+      [&] { EXPECT_OK(sst->Append("sst", IOOptions(), nullptr)); });
+  primary.WaitUntilBlocked();
+  // Must return while the SST operation still owns its primary-operation lock.
+  ASSERT_OK(wal->Append("wal", IOOptions(), nullptr));
+  primary.Release();
+  writer.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+}
+TEST_F(MetaBypassTest, ChannelWalPassesSstCapacityWait) {
+  m_.queue_capacity = 8192;
+  m_.batch_bytes = 1;
+  TestGate applying, blocked;
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure",
+                                        [&](void*) { blocked.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  std::thread writer([&] {
+    EXPECT_OK(sst->Append(std::string(3000, 'b'), IOOptions(), nullptr));
+  });
+  blocked.WaitUntilBlocked();
+  blocked.Release();
+  ASSERT_OK(wal->Append(std::string(500, 'w'), IOOptions(), nullptr));
+  applying.Release();
+  writer.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+  auto stats = backup->Stats();
+  ASSERT_OK(stats.error);
+  ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+  std::string bytes;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(3000, 'b'));
+}
+TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
+  m_.queue_capacity = 8192;
+  m_.batch_bytes = 1;
+  TestGate applying, blocked;
+  std::atomic<int> waiters{0};
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure", [&](void*) {
+    if (++waiters == 2) blocked.Block();
+  });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplyStatus", [](void* arg) {
+        *static_cast<Status*>(arg) = Status::IOError("channel mirror failure");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  std::thread meta_writer([&] {
+    EXPECT_TRUE(
+        sst->Append(std::string(3000, 'b'), IOOptions(), nullptr).IsIOError());
+  });
+  std::thread wal_writer([&] {
+    EXPECT_TRUE(
+        wal->Append(std::string(3000, 'w'), IOOptions(), nullptr).IsIOError());
+  });
+  blocked.WaitUntilBlocked();
+  blocked.Release();
+  applying.Release();
+  meta_writer.join();
+  wal_writer.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(backup->Stop().IsIOError());
+}
+
+TEST_F(MetaBypassTest, ChannelMergeOrdersControlOperations) {
+  m_.batch_bytes = 1;
+  TestGate applying;
+  std::vector<uint64_t> sequence;
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplySequence",
+      [&](void* arg) { sequence.push_back(*static_cast<uint64_t*>(arg)); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst, renamed, next;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  ASSERT_OK(wal->Append("w1", IOOptions(), nullptr));
+  ASSERT_OK(sst->Append("s1", IOOptions(), nullptr));
+  ASSERT_OK(sst->Append("s2", IOOptions(), nullptr));
+  ASSERT_OK(wal->Append("w2", IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->RenameFile(index_ + "/000001.log", index_ + "/000003.sst",
+                               IOOptions(), nullptr));
+  ASSERT_OK(backup->ReopenWritableFile(index_ + "/000003.sst", FileOptions(),
+                                       &renamed, nullptr));
+  ASSERT_OK(renamed->Append("w3", IOOptions(), nullptr));
+  ASSERT_OK(renamed->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->RenameFile(index_ + "/000002.sst", index_ + "/000004.sst",
+                               IOOptions(), nullptr));
+  ASSERT_OK(backup->DeleteFile(index_ + "/000004.sst", IOOptions(), nullptr));
+  ASSERT_OK(backup->NewWritableFile(index_ + "/000005.log", FileOptions(),
+                                    &next, nullptr));
+  ASSERT_OK(next->Append("w4", IOOptions(), nullptr));
+  ASSERT_OK(next->Close(IOOptions(), nullptr));
+  applying.Release();
+  ASSERT_OK(backup->Stop());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_EQ(sequence.size(), 16U);
+  for (size_t i = 0; i < sequence.size(); ++i) ASSERT_EQ(sequence[i], i + 1);
+  std::string bytes;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000003.sst", &bytes));
+  ASSERT_EQ(bytes, "w1w2w3");
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000005.log", &bytes));
+  ASSERT_EQ(bytes, "w4");
+  ASSERT_TRUE(
+      fs_->FileExists(m_.backup_dir + "/work/000004.sst", IOOptions(), nullptr)
+          .IsNotFound());
+}
+TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
+  m_.batch_bytes = 1;
+  TestGate applying, primary, discarded;
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::PrimaryReserved", [&](void* arg) {
+        if (*static_cast<std::string*>(arg) == "000002.sst") primary.Block();
+      });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplyStatus", [](void* arg) {
+        *static_cast<Status*>(arg) =
+            Status::IOError("mirror failure with primary in flight");
+      });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::QueuesDiscarded",
+                                        [&](void*) { discarded.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  std::thread writer([&] {
+    EXPECT_OK(sst->Append(std::string(1024, 'x'), IOOptions(), nullptr));
+  });
+  primary.WaitUntilBlocked();
+  applying.Release();
+  discarded.WaitUntilBlocked();
+  discarded.Release();
+  ASSERT_TRUE(backup->Stop().IsIOError());
+  auto before = backup->Stats();
+  ASSERT_TRUE(before.error.IsIOError());
+  ASSERT_GE(before.queued_bytes, 1024U);
+  ASSERT_LE(before.queued_bytes, m_.queue_capacity);
+  primary.Release();
+  writer.join();
+  auto after = backup->Stats();
+  ASSERT_TRUE(after.error.IsIOError());
+  ASSERT_EQ(after.queued_bytes, 0U);
+  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+  SyncPoint::GetInstance()->DisableProcessing();
+}
+TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
+  m_.queue_capacity = 8192;
+  m_.batch_bytes = 1;
+  TestGate applying, blocked;
+  std::atomic<int> waiters{0};
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure", [&](void*) {
+    if (++waiters == 2) blocked.Block();
+  });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  std::thread meta_writer([&] {
+    EXPECT_OK(sst->Append(std::string(6000, 'b'), IOOptions(), nullptr));
+  });
+  std::thread wal_writer([&] {
+    EXPECT_OK(wal->Append(std::string(6000, 'w'), IOOptions(), nullptr));
+  });
+  blocked.WaitUntilBlocked();
+  blocked.Release();
+  applying.Release();
+  meta_writer.join();
+  wal_writer.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+  auto stats = backup->Stats();
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.queued_bytes, 0U);
+  ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+  std::string bytes;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(6000, 'b'));
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
+  ASSERT_EQ(bytes, std::string(6000, 'w'));
+}
+
+TEST_F(MetaBypassTest, ChannelStopWakesBothCapacityWaiters) {
+  m_.queue_capacity = 8192;
+  m_.batch_bytes = 1;
+  TestGate applying, blocked;
+  std::atomic<int> waiters{0};
+  BlockFirstApply(&applying);
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure", [&](void*) {
+    if (++waiters == 2) blocked.Block();
+  });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  std::thread meta_writer([&] {
+    EXPECT_TRUE(
+        sst->Append(std::string(3000, 'b'), IOOptions(), nullptr).IsIOError());
+  });
+  std::thread wal_writer([&] {
+    EXPECT_TRUE(
+        wal->Append(std::string(3000, 'w'), IOOptions(), nullptr).IsIOError());
+  });
+  blocked.WaitUntilBlocked();
+  blocked.Release();
+  std::thread stop([&] { EXPECT_OK(backup->Stop()); });
+  // Neither waiter requires mirror I/O to resume when shutdown begins.
+  meta_writer.join();
+  wal_writer.join();
+  applying.Release();
+  stop.join();
+  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+  auto stats = backup->Stats();
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.queued_bytes, 0U);
+  SyncPoint::GetInstance()->DisableProcessing();
+}
+
 TEST_F(MetaBypassTest, QueueCapacityAndOrdering) { QueueScenario(false); }
 TEST_F(MetaBypassTest, MirrorFailureWakesBlockedProducer) {
   QueueScenario(true);

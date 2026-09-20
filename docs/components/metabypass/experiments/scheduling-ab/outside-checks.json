@@ -1,0 +1,450 @@
+[
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.CloseRestoreAppendAndReopen",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.CloseRestoreAppendAndReopen\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.CloseRestoreAppendAndReopen\n[       OK ] MetaBypassTest.CloseRestoreAppendAndReopen (1091 ms)\n[----------] 1 test from MetaBypassTest (1091 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1091 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.RotationCompactionAndRetention",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.RotationCompactionAndRetention\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.RotationCompactionAndRetention\n[       OK ] MetaBypassTest.RotationCompactionAndRetention (2286 ms)\n[----------] 1 test from MetaBypassTest (2286 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (2286 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ConcurrentBatchesFlushAndSync",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ConcurrentBatchesFlushAndSync\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ConcurrentBatchesFlushAndSync\n[       OK ] MetaBypassTest.ConcurrentBatchesFlushAndSync (1148 ms)\n[----------] 1 test from MetaBypassTest (1149 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1149 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.PreservesAppendVerificationInformation",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.PreservesAppendVerificationInformation\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.PreservesAppendVerificationInformation\n[       OK ] MetaBypassTest.PreservesAppendVerificationInformation (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.RejectUnsupportedWritesAndOptions",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.RejectUnsupportedWritesAndOptions\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.RejectUnsupportedWritesAndOptions\n[       OK ] MetaBypassTest.RejectUnsupportedWritesAndOptions (325 ms)\n[----------] 1 test from MetaBypassTest (325 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (325 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BackgroundBlockedDoesNotBlockSmallForegroundWrite",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BackgroundBlockedDoesNotBlockSmallForegroundWrite\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BackgroundBlockedDoesNotBlockSmallForegroundWrite\n[       OK ] MetaBypassTest.BackgroundBlockedDoesNotBlockSmallForegroundWrite (560 ms)\n[----------] 1 test from MetaBypassTest (560 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (560 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles\n[       OK ] MetaBypassTest.ValidatorBlockedMirrorStillDrainsAndPinsFiles (1646 ms)\n[----------] 1 test from MetaBypassTest (1646 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1646 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.MirrorFailureWhileValidatingDoesNotPublish",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.MirrorFailureWhileValidatingDoesNotPublish\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.MirrorFailureWhileValidatingDoesNotPublish\n[       OK ] MetaBypassTest.MirrorFailureWhileValidatingDoesNotPublish (322 ms)\n[----------] 1 test from MetaBypassTest (322 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (322 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.IncrementalValidationReusesPrefixesAndTables",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.IncrementalValidationReusesPrefixesAndTables\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.IncrementalValidationReusesPrefixesAndTables\n[       OK ] MetaBypassTest.IncrementalValidationReusesPrefixesAndTables (1392 ms)\n[----------] 1 test from MetaBypassTest (1392 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1392 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.IncrementalValidationRejectsNewCorruption",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.IncrementalValidationRejectsNewCorruption\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.IncrementalValidationRejectsNewCorruption\n[       OK ] MetaBypassTest.IncrementalValidationRejectsNewCorruption (389 ms)\n[----------] 1 test from MetaBypassTest (389 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (389 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BelowThresholdDrainsOnStopWithoutNotifications",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BelowThresholdDrainsOnStopWithoutNotifications\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BelowThresholdDrainsOnStopWithoutNotifications\n[       OK ] MetaBypassTest.BelowThresholdDrainsOnStopWithoutNotifications (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (12 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BelowThresholdDrainsOnTimer",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BelowThresholdDrainsOnTimer\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BelowThresholdDrainsOnTimer\n[       OK ] MetaBypassTest.BelowThresholdDrainsOnTimer (18 ms)\n[----------] 1 test from MetaBypassTest (19 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (19 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BackpressureDrainsBelowBatchThreshold",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BackpressureDrainsBelowBatchThreshold\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BackpressureDrainsBelowBatchThreshold\n[       OK ] MetaBypassTest.BackpressureDrainsBelowBatchThreshold (18 ms)\n[----------] 1 test from MetaBypassTest (18 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (19 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BelowThresholdFailureWakesReservation",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BelowThresholdFailureWakesReservation\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BelowThresholdFailureWakesReservation\n[       OK ] MetaBypassTest.BelowThresholdFailureWakesReservation (9 ms)\n[----------] 1 test from MetaBypassTest (10 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (10 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.CloseDrainsWithValidatorBlocked",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.CloseDrainsWithValidatorBlocked\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.CloseDrainsWithValidatorBlocked\n[       OK ] MetaBypassTest.CloseDrainsWithValidatorBlocked (815 ms)\n[----------] 1 test from MetaBypassTest (815 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (815 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure\n[       OK ] MetaBypassTest.AllSyncWaitersWakeOnPublicationOrFailure (936 ms)\n[----------] 1 test from MetaBypassTest (936 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (937 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.QueueCapacityAndOrdering",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.QueueCapacityAndOrdering\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.QueueCapacityAndOrdering\n[       OK ] MetaBypassTest.QueueCapacityAndOrdering (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (12 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.MirrorFailureWakesBlockedProducer",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.MirrorFailureWakesBlockedProducer\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.MirrorFailureWakesBlockedProducer\n[       OK ] MetaBypassTest.MirrorFailureWakesBlockedProducer (17 ms)\n[----------] 1 test from MetaBypassTest (17 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (17 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint\n[       OK ] MetaBypassTest.PublicationFailurePreservesReadsAndPreviousPoint (961 ms)\n[----------] 1 test from MetaBypassTest (961 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (961 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.PublishedCorruptionRejected",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.PublishedCorruptionRejected\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.PublishedCorruptionRejected\n[       OK ] MetaBypassTest.PublishedCorruptionRejected (431 ms)\n[----------] 1 test from MetaBypassTest (431 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (431 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.BlobCorruptionRejectedBeforeMutation",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.BlobCorruptionRejectedBeforeMutation\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.BlobCorruptionRejectedBeforeMutation\n[       OK ] MetaBypassTest.BlobCorruptionRejectedBeforeMutation (442 ms)\n[----------] 1 test from MetaBypassTest (442 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (442 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.CandidateRejectsMismatchedBlobHeader",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.CandidateRejectsMismatchedBlobHeader\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.CandidateRejectsMismatchedBlobHeader\n[       OK ] MetaBypassTest.CandidateRejectsMismatchedBlobHeader (258 ms)\n[----------] 1 test from MetaBypassTest (258 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (258 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.FragmentedWalBatchIsAtomic",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.FragmentedWalBatchIsAtomic\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.FragmentedWalBatchIsAtomic\n[       OK ] MetaBypassTest.FragmentedWalBatchIsAtomic (956 ms)\n[----------] 1 test from MetaBypassTest (956 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (957 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.SigkillPublicationStages",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.SigkillPublicationStages\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.SigkillPublicationStages\n[       OK ] MetaBypassTest.SigkillPublicationStages (3602 ms)\n[----------] 1 test from MetaBypassTest (3602 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (3602 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.InterruptedBlobPreparationIsRetryable",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.InterruptedBlobPreparationIsRetryable\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.InterruptedBlobPreparationIsRetryable\n[       OK ] MetaBypassTest.InterruptedBlobPreparationIsRetryable (1011 ms)\n[----------] 1 test from MetaBypassTest (1011 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1011 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.SigkillUnflushedBatchRecovery",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.SigkillUnflushedBatchRecovery\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.SigkillUnflushedBatchRecovery\n[       OK ] MetaBypassTest.SigkillUnflushedBatchRecovery (1337 ms)\n[----------] 1 test from MetaBypassTest (1337 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (1337 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 1,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (17 ms)\n[----------] 1 test from MetaBypassTest (17 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (17 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 2,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 3,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (18 ms)\n[----------] 1 test from MetaBypassTest (18 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (18 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 4,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 5,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (14 ms)\n[----------] 1 test from MetaBypassTest (14 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (14 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 6,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 7,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 8,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesBlockedPrimarySst",
+    "repetition": 9,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesBlockedPrimarySst\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesBlockedPrimarySst\n[       OK ] MetaBypassTest.ABWalPassesBlockedPrimarySst (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 1,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (19 ms)\n[----------] 1 test from MetaBypassTest (19 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (19 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 2,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 3,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (18 ms)\n[----------] 1 test from MetaBypassTest (18 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (18 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 4,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 5,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 6,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (14 ms)\n[----------] 1 test from MetaBypassTest (14 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (14 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 7,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (16 ms)\n[----------] 1 test from MetaBypassTest (16 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (16 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 8,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABWalPassesSstCapacityWait",
+    "repetition": 9,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABWalPassesSstCapacityWait\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABWalPassesSstCapacityWait\n[       OK ] MetaBypassTest.ABWalPassesSstCapacityWait (18 ms)\n[----------] 1 test from MetaBypassTest (18 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (18 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 0,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (15 ms)\n[----------] 1 test from MetaBypassTest (15 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (15 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 1,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 2,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (14 ms)\n[----------] 1 test from MetaBypassTest (14 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (14 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 3,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 4,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 5,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 6,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (12 ms)\n[----------] 1 test from MetaBypassTest (12 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (12 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 7,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (10 ms)\n[----------] 1 test from MetaBypassTest (10 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (10 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 8,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (10 ms)\n[----------] 1 test from MetaBypassTest (10 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (10 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  },
+  {
+    "variant": "priority_outside",
+    "test": "MetaBypassTest.ABBothCapacityWaitersWakeOnFailure",
+    "repetition": 9,
+    "returncode": 0,
+    "stdout": "Note: Google Test filter = MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[==========] Running 1 test from 1 test case.\n[----------] Global test environment set-up.\n[----------] 1 test from MetaBypassTest\n[ RUN      ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure\n[       OK ] MetaBypassTest.ABBothCapacityWaitersWakeOnFailure (11 ms)\n[----------] 1 test from MetaBypassTest (11 ms total)\n\n[----------] Global test environment tear-down\n[==========] 1 test from 1 test case ran. (11 ms total)\n[  PASSED  ] 1 test.\n",
+    "stderr": ""
+  }
+]

@@ -10,9 +10,9 @@ The public C++ entry point is `rocksdb/utilities/metabypass.h`.
 `SeparatedStorage` routes `.blob` files to `data_dir`, retains every blob,
 validates referenced records and owns exclusive recovery/sealing. Named-file
 sync and directory sync establish blob dependencies without taking a DB mutex.
-`Backup` intercepts successful index file mutations, mirrors them in one bounded
-in-memory queue and publishes independent recovery points. It never writes blob
-payloads. `MetaBypassDB` owns the two wrappers, their composite Env and the DB;
+`Backup` intercepts successful index file mutations and mirrors them through
+in-memory WAL and metadata queues with one shared capacity budget. It publishes
+independent recovery points and never writes blob payloads. `MetaBypassDB` owns the two wrappers, their composite Env and the DB;
 it exposes only the supported operations. No DB public virtual API or existing
 DB write/recovery implementation is changed.
 
@@ -107,16 +107,26 @@ operation. The defaults are 64 MiB of charged pending events, a 256 KiB trigger
 or a 1000 ms timer. Charges include event structures, names and payload bytes;
 allocator bookkeeping, RocksDB buffers and validation scratch memory are
 additional. An individual file operation larger than the configured queue is
-rejected before execution. A producer mutex serializes primary operations and
-queue insertion; neither worker acquires it or DB locks. The queue mutex is
-held briefly and is not held during backup I/O. Pointer publication and sticky
+rejected before execution. Two channels encapsulate their own operation mutex,
+event queue and capacity wait: WAL, and metadata (SST, MANIFEST, CURRENT,
+OPTIONS, IDENTITY and temporary files). Each operation mutex serializes primary
+operations through enqueue within its channel; neither worker acquires it or DB
+locks. Cross-channel rename acquires both operation mutexes and enqueues one
+metadata control event. One short coordination mutex protects both queues,
+global sequence numbers and the shared capacity budget; it never spans backup
+I/O. The single mirror worker merges queue heads by accepted sequence, with no
+WAL priority or reserved capacity. Each capture follows a complete applied
+sequence prefix. A slow primary SST operation therefore does not hold the WAL
+operation mutex, but shared capacity and mirror I/O can still block WAL.
+On failure, queued events release their charges while outstanding primary
+operations retain theirs until completion. Pointer publication and sticky
 failure recording share a separate mutex. A blocked validator permits the
 mirror to drain; blocked mirror/candidate-copy I/O can still fill the queue. A backup error is sticky, wakes
 waiters, stops publication and rejects subsequent writes while reads remain
 available. Explicit SyncBackup and Close report it.
 
 The backup uses separate wait channels for mirror work, candidate validation,
-queue capacity, and published progress. An enqueue notifies an idle mirror only
+per-channel queue capacity, and published progress. An enqueue notifies an idle mirror only
 when its work predicate is satisfied.
 A blocked capacity reservation requests immediate draining, even below the
 batch threshold. Below-threshold traffic otherwise uses the interval timer.
@@ -227,5 +237,14 @@ protocol, concurrency coverage, and before/after measurements.
 See [the four-version performance comparison](version-comparison.md) for
 no-backup, original, incremental, and notification-fixed results.
 
-See the [Chinese optimization summary](optimization-summary.zh-CN.md) for a
+See the [Chinese implementation, execution-flow and test report](optimization-summary.zh-CN.md) for a
 compact list of implemented improvements, their rationale, and measured effects.
+
+See [WAL/SST scheduling experiments](scheduling-ab.md) for isolated A/B tests of
+operation-lock separation, WAL capacity headroom, and bounded-window priority.
+
+See [dual-channel validation](channel-validation.md) for concurrency coverage and
+the comparison with the notification and experimental split-lock versions.
+
+For the fresh four-version comparison including backup disabled, see
+[channels versus no backup](channel-baseline-comparison.md).

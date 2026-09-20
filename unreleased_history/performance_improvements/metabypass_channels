@@ -1,0 +1,1 @@
+Metabypass separates WAL and metadata operation queues and locks, allowing WAL production to proceed during primary SST operations while preserving globally ordered mirroring and a shared memory budget.

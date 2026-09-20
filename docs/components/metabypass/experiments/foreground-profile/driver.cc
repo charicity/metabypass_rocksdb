@@ -12,7 +12,7 @@
 #include <string>
 
 #include "rocksdb/utilities/metabypass.h"
-using namespace rocksdb;
+using namespace ROCKSDB_NAMESPACE;
 static long us(timeval t) { return t.tv_sec * 1000000 + t.tv_usec; }
 int main(int argc, char** argv) {
   if (argc < 3) return 2;

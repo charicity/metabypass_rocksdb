@@ -62,14 +62,39 @@ native files and blob prefixes (including the footer for MANIFEST-registered
 blobs); it is dependency metadata, not an operation log.
 The pointer includes the inventory checksum. IDENTITY binds the directories.
 
-A worker processes a finite prefix of events, flushes its file handles, parses
-native MANIFEST edits (including complete atomic groups) and complete WAL
-records, and checks referenced SST sizes, native checksums and blob references.
-It then synchronizes the required blob prefixes. Immutable SSTs are hardlinked
-inside the backup, with a copy fallback when links are unsupported. WAL and
-MANIFEST are independent copies limited to complete native record boundaries.
-CURRENT is generated independently; IDENTITY and completed OPTIONS are copied.
-Temporary files are mirrored as required for control-file renames.
+The mirror worker processes a finite prefix of events, flushes its handles and
+captures an independent candidate directory. Closed SSTs are hardlinked, with
+a copy fallback; mutable files are copied at the captured lengths. It then
+continues consuming events while a second worker validates the candidate.
+There is at most one candidate in capture/validation, in addition to the two
+published points. While validation is busy, later events accumulate in the
+working mirror rather than in additional candidate directories.
+
+The validator parses native MANIFEST edits (including complete atomic groups),
+finds complete WAL record boundaries, and checks referenced SST sizes and
+content dependencies. It truncates its private WAL/MANIFEST copies to these
+boundaries, removes unneeded captured files, generates CURRENT and synchronizes
+blob dependencies before publication. Incomplete native groups defer publication
+until a later event boundary; they do not replace the preceding point.
+
+Validation is incremental within one process. Unchanged immutable SSTs reuse
+validated references and checksums. WALs still undergo native record parsing,
+but previously checked records do not repeat blob reference validation. Blob
+persistence validation and inventory CRC computation advance over new complete records and the final
+footer, without rereading previously validated prefixes in that pass. Newly created
+SSTs still validate their references, even when those values previously
+appeared in a WAL. Index inventory CRCs
+also extend over appended bytes. Creation, truncation and rename change a
+file's cache identity; vanished index files are pruned from the caches. A
+shorter required prefix is recomputed rather than using a longer prefix's CRC.
+
+Caches are volatile and assume exclusive ownership of append-only blobs and
+immutable SSTs. They are not a continuous media scrub: latent corruption of
+previously validated bytes may be detected at restore rather than at the next
+publication. Cached checksums retain the original expected content; they do not
+bless changed old bytes. Restart discards all caches, and offline restore checks
+all published native files and required blob prefixes from disk. The backup
+format and restore compatibility are unchanged.
 
 Candidate files, the candidate directory, and then the replacement pointer and
 its parent directory are synced in that order. The latest and preceding point
@@ -82,16 +107,19 @@ operation. The defaults are 64 MiB of charged pending events, a 256 KiB trigger
 or a 1000 ms timer. Charges include event structures, names and payload bytes;
 allocator bookkeeping, RocksDB buffers and validation scratch memory are
 additional. An individual file operation larger than the configured queue is
-rejected before execution. The writer and queue lock serialize event order;
-the worker does not acquire that lock or DB locks. A blocked backup permits
-foreground progress until the queue fills. A backup error is sticky, wakes
+rejected before execution. A producer mutex serializes primary operations and
+queue insertion; neither worker acquires it or DB locks. The queue mutex is
+held briefly and is not held during backup I/O. Pointer publication and sticky
+failure recording share a separate mutex. A blocked validator permits the
+mirror to drain; blocked mirror/candidate-copy I/O can still fill the queue. A backup error is sticky, wakes
 waiters, stops publication and rejects subsequent writes while reads remain
 available. Explicit SyncBackup and Close report it.
 
 SyncBackup waits for a point covering writes completed before its call. It
 should be called after the writes whose backup is required. Normal Close first
 closes/destroys the primary DB, then drains the mirror and publishes the final
-point. Concurrent Close is not supported. There is no fixed RPO: writes after
+point, then joins both workers. SyncBackup waits for validation and publication,
+not just mirror application. Concurrent Close is not supported. There is no fixed RPO: writes after
 the last published point may be lost.
 
 ## Offline recovery
@@ -122,18 +150,25 @@ Call Restore again on that target before Open. It verifies/copies from the
 published point again; already sealed blobs are recognized. Restore never falls
 back silently from corruption in the selected published point.
 
-Blob retention causes unbounded data-directory growth. The first implementation
-rescans native metadata and referenced records to validate candidates; this is
-an explicit performance cost. Scratch buffers for blob validation/copy are
+Blob retention causes unbounded data-directory growth. Candidate capture still copies mutable files and validation still parses native
+WAL/MANIFEST metadata; those costs remain despite content-cache reuse. Scratch buffers for blob validation/copy are
 bounded, while native WAL record decoding and MANIFEST state require memory
 proportional to their content. `retained_index_bytes` reports logical file sizes
-for the working mirror plus the two retained points, counting hardlinks at each
-path, not physical allocated storage.
+for the working mirror at capture plus the two retained points, counting
+hardlinks at each path, not physical allocated storage. Later concurrent mirror
+progress is not included. `validated_blob_bytes` counts cumulative bytes read
+by incremental blob persistence validation (reference checks are additional);
+`reused_tables` counts successful SST validation-cache reuse.
 
 ## Validation and benchmarks
 
+See [pipeline validation](pipeline-validation.md) for the two-thread and
+incremental-validation tests and performance comparison.
+
 See the [validation record](validation.md) for measured results and known
 repository test failures.
+The [content-scan ablation experiment](experiments/README.md) measures recovery
+point costs with content validation removed in a separate experimental binary.
 
 `metabypass_test` exercises close/reopen, complete index loss, unflushed WAL blob
 references, overwrites/deletes/WriteBatch, compaction and rotations, bounded queue

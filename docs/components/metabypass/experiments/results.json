@@ -1,0 +1,2671 @@
+{
+  "data_root": "/tmp/metabypass-scan-ablation-cgncpd3q",
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/metabypass-scan-ablation-bin/baseline",
+      "sha256": "37c6b42c10ebf0cbc92c127ce5eaa52928b81493c8d0b3c7ccac02394189a3a5"
+    },
+    "no_content_scans": {
+      "path": "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+      "sha256": "9897bc05c1f21059787b0d703b97de881ec91165b18195ef05c633e4ddbdbd16"
+    }
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-baseline/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.6971080499934033,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=19081 sync_us=46899 close_us=68413 backpressure_us=0 last_point_build_us=49265 last_point_lag_us=67898 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104422 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 19081,
+        "sync_us": 46899,
+        "close_us": 68413,
+        "backpressure_us": 0,
+        "last_point_build_us": 49265,
+        "last_point_lag_us": 67898,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104422
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/warmup-no_content_scans/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.24662796896882355,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=21321 sync_us=44624 close_us=60420 backpressure_us=0 last_point_build_us=41270 last_point_lag_us=60115 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104374 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 21321,
+        "sync_us": 44624,
+        "close_us": 60420,
+        "backpressure_us": 0,
+        "last_point_build_us": 41270,
+        "last_point_lag_us": 60115,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104374
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7949175119865686,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=457459 sync_us=520752 close_us=692792 backpressure_us=0 last_point_build_us=327202 last_point_lag_us=661771 queue_peak_bytes=3895682 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 457459,
+        "sync_us": 520752,
+        "close_us": 692792,
+        "backpressure_us": 0,
+        "last_point_build_us": 327202,
+        "last_point_lag_us": 661771,
+        "queue_peak_bytes": 3895682,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1671003
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0091786039993167,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=172410 sync_us=10 close_us=322891 backpressure_us=0 last_point_build_us=322090 last_point_lag_us=322389 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296154 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 172410,
+        "sync_us": 10,
+        "close_us": 322891,
+        "backpressure_us": 0,
+        "last_point_build_us": 322090,
+        "last_point_lag_us": 322389,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296154
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.8615024429745972,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=451905 sync_us=146683 close_us=138464 backpressure_us=0 last_point_build_us=43472 last_point_lag_us=104069 queue_peak_bytes=2462565 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 451905,
+        "sync_us": 146683,
+        "close_us": 138464,
+        "backpressure_us": 0,
+        "last_point_build_us": 43472,
+        "last_point_lag_us": 104069,
+        "queue_peak_bytes": 2462565,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 737052
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.02642069902503863,
+      "exit": 1,
+      "stdout": "metabypass restore_us=11786 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 11786
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.4619025680003688,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=177360 sync_us=8 close_us=44712 backpressure_us=0 last_point_build_us=43989 last_point_lag_us=44252 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 177360,
+        "sync_us": 8,
+        "close_us": 44712,
+        "backpressure_us": 0,
+        "last_point_build_us": 43989,
+        "last_point_lag_us": 44252,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.1330991389695555,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=427865 sync_us=452604 close_us=130319 backpressure_us=0 last_point_build_us=43186 last_point_lag_us=97938 queue_peak_bytes=2271640 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 427865,
+        "sync_us": 452604,
+        "close_us": 130319,
+        "backpressure_us": 0,
+        "last_point_build_us": 43186,
+        "last_point_lag_us": 97938,
+        "queue_peak_bytes": 2271640,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 1010788
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.028586476983036846,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12872 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12872
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.4553701269906014,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=178648 sync_us=9 close_us=41493 backpressure_us=0 last_point_build_us=40821 last_point_lag_us=41061 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 178648,
+        "sync_us": 9,
+        "close_us": 41493,
+        "backpressure_us": 0,
+        "last_point_build_us": 40821,
+        "last_point_lag_us": 41061,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8419846259639598,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=419292 sync_us=599232 close_us=700594 backpressure_us=0 last_point_build_us=324023 last_point_lag_us=667079 queue_peak_bytes=4194231 mirrored_bytes=2876871 retained_index_bytes=3975887 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 419292,
+        "sync_us": 599232,
+        "close_us": 700594,
+        "backpressure_us": 0,
+        "last_point_build_us": 324023,
+        "last_point_lag_us": 667079,
+        "queue_peak_bytes": 4194231,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975887,
+        "write_sync_close_us": 1719118
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0168523780303076,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174050 sync_us=11 close_us=328100 backpressure_us=0 last_point_build_us=327191 last_point_lag_us=327483 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296148 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174050,
+        "sync_us": 11,
+        "close_us": 328100,
+        "backpressure_us": 0,
+        "last_point_build_us": 327191,
+        "last_point_lag_us": 327483,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296148
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8204284029779956,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=417654 sync_us=586759 close_us=694167 backpressure_us=0 last_point_build_us=323033 last_point_lag_us=661857 queue_peak_bytes=4025636 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 417654,
+        "sync_us": 586759,
+        "close_us": 694167,
+        "backpressure_us": 0,
+        "last_point_build_us": 323033,
+        "last_point_lag_us": 661857,
+        "queue_peak_bytes": 4025636,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 1698580
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0042645030189306,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176006 sync_us=9 close_us=321425 backpressure_us=0 last_point_build_us=320700 last_point_lag_us=320979 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296152 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176006,
+        "sync_us": 9,
+        "close_us": 321425,
+        "backpressure_us": 0,
+        "last_point_build_us": 320700,
+        "last_point_lag_us": 320979,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296152
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.8534602699801326,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=417776 sync_us=182656 close_us=132322 backpressure_us=0 last_point_build_us=43260 last_point_lag_us=100468 queue_peak_bytes=2532628 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 417776,
+        "sync_us": 182656,
+        "close_us": 132322,
+        "backpressure_us": 0,
+        "last_point_build_us": 43260,
+        "last_point_lag_us": 100468,
+        "queue_peak_bytes": 2532628,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 732754
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.029426928027532995,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12924 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12924
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.45588988496456295,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=179336 sync_us=10 close_us=42651 backpressure_us=0 last_point_build_us=41966 last_point_lag_us=42220 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 179336,
+        "sync_us": 10,
+        "close_us": 42651,
+        "backpressure_us": 0,
+        "last_point_build_us": 41966,
+        "last_point_lag_us": 42220,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.812335487047676,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=438492 sync_us=118111 close_us=134332 backpressure_us=0 last_point_build_us=43374 last_point_lag_us=100496 queue_peak_bytes=2227946 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 438492,
+        "sync_us": 118111,
+        "close_us": 134332,
+        "backpressure_us": 0,
+        "last_point_build_us": 43374,
+        "last_point_lag_us": 100496,
+        "queue_peak_bytes": 2227946,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 690935
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.03207694401498884,
+      "exit": 1,
+      "stdout": "metabypass restore_us=13308 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 13308
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.4499662420130335,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175561 sync_us=12 close_us=42317 backpressure_us=0 last_point_build_us=41654 last_point_lag_us=41903 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175561,
+        "sync_us": 12,
+        "close_us": 42317,
+        "backpressure_us": 0,
+        "last_point_build_us": 41654,
+        "last_point_lag_us": 41903,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7970728339860216,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=425460 sync_us=555061 close_us=692055 backpressure_us=0 last_point_build_us=323656 last_point_lag_us=658861 queue_peak_bytes=3843266 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 425460,
+        "sync_us": 555061,
+        "close_us": 692055,
+        "backpressure_us": 0,
+        "last_point_build_us": 323656,
+        "last_point_lag_us": 658861,
+        "queue_peak_bytes": 3843266,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1672576
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0018385049770586,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=181729 sync_us=12 close_us=316649 backpressure_us=0 last_point_build_us=315805 last_point_lag_us=316116 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296152 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 181729,
+        "sync_us": 12,
+        "close_us": 316649,
+        "backpressure_us": 0,
+        "last_point_build_us": 315805,
+        "last_point_lag_us": 316116,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296152
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7925324300304055,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=427470 sync_us=556906 close_us=682476 backpressure_us=0 last_point_build_us=315849 last_point_lag_us=649966 queue_peak_bytes=3697113 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 427470,
+        "sync_us": 556906,
+        "close_us": 682476,
+        "backpressure_us": 0,
+        "last_point_build_us": 315849,
+        "last_point_lag_us": 649966,
+        "queue_peak_bytes": 3697113,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 1666852
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0055915740085766,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174914 sync_us=12 close_us=320920 backpressure_us=0 last_point_build_us=320171 last_point_lag_us=320471 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296152 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174914,
+        "sync_us": 12,
+        "close_us": 320920,
+        "backpressure_us": 0,
+        "last_point_build_us": 320171,
+        "last_point_lag_us": 320471,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296152
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.8201273829909042,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=416073 sync_us=148389 close_us=130415 backpressure_us=0 last_point_build_us=43248 last_point_lag_us=97574 queue_peak_bytes=2630908 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 416073,
+        "sync_us": 148389,
+        "close_us": 130415,
+        "backpressure_us": 0,
+        "last_point_build_us": 43248,
+        "last_point_lag_us": 97574,
+        "queue_peak_bytes": 2630908,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 694877
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.028595095966011286,
+      "exit": 1,
+      "stdout": "metabypass restore_us=13306 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 13306
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_default-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.44980222603771836,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175912 sync_us=9 close_us=41960 backpressure_us=0 last_point_build_us=41284 last_point_lag_us=41528 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175912,
+        "sync_us": 9,
+        "close_us": 41960,
+        "backpressure_us": 0,
+        "last_point_build_us": 41284,
+        "last_point_lag_us": 41528,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.589818653999828,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1683155 sync_us=2443048 close_us=2337510 backpressure_us=0 last_point_build_us=1114728 last_point_lag_us=2288864 queue_peak_bytes=18445656 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1683155,
+        "sync_us": 2443048,
+        "close_us": 2337510,
+        "backpressure_us": 0,
+        "last_point_build_us": 1114728,
+        "last_point_lag_us": 2288864,
+        "queue_peak_bytes": 18445656,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6463713
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.442170329974033,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=675300 sync_us=14 close_us=1143903 backpressure_us=0 last_point_build_us=1142978 last_point_lag_us=1143306 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056433 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 675300,
+        "sync_us": 14,
+        "close_us": 1143903,
+        "backpressure_us": 0,
+        "last_point_build_us": 1142978,
+        "last_point_lag_us": 1143306,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056433
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.144137366034556,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1665013 sync_us=145931 close_us=206162 backpressure_us=0 last_point_build_us=36886 last_point_lag_us=86726 queue_peak_bytes=3286269 mirrored_bytes=11631177 retained_index_bytes=13029250 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1665013,
+        "sync_us": 145931,
+        "close_us": 206162,
+        "backpressure_us": 0,
+        "last_point_build_us": 36886,
+        "last_point_lag_us": 86726,
+        "queue_peak_bytes": 3286269,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 13029250,
+        "write_sync_close_us": 2017106
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.020596589019987732,
+      "exit": 1,
+      "stdout": "metabypass restore_us=11978 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 11978
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-0-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.262775563984178,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=687076 sync_us=13 close_us=42370 backpressure_us=0 last_point_build_us=41610 last_point_lag_us=41918 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056359 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 687076,
+        "sync_us": 13,
+        "close_us": 42370,
+        "backpressure_us": 0,
+        "last_point_build_us": 41610,
+        "last_point_lag_us": 41918,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056359
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.237105769047048,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1720879 sync_us=177114 close_us=212765 backpressure_us=0 last_point_build_us=39336 last_point_lag_us=96602 queue_peak_bytes=3286561 mirrored_bytes=11631177 retained_index_bytes=13029250 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1720879,
+        "sync_us": 177114,
+        "close_us": 212765,
+        "backpressure_us": 0,
+        "last_point_build_us": 39336,
+        "last_point_lag_us": 96602,
+        "queue_peak_bytes": 3286561,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 13029250,
+        "write_sync_close_us": 2110758
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.02958128700265661,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12471 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12471
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2471156350220554,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=686534 sync_us=11 close_us=42874 backpressure_us=0 last_point_build_us=42104 last_point_lag_us=42400 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056359 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 686534,
+        "sync_us": 11,
+        "close_us": 42874,
+        "backpressure_us": 0,
+        "last_point_build_us": 42104,
+        "last_point_lag_us": 42400,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056359
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.424562301021069,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1948149 sync_us=2006553 close_us=2345443 backpressure_us=0 last_point_build_us=1125015 last_point_lag_us=2296371 queue_peak_bytes=13380638 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1948149,
+        "sync_us": 2006553,
+        "close_us": 2345443,
+        "backpressure_us": 0,
+        "last_point_build_us": 1125015,
+        "last_point_lag_us": 2296371,
+        "queue_peak_bytes": 13380638,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6300145
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-1-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3582670770119876,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=679227 sync_us=12 close_us=1108388 backpressure_us=0 last_point_build_us=1107481 last_point_lag_us=1107807 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056433 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 679227,
+        "sync_us": 12,
+        "close_us": 1108388,
+        "backpressure_us": 0,
+        "last_point_build_us": 1107481,
+        "last_point_lag_us": 1107807,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056433
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.345156394992955,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1748428 sync_us=2151463 close_us=2320056 backpressure_us=0 last_point_build_us=1110565 last_point_lag_us=2269981 queue_peak_bytes=15114852 mirrored_bytes=11631177 retained_index_bytes=15983626 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1748428,
+        "sync_us": 2151463,
+        "close_us": 2320056,
+        "backpressure_us": 0,
+        "last_point_build_us": 1110565,
+        "last_point_lag_us": 2269981,
+        "queue_peak_bytes": 15114852,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "write_sync_close_us": 6219947
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3504788969876245,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=672220 sync_us=13 close_us=1101331 backpressure_us=0 last_point_build_us=1100419 last_point_lag_us=1100739 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056433 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 672220,
+        "sync_us": 13,
+        "close_us": 1101331,
+        "backpressure_us": 0,
+        "last_point_build_us": 1100419,
+        "last_point_lag_us": 1100739,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056433
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3239361669984646,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1813564 sync_us=194368 close_us=194608 backpressure_us=0 last_point_build_us=55782 last_point_lag_us=144446 queue_peak_bytes=3286858 mirrored_bytes=11631177 retained_index_bytes=15983570 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1813564,
+        "sync_us": 194368,
+        "close_us": 194608,
+        "backpressure_us": 0,
+        "last_point_build_us": 55782,
+        "last_point_lag_us": 144446,
+        "queue_peak_bytes": 3286858,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983570,
+        "write_sync_close_us": 2202540
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.03340845997445285,
+      "exit": 1,
+      "stdout": "metabypass restore_us=14442 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 14442
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-2-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2482175080222078,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=675719 sync_us=14 close_us=43559 backpressure_us=0 last_point_build_us=42793 last_point_lag_us=43094 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056359 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 675719,
+        "sync_us": 14,
+        "close_us": 43559,
+        "backpressure_us": 0,
+        "last_point_build_us": 42793,
+        "last_point_lag_us": 43094,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056359
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.2739198350463994,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1710371 sync_us=239616 close_us=198419 backpressure_us=0 last_point_build_us=52019 last_point_lag_us=147331 queue_peak_bytes=3485334 mirrored_bytes=11631177 retained_index_bytes=15983570 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1710371,
+        "sync_us": 239616,
+        "close_us": 198419,
+        "backpressure_us": 0,
+        "last_point_build_us": 52019,
+        "last_point_lag_us": 147331,
+        "queue_peak_bytes": 3485334,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983570,
+        "write_sync_close_us": 2148406
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.025853113969787955,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12344 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12344
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.2372878679889254,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=670650 sync_us=14 close_us=42734 backpressure_us=0 last_point_build_us=41875 last_point_lag_us=42198 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056359 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 670650,
+        "sync_us": 14,
+        "close_us": 42734,
+        "backpressure_us": 0,
+        "last_point_build_us": 41875,
+        "last_point_lag_us": 42198,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056359
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.47900483495323,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1830156 sync_us=2178863 close_us=2344434 backpressure_us=0 last_point_build_us=1122114 last_point_lag_us=2294640 queue_peak_bytes=15430481 mirrored_bytes=11631177 retained_index_bytes=15983626 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1830156,
+        "sync_us": 2178863,
+        "close_us": 2344434,
+        "backpressure_us": 0,
+        "last_point_build_us": 1122114,
+        "last_point_lag_us": 2294640,
+        "queue_peak_bytes": 15430481,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "write_sync_close_us": 6353453
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-3-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.38911015400663,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=676590 sync_us=14 close_us=1106334 backpressure_us=0 last_point_build_us=1105448 last_point_lag_us=1105774 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056433 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 676590,
+        "sync_us": 14,
+        "close_us": 1106334,
+        "backpressure_us": 0,
+        "last_point_build_us": 1105448,
+        "last_point_lag_us": 1105774,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056433
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.388424407981802,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1759017 sync_us=2169545 close_us=2334120 backpressure_us=0 last_point_build_us=1110331 last_point_lag_us=2284972 queue_peak_bytes=14660795 mirrored_bytes=11631177 retained_index_bytes=15983624 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1759017,
+        "sync_us": 2169545,
+        "close_us": 2334120,
+        "backpressure_us": 0,
+        "last_point_build_us": 1110331,
+        "last_point_lag_us": 2284972,
+        "queue_peak_bytes": 14660795,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "write_sync_close_us": 6262682
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3903209660202265,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=694393 sync_us=14 close_us=1106015 backpressure_us=0 last_point_build_us=1105258 last_point_lag_us=1105552 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056431 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 694393,
+        "sync_us": 14,
+        "close_us": 1106015,
+        "backpressure_us": 0,
+        "last_point_build_us": 1105258,
+        "last_point_lag_us": 1105552,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056431
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.2389707749825902,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1723499 sync_us=194467 close_us=190298 backpressure_us=0 last_point_build_us=51457 last_point_lag_us=141137 queue_peak_bytes=3628630 mirrored_bytes=11631177 retained_index_bytes=15983570 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1723499,
+        "sync_us": 194467,
+        "close_us": 190298,
+        "backpressure_us": 0,
+        "last_point_build_us": 51457,
+        "last_point_lag_us": 141137,
+        "queue_peak_bytes": 3628630,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983570,
+        "write_sync_close_us": 2108264
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.026521520980168134,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12587 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12587
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/200k_default-4-no_content_scans/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.258160224009771,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=689709 sync_us=14 close_us=42126 backpressure_us=0 last_point_build_us=41382 last_point_lag_us=41672 queue_peak_bytes=12772 mirrored_bytes=9290 retained_index_bytes=13056359 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 689709,
+        "sync_us": 14,
+        "close_us": 42126,
+        "backpressure_us": 0,
+        "last_point_build_us": 41382,
+        "last_point_lag_us": 41672,
+        "queue_peak_bytes": 12772,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056359
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1958165949909016,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=781745 sync_us=609003 close_us=680352 backpressure_us=353821 last_point_build_us=316007 last_point_lag_us=651804 queue_peak_bytes=2097113 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 781745,
+        "sync_us": 609003,
+        "close_us": 680352,
+        "backpressure_us": 353821,
+        "last_point_build_us": 316007,
+        "last_point_lag_us": 651804,
+        "queue_peak_bytes": 2097113,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 2071100
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9961600420065224,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175479 sync_us=11 close_us=320246 backpressure_us=0 last_point_build_us=319459 last_point_lag_us=319748 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296152 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175479,
+        "sync_us": 11,
+        "close_us": 320246,
+        "backpressure_us": 0,
+        "last_point_build_us": 319459,
+        "last_point_lag_us": 319748,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296152
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.8203434459865093,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=441917 sync_us=122603 close_us=134273 backpressure_us=14007 last_point_build_us=43365 last_point_lag_us=99002 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 441917,
+        "sync_us": 122603,
+        "close_us": 134273,
+        "backpressure_us": 14007,
+        "last_point_build_us": 43365,
+        "last_point_lag_us": 99002,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 698793
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.030436241999268532,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12867 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12867
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-0-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.45106418698560447,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176195 sync_us=10 close_us=41431 backpressure_us=0 last_point_build_us=40812 last_point_lag_us=41059 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176195,
+        "sync_us": 10,
+        "close_us": 41431,
+        "backpressure_us": 0,
+        "last_point_build_us": 40812,
+        "last_point_lag_us": 41059,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.827339515031781,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=448248 sync_us=120389 close_us=136261 backpressure_us=6855 last_point_build_us=43330 last_point_lag_us=102811 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 448248,
+        "sync_us": 120389,
+        "close_us": 136261,
+        "backpressure_us": 6855,
+        "last_point_build_us": 43330,
+        "last_point_lag_us": 102811,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 704898
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.022612958040554076,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12415 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12415
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.4503240479971282,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=177465 sync_us=10 close_us=42646 backpressure_us=0 last_point_build_us=41967 last_point_lag_us=42220 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 177465,
+        "sync_us": 10,
+        "close_us": 42646,
+        "backpressure_us": 0,
+        "last_point_build_us": 41967,
+        "last_point_lag_us": 42220,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.218602415989153,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=803705 sync_us=614620 close_us=682283 backpressure_us=340556 last_point_build_us=314695 last_point_lag_us=648006 queue_peak_bytes=2097088 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 803705,
+        "sync_us": 614620,
+        "close_us": 682283,
+        "backpressure_us": 340556,
+        "last_point_build_us": 314695,
+        "last_point_lag_us": 648006,
+        "queue_peak_bytes": 2097088,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 2100608
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0055184439988807,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175391 sync_us=10 close_us=321972 backpressure_us=0 last_point_build_us=321175 last_point_lag_us=321470 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296154 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175391,
+        "sync_us": 10,
+        "close_us": 321972,
+        "backpressure_us": 0,
+        "last_point_build_us": 321175,
+        "last_point_lag_us": 321470,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296154
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.179254334012512,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=763588 sync_us=606732 close_us=684401 backpressure_us=320801 last_point_build_us=313495 last_point_lag_us=650499 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 763588,
+        "sync_us": 606732,
+        "close_us": 684401,
+        "backpressure_us": 320801,
+        "last_point_build_us": 313495,
+        "last_point_lag_us": 650499,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 2054721
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9832752979709767,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=170594 sync_us=12 close_us=313165 backpressure_us=0 last_point_build_us=312444 last_point_lag_us=312730 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296154 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 170594,
+        "sync_us": 12,
+        "close_us": 313165,
+        "backpressure_us": 0,
+        "last_point_build_us": 312444,
+        "last_point_lag_us": 312730,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296154
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.8118777159834281,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=440826 sync_us=121689 close_us=130247 backpressure_us=7256 last_point_build_us=43350 last_point_lag_us=95894 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 440826,
+        "sync_us": 121689,
+        "close_us": 130247,
+        "backpressure_us": 7256,
+        "last_point_build_us": 43350,
+        "last_point_lag_us": 95894,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 692762
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.02608486299868673,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12798 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12798
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-2-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.45072126999730244,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176343 sync_us=11 close_us=41561 backpressure_us=0 last_point_build_us=40837 last_point_lag_us=41081 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176343,
+        "sync_us": 11,
+        "close_us": 41561,
+        "backpressure_us": 0,
+        "last_point_build_us": 40837,
+        "last_point_lag_us": 41081,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.8408990550087765,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=473485 sync_us=109065 close_us=134484 backpressure_us=15801 last_point_build_us=43340 last_point_lag_us=98807 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 473485,
+        "sync_us": 109065,
+        "close_us": 134484,
+        "backpressure_us": 15801,
+        "last_point_build_us": 43340,
+        "last_point_lag_us": 98807,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 717034
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.028073825989849865,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12153 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12153
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.47857973602367565,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174378 sync_us=9 close_us=41549 backpressure_us=0 last_point_build_us=40810 last_point_lag_us=41076 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174378,
+        "sync_us": 9,
+        "close_us": 41549,
+        "backpressure_us": 0,
+        "last_point_build_us": 40810,
+        "last_point_lag_us": 41076,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.2373159929993562,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=794735 sync_us=621611 close_us=696278 backpressure_us=351795 last_point_build_us=318851 last_point_lag_us=660361 queue_peak_bytes=2097088 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 794735,
+        "sync_us": 621611,
+        "close_us": 696278,
+        "backpressure_us": 351795,
+        "last_point_build_us": 318851,
+        "last_point_lag_us": 660361,
+        "queue_peak_bytes": 2097088,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2112624
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9845956859644502,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=170155 sync_us=10 close_us=313770 backpressure_us=0 last_point_build_us=312993 last_point_lag_us=313277 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296152 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 170155,
+        "sync_us": 10,
+        "close_us": 313770,
+        "backpressure_us": 0,
+        "last_point_build_us": 312993,
+        "last_point_lag_us": 313277,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296152
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1813618920277804,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=773438 sync_us=598910 close_us=682404 backpressure_us=321788 last_point_build_us=313643 last_point_lag_us=647313 queue_peak_bytes=2097129 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 773438,
+        "sync_us": 598910,
+        "close_us": 682404,
+        "backpressure_us": 321788,
+        "last_point_build_us": 313643,
+        "last_point_lag_us": 647313,
+        "queue_peak_bytes": 2097129,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 2054752
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9969567710068077,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176433 sync_us=12 close_us=315386 backpressure_us=0 last_point_build_us=314655 last_point_lag_us=314952 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296154 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176433,
+        "sync_us": 12,
+        "close_us": 315386,
+        "backpressure_us": 0,
+        "last_point_build_us": 314655,
+        "last_point_lag_us": 314952,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296154
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.841382198035717,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=468312 sync_us=120271 close_us=132376 backpressure_us=9468 last_point_build_us=43395 last_point_lag_us=98483 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975839 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 468312,
+        "sync_us": 120271,
+        "close_us": 132376,
+        "backpressure_us": 9468,
+        "last_point_build_us": 43395,
+        "last_point_lag_us": 98483,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975839,
+        "write_sync_close_us": 720959
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/rejected-restore",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.024146950978320092,
+      "exit": 1,
+      "stdout": "metabypass restore_us=12207 status=Corruption: invalid inventory\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 12207
+      }
+    },
+    {
+      "variant": "no_content_scans",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/no-content-scans",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/index",
+        "--metabypass_data_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/data",
+        "--metabypass_backup_dir=/tmp/metabypass-scan-ablation-cgncpd3q/50k_pressure-4-no_content_scans/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.4465179010294378,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173059 sync_us=10 close_us=40798 backpressure_us=0 last_point_build_us=40158 last_point_lag_us=40415 queue_peak_bytes=12769 mirrored_bytes=9287 retained_index_bytes=3296084 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173059,
+        "sync_us": 10,
+        "close_us": 40798,
+        "backpressure_us": 0,
+        "last_point_build_us": 40158,
+        "last_point_lag_us": 40415,
+        "queue_peak_bytes": 12769,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296084
+      }
+    }
+  ],
+  "summary": {
+    "50k_default": {
+      "baseline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 425460,
+          "min": 417654,
+          "max": 457459
+        },
+        "sync_us": {
+          "median": 556906,
+          "min": 520752,
+          "max": 599232
+        },
+        "close_us": {
+          "median": 692792,
+          "min": 682476,
+          "max": 700594
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 323656,
+          "min": 315849,
+          "max": 327202
+        },
+        "last_point_lag_us": {
+          "median": 661771,
+          "min": 649966,
+          "max": 667079
+        },
+        "queue_peak_bytes": {
+          "median": 3895682,
+          "min": 3697113,
+          "max": 4194231
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975890,
+          "min": 3975887,
+          "max": 3975891
+        },
+        "write_sync_close_us": {
+          "median": 1672576,
+          "min": 1666852,
+          "max": 1719118
+        }
+      },
+      "no_content_scans": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 427865,
+          "min": 416073,
+          "max": 451905
+        },
+        "sync_us": {
+          "median": 148389,
+          "min": 118111,
+          "max": 452604
+        },
+        "close_us": {
+          "median": 132322,
+          "min": 130319,
+          "max": 138464
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 43260,
+          "min": 43186,
+          "max": 43472
+        },
+        "last_point_lag_us": {
+          "median": 100468,
+          "min": 97574,
+          "max": 104069
+        },
+        "queue_peak_bytes": {
+          "median": 2462565,
+          "min": 2227946,
+          "max": 2630908
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975839,
+          "min": 3975839,
+          "max": 3975839
+        },
+        "write_sync_close_us": {
+          "median": 732754,
+          "min": 690935,
+          "max": 1010788
+        }
+      }
+    },
+    "200k_default": {
+      "baseline": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 1759017,
+          "min": 1683155,
+          "max": 1948149
+        },
+        "sync_us": {
+          "median": 2169545,
+          "min": 2006553,
+          "max": 2443048
+        },
+        "close_us": {
+          "median": 2337510,
+          "min": 2320056,
+          "max": 2345443
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 1114728,
+          "min": 1110331,
+          "max": 1125015
+        },
+        "last_point_lag_us": {
+          "median": 2288864,
+          "min": 2269981,
+          "max": 2296371
+        },
+        "queue_peak_bytes": {
+          "median": 15114852,
+          "min": 13380638,
+          "max": 18445656
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983625,
+          "min": 15983624,
+          "max": 15983626
+        },
+        "write_sync_close_us": {
+          "median": 6300145,
+          "min": 6219947,
+          "max": 6463713
+        }
+      },
+      "no_content_scans": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 1720879,
+          "min": 1665013,
+          "max": 1813564
+        },
+        "sync_us": {
+          "median": 194368,
+          "min": 145931,
+          "max": 239616
+        },
+        "close_us": {
+          "median": 198419,
+          "min": 190298,
+          "max": 212765
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 51457,
+          "min": 36886,
+          "max": 55782
+        },
+        "last_point_lag_us": {
+          "median": 141137,
+          "min": 86726,
+          "max": 147331
+        },
+        "queue_peak_bytes": {
+          "median": 3286858,
+          "min": 3286269,
+          "max": 3628630
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983570,
+          "min": 13029250,
+          "max": 15983570
+        },
+        "write_sync_close_us": {
+          "median": 2110758,
+          "min": 2017106,
+          "max": 2202540
+        }
+      }
+    },
+    "50k_pressure": {
+      "baseline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 781745,
+          "min": 763588,
+          "max": 803705
+        },
+        "sync_us": {
+          "median": 609003,
+          "min": 598910,
+          "max": 621611
+        },
+        "close_us": {
+          "median": 682404,
+          "min": 680352,
+          "max": 696278
+        },
+        "backpressure_us": {
+          "median": 340556,
+          "min": 320801,
+          "max": 353821
+        },
+        "last_point_build_us": {
+          "median": 314695,
+          "min": 313495,
+          "max": 318851
+        },
+        "last_point_lag_us": {
+          "median": 650499,
+          "min": 647313,
+          "max": 660361
+        },
+        "queue_peak_bytes": {
+          "median": 2097095,
+          "min": 2097088,
+          "max": 2097129
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975891,
+          "min": 3975888,
+          "max": 3975891
+        },
+        "write_sync_close_us": {
+          "median": 2071100,
+          "min": 2054721,
+          "max": 2112624
+        }
+      },
+      "no_content_scans": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 448248,
+          "min": 440826,
+          "max": 473485
+        },
+        "sync_us": {
+          "median": 120389,
+          "min": 109065,
+          "max": 122603
+        },
+        "close_us": {
+          "median": 134273,
+          "min": 130247,
+          "max": 136261
+        },
+        "backpressure_us": {
+          "median": 9468,
+          "min": 6855,
+          "max": 15801
+        },
+        "last_point_build_us": {
+          "median": 43350,
+          "min": 43330,
+          "max": 43395
+        },
+        "last_point_lag_us": {
+          "median": 98807,
+          "min": 95894,
+          "max": 102811
+        },
+        "queue_peak_bytes": {
+          "median": 2097095,
+          "min": 2097095,
+          "max": 2097095
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975839,
+          "min": 3975839,
+          "max": 3975839
+        },
+        "write_sync_close_us": {
+          "median": 704898,
+          "min": 692762,
+          "max": 720959
+        }
+      }
+    }
+  },
+  "source_commit": "e7663cf90"
+}

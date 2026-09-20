@@ -30,13 +30,18 @@ struct MetaBypassStats {
   uint64_t backpressure_micros = 0;
   uint64_t mirrored_bytes = 0;
   uint64_t recovery_points = 0;
+  // Cumulative bytes scanned by incremental blob persistence validation.
+  // Reference checks and native index parsing are additional work.
+  uint64_t validated_blob_bytes = 0;
+  uint64_t reused_tables = 0;
   // Steady-clock timestamp (not wall clock) and candidate construction time.
   uint64_t last_publish_micros = 0;
   uint64_t last_build_micros = 0;
   // Time from the oldest newly covered event to publication, including
   // batching.
   uint64_t last_point_lag_micros = 0;
-  // Logical sizes of work plus retained points; hardlinks count per path.
+  // Logical sizes of work at capture plus published points; hardlinks count
+  // per path. Concurrent mirror progress after capture is not included.
   uint64_t retained_index_bytes = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;

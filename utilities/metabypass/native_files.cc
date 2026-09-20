@@ -78,18 +78,28 @@ Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
 }
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
               uint32_t* crc) {
-  std::unique_ptr<FSSequentialFile> in;
-  Status s = fs->NewSequentialFile(path, FileOptions(), &in, nullptr);
-  std::array<char, 65536> buf;
   *crc = 0;
-  while (s.ok() && length) {
+  return ExtendDigest(fs, path, 0, length, crc);
+}
+Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
+                    uint64_t end, uint32_t* crc) {
+  if (begin > end) return Status::Corruption("digest prefix shrank", path);
+  uint64_t size;
+  Status s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
+  if (!s.ok()) return s;
+  if (size < end) return Status::Corruption("short file", path);
+  if (begin == end) return Status::OK();
+  std::unique_ptr<FSRandomAccessFile> in;
+  s = fs->NewRandomAccessFile(path, FileOptions(), &in, nullptr);
+  std::array<char, 65536> buf;
+  while (s.ok() && begin < end) {
     Slice part;
-    s = in->Read(std::min<uint64_t>(length, buf.size()), IOOptions(), &part,
-                 buf.data(), nullptr);
+    s = in->Read(begin, std::min<uint64_t>(end - begin, buf.size()),
+                 IOOptions(), &part, buf.data(), nullptr);
     if (!s.ok()) break;
     if (part.empty()) return Status::Corruption("short file", path);
     *crc = crc32c::Extend(*crc, part.data(), part.size());
-    length -= part.size();
+    begin += part.size();
   }
   return s;
 }

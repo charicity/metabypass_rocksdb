@@ -11042,12 +11042,13 @@ static int RunMetaBypassBenchmark() {
          " sync_us=%" PRIu64 " close_us=%" PRIu64 " backpressure_us=%" PRIu64
          " last_point_build_us=%" PRIu64 " last_point_lag_us=%" PRIu64
          " queue_peak_bytes=%" PRIu64 " mirrored_bytes=%" PRIu64
-         " retained_index_bytes=%" PRIu64 " status=%s\n",
+         " retained_index_bytes=%" PRIu64 " validated_blob_bytes=%" PRIu64
+         " reused_tables=%" PRIu64 " status=%s\n",
          FLAGS_metabypass_mode.c_str(), FLAGS_num, foreground, sync_us,
          close_us, stats.backpressure_micros, stats.last_build_micros,
          stats.last_point_lag_micros, stats.peak_queued_bytes,
          stats.mirrored_bytes, stats.retained_index_bytes,
-         s.ToString().c_str());
+         stats.validated_blob_bytes, stats.reused_tables, s.ToString().c_str());
   return s.ok() ? 0 : 1;
 }
 

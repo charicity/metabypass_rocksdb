@@ -1,0 +1,60 @@
+--- a/utilities/metabypass/backup.cc
++++ b/utilities/metabypass/backup.cc
+@@ -392,15 +392,20 @@
+       if (!s.ok()) return s;
+     }
+   }
+-  std::map<uint64_t, uint64_t> blobs;
+-  s = storage_->Dependencies(work_, state, &blobs);
+-  if (!s.ok()) return s;
+-  for (const auto& table : state.tables) {
+-    s = storage_->ValidateTable(work_ + "/" + MakeTableFileName(table.first),
+-                                db_options_, &blobs);
+-    if (!s.ok()) return s;
+-  }
+-  s = storage_->Persist(blobs);
++  // EXPERIMENT ONLY: omit dependency/content scans but still sync all blobs.
++  // Enumerating every retained blob is conservative and may sync extra files.
++  std::vector<std::string> blob_files;
++  s = disk_->GetChildren(options_.data_dir, IOOptions(), &blob_files, nullptr);
++  if (!s.ok()) return s;
++  for (const auto& f : blob_files) {
++    uint64_t number;
++    FileType type;
++    if (!ParseFileName(f, &number, &type) || type != kBlobFile) continue;
++    s = disk_->SyncFile(options_.data_dir + "/" + f, FileOptions(), IOOptions(),
++                        true, nullptr);
++    if (!s.ok()) return s;
++  }
++  s = SyncDir(disk_, options_.data_dir);
+   if (!s.ok()) return s;
+   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
+   if (!s.ok()) return s;
+@@ -409,6 +414,8 @@
+   s = disk_->CreateDir(point, IOOptions(), nullptr);
+   if (!s.ok()) return s;
+   std::ostringstream inventory;
++  // Deliberately rejected by RestoreFiles: these are timing-only points.
++  inventory << "EXPERIMENT-NO-CONTENT-VALIDATION\n";
+   uint64_t total = 0;
+   for (const auto& f : files) {
+     uint64_t number;
+@@ -428,17 +435,8 @@
+     } else
+       s = Copy(disk_, work_ + "/" + f.first, point + "/" + f.first, f.second);
+     if (!s.ok()) return s;
+-    uint32_t crc;
+-    s = Digest(disk_, point + "/" + f.first, f.second, &crc);
+-    if (!s.ok()) return s;
+-    inventory << "I " << f.first << ' ' << f.second << ' ' << crc << '\n';
++    inventory << "I " << f.first << ' ' << f.second << " 0\n";
+     total += f.second;
+-  }
+-  for (const auto& b : blobs) {
+-    uint32_t crc;
+-    s = Digest(disk_, storage_->BlobPath(b.first), b.second, &crc);
+-    if (!s.ok()) return s;
+-    inventory << "B " << b.first << ' ' << b.second << ' ' << crc << '\n';
+   }
+   s = Write(disk_, point + "/CURRENT", state.manifest + "\n");
+   const std::string current = state.manifest + "\n";

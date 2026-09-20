@@ -22,6 +22,9 @@ Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
             uint64_t length);
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
               uint32_t* crc);
+// Extend an existing CRC with [begin, end), without rereading its prefix.
+Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
+                    uint64_t end, uint32_t* crc);
 Status RemoveDir(FileSystem* fs, const std::string& path);
 Status ReadLog(FileSystem* fs, const std::string& path, uint64_t number,
                const std::function<Status(const Slice&)>& visit, uint64_t* end);

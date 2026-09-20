@@ -24,6 +24,29 @@
 namespace ROCKSDB_NAMESPACE {
 namespace {
 std::string executable;
+class TestGate {
+ public:
+  void Block() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    entered_ = true;
+    cv_.notify_all();
+    cv_.wait(lock, [&] { return released_; });
+  }
+  void WaitUntilBlocked() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait(lock, [&] { return entered_; });
+  }
+  void Release() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    released_ = true;
+    cv_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool entered_ = false, released_ = false;
+};
 class MetaBypassTest : public testing::Test {
  public:
   MetaBypassTest() {
@@ -324,32 +347,160 @@ TEST_F(MetaBypassTest, RejectUnsupportedWritesAndOptions) {
 }
 TEST_F(MetaBypassTest, BackgroundBlockedDoesNotBlockSmallForegroundWrite) {
   ASSERT_NO_FATAL_FAILURE(Open());
-  std::mutex mutex;
-  std::condition_variable cv;
-  bool entered = false, release = false;
-  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Apply", [&](void*) {
-    std::unique_lock<std::mutex> lock(mutex);
-    entered = true;
-    cv.notify_all();
-    cv.wait(lock, [&] { return release; });
-  });
+  TestGate gate;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::Apply",
+                                        [&](void*) { gate.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   ASSERT_OK(db_->Put(WriteOptions(), "first", "value"));
   std::thread sync([&] { EXPECT_OK(db_->SyncBackup()); });
-  {
-    std::unique_lock<std::mutex> lock(mutex);
-    cv.wait(lock, [&] { return entered; });
-  }
+  gate.WaitUntilBlocked();
   ASSERT_OK(db_->Put(WriteOptions(), "second", "value"));
   Check("second", "value");
-  {
-    std::lock_guard<std::mutex> lock(mutex);
-    release = true;
-    cv.notify_all();
-  }
+  gate.Release();
   sync.join();
   SyncPoint::GetInstance()->DisableProcessing();
   ASSERT_OK(db_->SyncBackup());
+}
+TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
+  m_.queue_capacity = 32768;
+  m_.batch_bytes = 1;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  TestGate gate;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) { gate.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "first", "value"));
+  std::thread sync([&] { EXPECT_OK(db_->SyncBackup()); });
+  gate.WaitUntilBlocked();
+  // More WAL bytes than the entire queue: completion requires the mirror
+  // to drain while validation is blocked. Flush/compaction delete old files.
+  for (int i = 0; i < 1000; ++i) {
+    EXPECT_OK(db_->Put(WriteOptions(),
+                       std::string(128, 'k') + std::to_string(i),
+                       std::string(100, 'v')));
+  }
+  EXPECT_OK(db_->Flush(FlushOptions()));
+  EXPECT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  std::vector<std::string> files;
+  EXPECT_OK(fs_->GetChildren(m_.backup_dir, IOOptions(), &files, nullptr));
+  int points = 0;
+  for (const auto& f : files)
+    if (f.compare(0, 6, "point-") == 0) ++points;
+  EXPECT_LE(points, 3);
+  gate.Release();
+  sync.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("old", "retained");
+  Check(std::string(128, 'k') + "999", std::string(100, 'v'));
+}
+TEST_F(MetaBypassTest, MirrorFailureWhileValidatingDoesNotPublish) {
+  m_.batch_bytes = 1;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  std::string before;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+  TestGate gate;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) { gate.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "first", "value"));
+  std::thread sync([&] { EXPECT_TRUE(db_->SyncBackup().IsIOError()); });
+  gate.WaitUntilBlocked();
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplyStatus", [](void* arg) {
+        *static_cast<Status*>(arg) =
+            Status::IOError("mirror failed during validation");
+      });
+  EXPECT_OK(db_->Put(WriteOptions(), "second", "value"));
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  gate.Release();
+  sync.join();
+  EXPECT_TRUE(db_->Close().IsIOError());
+  SyncPoint::GetInstance()->DisableProcessing();
+  std::string after;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &after));
+  ASSERT_EQ(before, after);
+}
+TEST_F(MetaBypassTest, IncrementalValidationReusesPrefixesAndTables) {
+  o_.write_buffer_size = 4 * 1024 * 1024;
+  o_.disable_auto_compactions = true;
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (int i = 0; i < 100; ++i)
+    ASSERT_OK(
+        db_->Put(WriteOptions(), std::to_string(i), std::string(1024, 'v')));
+  ASSERT_OK(db_->SyncBackup());
+  auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  std::atomic<int> records{0}, tables{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::WalRecordValidated",
+                                        [&](void*) { ++records; });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TableValidated",
+                                        [&](void*) { ++tables; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "new", std::string(1024, 'n')));
+  ASSERT_OK(db_->SyncBackup());
+  auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  ASSERT_EQ(records.load(), 1);
+  ASSERT_GT(after.validated_blob_bytes, before.validated_blob_bytes);
+  ASSERT_LT(after.validated_blob_bytes - before.validated_blob_bytes, 4096);
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_GT(tables.load(), 0);
+  const int table_count = tables.load();
+  auto flushed = db_->GetBackupStats();
+  ASSERT_OK(flushed.error);
+  ASSERT_OK(db_->Put(WriteOptions(), "next", "tail"));
+  ASSERT_OK(db_->SyncBackup());
+  auto final = db_->GetBackupStats();
+  ASSERT_OK(final.error);
+  ASSERT_EQ(tables.load(), table_count);
+  ASSERT_GT(final.reused_tables, flushed.reused_tables);
+  // Exercise multiple validation-buffer reads and a zero-payload record,
+  // then verify their CRCs through the full offline recovery path.
+  ASSERT_OK(db_->Put(WriteOptions(), "large", std::string(200000, 'L')));
+  ASSERT_OK(db_->Put(WriteOptions(), "", ""));
+  ASSERT_OK(db_->SyncBackup());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("0", std::string(1024, 'v'));
+  Check("new", std::string(1024, 'n'));
+  Check("next", "tail");
+  Check("large", std::string(200000, 'L'));
+  Check("", "");
+}
+TEST_F(MetaBypassTest, IncrementalValidationRejectsNewCorruption) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "old", "valid"));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Put(WriteOptions(), "new", "damaged"));
+  std::vector<std::string> files;
+  ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &files, nullptr));
+  bool corrupted = false;
+  for (const auto& f : files) {
+    if (f.size() < 5 || f.substr(f.size() - 5) != ".blob") continue;
+    std::string bytes;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.data_dir + "/" + f, &bytes));
+    ASSERT_FALSE(bytes.empty());
+    bytes.back() ^= 1;
+    ASSERT_OK(metabypass::Write(fs_.get(), m_.data_dir + "/" + f, bytes));
+    corrupted = true;
+  }
+  ASSERT_TRUE(corrupted);
+  ASSERT_TRUE(db_->SyncBackup().IsCorruption());
+  ASSERT_FALSE(db_->Close().ok());
 }
 TEST_F(MetaBypassTest, QueueCapacityAndOrdering) { QueueScenario(false); }
 TEST_F(MetaBypassTest, MirrorFailureWakesBlockedProducer) {

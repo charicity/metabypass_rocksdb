@@ -1,0 +1,5057 @@
+{
+  "data_root": "/tmp/metabypass-pipeline-benchmark-9gl4icsl",
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/metabypass-scan-ablation-bin/baseline",
+      "sha256": "37c6b42c10ebf0cbc92c127ce5eaa52928b81493c8d0b3c7ccac02394189a3a5"
+    },
+    "pipeline": {
+      "path": "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+      "sha256": "cb91d8cc310fe06b39a4a7cb7dbea8aace3ae33029a37f1dd26b050fbb7464a0"
+    },
+    "incremental": {
+      "path": "/tmp/metabypass-scan-ablation-bin/async-incremental",
+      "sha256": "8a77199fbc44b219e59c6f84a3a56f99f38c76d526dd4557998851f830adabfe"
+    }
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-baseline/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.4164148010313511,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=18757 sync_us=47157 close_us=68362 backpressure_us=0 last_point_build_us=49270 last_point_lag_us=68053 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104422 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 18757,
+        "sync_us": 47157,
+        "close_us": 68362,
+        "backpressure_us": 0,
+        "last_point_build_us": 49270,
+        "last_point_lag_us": 68053,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104422
+      }
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-pipeline/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.3370011349907145,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=23494 sync_us=74571 close_us=94284 backpressure_us=0 last_point_build_us=74810 last_point_lag_us=93867 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104424 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 23494,
+        "sync_us": 74571,
+        "close_us": 94284,
+        "backpressure_us": 0,
+        "last_point_build_us": 74810,
+        "last_point_lag_us": 93867,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104424,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      }
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/warmup-incremental/backup",
+        "--num=1000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.34129347396083176,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=1000 foreground_us=24149 sync_us=83847 close_us=90425 backpressure_us=0 last_point_build_us=70980 last_point_lag_us=89878 queue_peak_bytes=178880 mirrored_bytes=63963 retained_index_bytes=104425 validated_blob_bytes=1058952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 1000,
+        "foreground_us": 24149,
+        "sync_us": 83847,
+        "close_us": 90425,
+        "backpressure_us": 0,
+        "last_point_build_us": 70980,
+        "last_point_lag_us": 89878,
+        "queue_peak_bytes": 178880,
+        "mirrored_bytes": 63963,
+        "retained_index_bytes": 104425,
+        "validated_blob_bytes": 1058952,
+        "reused_tables": 0
+      }
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8445707719656639,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=454933 sync_us=565250 close_us=696569 backpressure_us=0 last_point_build_us=320929 last_point_lag_us=663923 queue_peak_bytes=3743712 mirrored_bytes=2876871 retained_index_bytes=3975889 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 454933,
+        "sync_us": 565250,
+        "close_us": 696569,
+        "backpressure_us": 0,
+        "last_point_build_us": 320929,
+        "last_point_lag_us": 663923,
+        "queue_peak_bytes": 3743712,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "write_sync_close_us": 1716752,
+        "restore_us": 680103
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0225792200071737,
+      "exit": 0,
+      "stdout": "metabypass restore_us=680103 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 680103
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0145298569696024,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175553 sync_us=11 close_us=326434 backpressure_us=0 last_point_build_us=325733 last_point_lag_us=326026 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175553,
+        "sync_us": 11,
+        "close_us": 326434,
+        "backpressure_us": 0,
+        "last_point_build_us": 325733,
+        "last_point_lag_us": 326026,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.1865241290070117,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=643832 sync_us=632514 close_us=764974 backpressure_us=0 last_point_build_us=348044 last_point_lag_us=732190 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 643832,
+        "sync_us": 632514,
+        "close_us": 764974,
+        "backpressure_us": 0,
+        "last_point_build_us": 348044,
+        "last_point_lag_us": 732190,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 2041320,
+        "restore_us": 723906
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.087893330026418,
+      "exit": 0,
+      "stdout": "metabypass restore_us=723906 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 723906
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0529172379756346,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175104 sync_us=15 close_us=343036 backpressure_us=0 last_point_build_us=342224 last_point_lag_us=342534 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175104,
+        "sync_us": 15,
+        "close_us": 343036,
+        "backpressure_us": 0,
+        "last_point_build_us": 342224,
+        "last_point_lag_us": 342534,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.311452497029677,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=564226 sync_us=202391 close_us=404432 backpressure_us=0 last_point_build_us=278035 last_point_lag_us=371500 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 564226,
+        "sync_us": 202391,
+        "close_us": 404432,
+        "backpressure_us": 0,
+        "last_point_build_us": 278035,
+        "last_point_lag_us": 371500,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1171049,
+        "restore_us": 689908
+      },
+      "scenario": "50k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0311047609429806,
+      "exit": 0,
+      "stdout": "metabypass restore_us=689908 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 689908
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7693737120134756,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176097 sync_us=15 close_us=66366 backpressure_us=0 last_point_build_us=65591 last_point_lag_us=65872 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296153 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176097,
+        "sync_us": 15,
+        "close_us": 66366,
+        "backpressure_us": 0,
+        "last_point_build_us": 65591,
+        "last_point_lag_us": 65872,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296153,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_default",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.215502121951431,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=614987 sync_us=691376 close_us=766928 backpressure_us=0 last_point_build_us=352003 last_point_lag_us=732796 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 614987,
+        "sync_us": 691376,
+        "close_us": 766928,
+        "backpressure_us": 0,
+        "last_point_build_us": 352003,
+        "last_point_lag_us": 732796,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 2073291,
+        "restore_us": 698335
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0631870129727758,
+      "exit": 0,
+      "stdout": "metabypass restore_us=698335 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 698335
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0745710729970597,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174951 sync_us=18 close_us=349394 backpressure_us=0 last_point_build_us=348405 last_point_lag_us=348735 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174951,
+        "sync_us": 18,
+        "close_us": 349394,
+        "backpressure_us": 0,
+        "last_point_build_us": 348405,
+        "last_point_lag_us": 348735,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3512355419807136,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=614769 sync_us=185771 close_us=404559 backpressure_us=0 last_point_build_us=277980 last_point_lag_us=371605 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 614769,
+        "sync_us": 185771,
+        "close_us": 404559,
+        "backpressure_us": 0,
+        "last_point_build_us": 277980,
+        "last_point_lag_us": 371605,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1205099,
+        "restore_us": 681761
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0200023799552582,
+      "exit": 0,
+      "stdout": "metabypass restore_us=681761 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 681761
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7655994449742138,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171957 sync_us=15 close_us=66735 backpressure_us=0 last_point_build_us=65790 last_point_lag_us=66112 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171957,
+        "sync_us": 15,
+        "close_us": 66735,
+        "backpressure_us": 0,
+        "last_point_build_us": 65790,
+        "last_point_lag_us": 66112,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.7686480900156312,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=416837 sync_us=541514 close_us=692447 backpressure_us=0 last_point_build_us=321010 last_point_lag_us=656169 queue_peak_bytes=3701852 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 416837,
+        "sync_us": 541514,
+        "close_us": 692447,
+        "backpressure_us": 0,
+        "last_point_build_us": 321010,
+        "last_point_lag_us": 656169,
+        "queue_peak_bytes": 3701852,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1650798,
+        "restore_us": 675373
+      },
+      "scenario": "50k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0165494229877368,
+      "exit": 0,
+      "stdout": "metabypass restore_us=675373 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 675373
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0144388530170545,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175302 sync_us=11 close_us=325008 backpressure_us=0 last_point_build_us=324205 last_point_lag_us=324506 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175302,
+        "sync_us": 11,
+        "close_us": 325008,
+        "backpressure_us": 0,
+        "last_point_build_us": 324205,
+        "last_point_lag_us": 324506,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_default",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3555245110183023,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=610556 sync_us=190049 close_us=412177 backpressure_us=0 last_point_build_us=279800 last_point_lag_us=377980 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 610556,
+        "sync_us": 190049,
+        "close_us": 412177,
+        "backpressure_us": 0,
+        "last_point_build_us": 279800,
+        "last_point_lag_us": 377980,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1212782,
+        "restore_us": 688983
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0336333710001782,
+      "exit": 0,
+      "stdout": "metabypass restore_us=688983 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 688983
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.769714730035048,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173746 sync_us=17 close_us=66909 backpressure_us=0 last_point_build_us=65952 last_point_lag_us=66289 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173746,
+        "sync_us": 17,
+        "close_us": 66909,
+        "backpressure_us": 0,
+        "last_point_build_us": 65952,
+        "last_point_lag_us": 66289,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8724054159829393,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=428476 sync_us=613669 close_us=704623 backpressure_us=0 last_point_build_us=325742 last_point_lag_us=671319 queue_peak_bytes=4129020 mirrored_bytes=2876871 retained_index_bytes=3975885 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 428476,
+        "sync_us": 613669,
+        "close_us": 704623,
+        "backpressure_us": 0,
+        "last_point_build_us": 325742,
+        "last_point_lag_us": 671319,
+        "queue_peak_bytes": 4129020,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975885,
+        "write_sync_close_us": 1746768,
+        "restore_us": 702356
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0414722500136122,
+      "exit": 0,
+      "stdout": "metabypass restore_us=702356 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 702356
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0187157110194676,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175103 sync_us=12 close_us=323358 backpressure_us=0 last_point_build_us=322598 last_point_lag_us=322901 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175103,
+        "sync_us": 12,
+        "close_us": 323358,
+        "backpressure_us": 0,
+        "last_point_build_us": 322598,
+        "last_point_lag_us": 322901,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8790529319667257,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=586643 sync_us=385622 close_us=761062 backpressure_us=0 last_point_build_us=344553 last_point_lag_us=726834 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 586643,
+        "sync_us": 385622,
+        "close_us": 761062,
+        "backpressure_us": 0,
+        "last_point_build_us": 344553,
+        "last_point_lag_us": 726834,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1733327,
+        "restore_us": 708347
+      },
+      "scenario": "50k_default",
+      "trial": 2
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0867119010072201,
+      "exit": 0,
+      "stdout": "metabypass restore_us=708347 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 708347
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0822837339947,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173842 sync_us=18 close_us=352532 backpressure_us=0 last_point_build_us=351684 last_point_lag_us=352019 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173842,
+        "sync_us": 18,
+        "close_us": 352532,
+        "backpressure_us": 0,
+        "last_point_build_us": 351684,
+        "last_point_lag_us": 352019,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_default",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8407348479959182,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=429416 sync_us=582877 close_us=706553 backpressure_us=0 last_point_build_us=323581 last_point_lag_us=675458 queue_peak_bytes=3843266 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 429416,
+        "sync_us": 582877,
+        "close_us": 706553,
+        "backpressure_us": 0,
+        "last_point_build_us": 323581,
+        "last_point_lag_us": 675458,
+        "queue_peak_bytes": 3843266,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1718846,
+        "restore_us": 674039
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0113162100315094,
+      "exit": 0,
+      "stdout": "metabypass restore_us=674039 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 674039
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.021466110018082,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=177709 sync_us=12 close_us=320815 backpressure_us=0 last_point_build_us=320034 last_point_lag_us=320334 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 177709,
+        "sync_us": 12,
+        "close_us": 320815,
+        "backpressure_us": 0,
+        "last_point_build_us": 320034,
+        "last_point_lag_us": 320334,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.172554868971929,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=596551 sync_us=667671 close_us=744412 backpressure_us=0 last_point_build_us=337469 last_point_lag_us=710057 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 596551,
+        "sync_us": 667671,
+        "close_us": 744412,
+        "backpressure_us": 0,
+        "last_point_build_us": 337469,
+        "last_point_lag_us": 710057,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 2008634,
+        "restore_us": 689573
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0480679390020669,
+      "exit": 0,
+      "stdout": "metabypass restore_us=689573 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 689573
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0433282870217226,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175900 sync_us=18 close_us=342980 backpressure_us=0 last_point_build_us=342085 last_point_lag_us=342420 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175900,
+        "sync_us": 18,
+        "close_us": 342980,
+        "backpressure_us": 0,
+        "last_point_build_us": 342085,
+        "last_point_lag_us": 342420,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3528237220016308,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=623016 sync_us=189447 close_us=398474 backpressure_us=0 last_point_build_us=273997 last_point_lag_us=365473 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 623016,
+        "sync_us": 189447,
+        "close_us": 398474,
+        "backpressure_us": 0,
+        "last_point_build_us": 273997,
+        "last_point_lag_us": 365473,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1210937,
+        "restore_us": 665346
+      },
+      "scenario": "50k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.006149378954433,
+      "exit": 0,
+      "stdout": "metabypass restore_us=665346 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 665346
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7668632610002533,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173983 sync_us=14 close_us=67056 backpressure_us=0 last_point_build_us=66196 last_point_lag_us=66519 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173983,
+        "sync_us": 14,
+        "close_us": 67056,
+        "backpressure_us": 0,
+        "last_point_build_us": 66196,
+        "last_point_lag_us": 66519,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_default",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.9053211399586871,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=591521 sync_us=398681 close_us=775169 backpressure_us=0 last_point_build_us=348158 last_point_lag_us=742694 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975888 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 591521,
+        "sync_us": 398681,
+        "close_us": 775169,
+        "backpressure_us": 0,
+        "last_point_build_us": 348158,
+        "last_point_lag_us": 742694,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1765371,
+        "restore_us": 689306
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0821914580301382,
+      "exit": 0,
+      "stdout": "metabypass restore_us=689306 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 689306
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0530263289692812,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171824 sync_us=15 close_us=349034 backpressure_us=0 last_point_build_us=348167 last_point_lag_us=348484 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171824,
+        "sync_us": 15,
+        "close_us": 349034,
+        "backpressure_us": 0,
+        "last_point_build_us": 348167,
+        "last_point_lag_us": 348484,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.3525275239953771,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=585052 sync_us=219571 close_us=406434 backpressure_us=0 last_point_build_us=276079 last_point_lag_us=373536 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975887 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 585052,
+        "sync_us": 219571,
+        "close_us": 406434,
+        "backpressure_us": 0,
+        "last_point_build_us": 276079,
+        "last_point_lag_us": 373536,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975887,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1211057,
+        "restore_us": 666815
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0060998339904472,
+      "exit": 0,
+      "stdout": "metabypass restore_us=666815 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 666815
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 0.7597607169882394,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171854 sync_us=17 close_us=66619 backpressure_us=0 last_point_build_us=65804 last_point_lag_us=66141 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171854,
+        "sync_us": 17,
+        "close_us": 66619,
+        "backpressure_us": 0,
+        "last_point_build_us": 65804,
+        "last_point_lag_us": 66141,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.8367316229850985,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=433122 sync_us=589291 close_us=686288 backpressure_us=0 last_point_build_us=316915 last_point_lag_us=653347 queue_peak_bytes=3779566 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 433122,
+        "sync_us": 589291,
+        "close_us": 686288,
+        "backpressure_us": 0,
+        "last_point_build_us": 316915,
+        "last_point_lag_us": 653347,
+        "queue_peak_bytes": 3779566,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 1708701,
+        "restore_us": 664891
+      },
+      "scenario": "50k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0017314340220764,
+      "exit": 0,
+      "stdout": "metabypass restore_us=664891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 664891
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_default-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 1.0109714950085618,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176568 sync_us=10 close_us=324051 backpressure_us=0 last_point_build_us=323253 last_point_lag_us=323528 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176568,
+        "sync_us": 10,
+        "close_us": 324051,
+        "backpressure_us": 0,
+        "last_point_build_us": 323253,
+        "last_point_lag_us": 323528,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      },
+      "scenario": "50k_default",
+      "trial": 4,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.629232807958033,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1812140 sync_us=2319042 close_us=2368531 backpressure_us=0 last_point_build_us=1124847 last_point_lag_us=2320469 queue_peak_bytes=16754108 mirrored_bytes=11631177 retained_index_bytes=15983626 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1812140,
+        "sync_us": 2319042,
+        "close_us": 2368531,
+        "backpressure_us": 0,
+        "last_point_build_us": 1124847,
+        "last_point_lag_us": 2320469,
+        "queue_peak_bytes": 16754108,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "write_sync_close_us": 6499713,
+        "restore_us": 2096077
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2465089339530095,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2096077 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2096077
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4131495629553683,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=677143 sync_us=11 close_us=1118685 backpressure_us=0 last_point_build_us=1117872 last_point_lag_us=1118197 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056432 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 677143,
+        "sync_us": 11,
+        "close_us": 1118685,
+        "backpressure_us": 0,
+        "last_point_build_us": 1117872,
+        "last_point_lag_us": 1118197,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056432
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.753037180984393,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2656995 sync_us=1534098 close_us=2416229 backpressure_us=0 last_point_build_us=1161798 last_point_lag_us=2366302 queue_peak_bytes=3285695 mirrored_bytes=11631177 retained_index_bytes=15983620 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2656995,
+        "sync_us": 1534098,
+        "close_us": 2416229,
+        "backpressure_us": 0,
+        "last_point_build_us": 1161798,
+        "last_point_lag_us": 2366302,
+        "queue_peak_bytes": 3285695,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983620,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 6607322,
+        "restore_us": 2110651
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.27138534799451,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2110651 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2110651
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.470522087998688,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=681094 sync_us=22 close_us=1162073 backpressure_us=0 last_point_build_us=1161027 last_point_lag_us=1161363 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056432 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 681094,
+        "sync_us": 22,
+        "close_us": 1162073,
+        "backpressure_us": 0,
+        "last_point_build_us": 1161027,
+        "last_point_lag_us": 1161363,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056432,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 4.079772808996495,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2632294 sync_us=229761 close_us=1073387 backpressure_us=0 last_point_build_us=911260 last_point_lag_us=1018658 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2632294,
+        "sync_us": 229761,
+        "close_us": 1073387,
+        "backpressure_us": 0,
+        "last_point_build_us": 911260,
+        "last_point_lag_us": 1018658,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3935442,
+        "restore_us": 2069648
+      },
+      "scenario": "200k_default",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.194180488004349,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2069648 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2069648
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-0-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.294085667002946,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=669531 sync_us=19 close_us=68399 backpressure_us=0 last_point_build_us=67506 last_point_lag_us=67860 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 669531,
+        "sync_us": 19,
+        "close_us": 68399,
+        "backpressure_us": 0,
+        "last_point_build_us": 67506,
+        "last_point_lag_us": 67860,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      },
+      "scenario": "200k_default",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.535024754004553,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2550710 sync_us=1462834 close_us=2379520 backpressure_us=0 last_point_build_us=1132683 last_point_lag_us=2326942 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2550710,
+        "sync_us": 1462834,
+        "close_us": 2379520,
+        "backpressure_us": 0,
+        "last_point_build_us": 1132683,
+        "last_point_lag_us": 2326942,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 6393064,
+        "restore_us": 2095420
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2592234819894657,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2095420 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2095420
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4795784909510985,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=666755 sync_us=16 close_us=1170241 backpressure_us=0 last_point_build_us=1169172 last_point_lag_us=1169510 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 666755,
+        "sync_us": 16,
+        "close_us": 1170241,
+        "backpressure_us": 0,
+        "last_point_build_us": 1169172,
+        "last_point_lag_us": 1169510,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 4.067115499987267,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2559750 sync_us=300504 close_us=1057894 backpressure_us=0 last_point_build_us=903521 last_point_lag_us=1005842 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983621 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2559750,
+        "sync_us": 300504,
+        "close_us": 1057894,
+        "backpressure_us": 0,
+        "last_point_build_us": 903521,
+        "last_point_lag_us": 1005842,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983621,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3918148,
+        "restore_us": 2073112
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.214908568013925,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2073112 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2073112
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.304640542017296,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=667980 sync_us=18 close_us=67920 backpressure_us=0 last_point_build_us=66998 last_point_lag_us=67371 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056432 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 667980,
+        "sync_us": 18,
+        "close_us": 67920,
+        "backpressure_us": 0,
+        "last_point_build_us": 66998,
+        "last_point_lag_us": 67371,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056432,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.487336999038234,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1814798 sync_us=2209784 close_us=2336611 backpressure_us=0 last_point_build_us=1113786 last_point_lag_us=2289034 queue_peak_bytes=15647651 mirrored_bytes=11631177 retained_index_bytes=15983623 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1814798,
+        "sync_us": 2209784,
+        "close_us": 2336611,
+        "backpressure_us": 0,
+        "last_point_build_us": 1113786,
+        "last_point_lag_us": 2289034,
+        "queue_peak_bytes": 15647651,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983623,
+        "write_sync_close_us": 6361193,
+        "restore_us": 2064462
+      },
+      "scenario": "200k_default",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2101871710037813,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2064462 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2064462
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-1-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.389216993993614,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=683885 sync_us=11 close_us=1112352 backpressure_us=0 last_point_build_us=1111529 last_point_lag_us=1111845 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056434 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 683885,
+        "sync_us": 11,
+        "close_us": 1112352,
+        "backpressure_us": 0,
+        "last_point_build_us": 1111529,
+        "last_point_lag_us": 1111845,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056434
+      },
+      "scenario": "200k_default",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 4.15673882397823,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2605772 sync_us=318552 close_us=1084225 backpressure_us=0 last_point_build_us=929840 last_point_lag_us=1032272 queue_peak_bytes=3146166 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2605772,
+        "sync_us": 318552,
+        "close_us": 1084225,
+        "backpressure_us": 0,
+        "last_point_build_us": 929840,
+        "last_point_lag_us": 1032272,
+        "queue_peak_bytes": 3146166,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 4008549,
+        "restore_us": 2088822
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2162789340363815,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2088822 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2088822
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3252147100283764,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=670085 sync_us=17 close_us=67862 backpressure_us=0 last_point_build_us=66776 last_point_lag_us=67139 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 670085,
+        "sync_us": 17,
+        "close_us": 67862,
+        "backpressure_us": 0,
+        "last_point_build_us": 66776,
+        "last_point_lag_us": 67139,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.655223119014408,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1775911 sync_us=2364649 close_us=2396714 backpressure_us=0 last_point_build_us=1147842 last_point_lag_us=2347612 queue_peak_bytes=16334973 mirrored_bytes=11631177 retained_index_bytes=15983624 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1775911,
+        "sync_us": 2364649,
+        "close_us": 2396714,
+        "backpressure_us": 0,
+        "last_point_build_us": 1147842,
+        "last_point_lag_us": 2347612,
+        "queue_peak_bytes": 16334973,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "write_sync_close_us": 6537274,
+        "restore_us": 2071384
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.2036219160072505,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2071384 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2071384
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.403812298027333,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=679150 sync_us=11 close_us=1117291 backpressure_us=0 last_point_build_us=1116464 last_point_lag_us=1116765 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 679150,
+        "sync_us": 11,
+        "close_us": 1117291,
+        "backpressure_us": 0,
+        "last_point_build_us": 1116464,
+        "last_point_lag_us": 1116765,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.687390740029514,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2456422 sync_us=1686939 close_us=2394690 backpressure_us=0 last_point_build_us=1146759 last_point_lag_us=2351420 queue_peak_bytes=3146166 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2456422,
+        "sync_us": 1686939,
+        "close_us": 2394690,
+        "backpressure_us": 0,
+        "last_point_build_us": 1146759,
+        "last_point_lag_us": 2351420,
+        "queue_peak_bytes": 3146166,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 6538051,
+        "restore_us": 2112473
+      },
+      "scenario": "200k_default",
+      "trial": 2
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.291111802973319,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2112473 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2112473
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-2-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.4376708999625407,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=682406 sync_us=18 close_us=1136138 backpressure_us=0 last_point_build_us=1135048 last_point_lag_us=1135393 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 682406,
+        "sync_us": 18,
+        "close_us": 1136138,
+        "backpressure_us": 0,
+        "last_point_build_us": 1135048,
+        "last_point_lag_us": 1135393,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "200k_default",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.629851567966398,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1804658 sync_us=2348063 close_us=2350857 backpressure_us=0 last_point_build_us=1117841 last_point_lag_us=2302624 queue_peak_bytes=17104357 mirrored_bytes=11631177 retained_index_bytes=15983623 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1804658,
+        "sync_us": 2348063,
+        "close_us": 2350857,
+        "backpressure_us": 0,
+        "last_point_build_us": 1117841,
+        "last_point_lag_us": 2302624,
+        "queue_peak_bytes": 17104357,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983623,
+        "write_sync_close_us": 6503578,
+        "restore_us": 2091068
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.247141257976182,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2091068 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2091068
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3660636069835164,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=679781 sync_us=13 close_us=1102350 backpressure_us=0 last_point_build_us=1101466 last_point_lag_us=1101788 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 679781,
+        "sync_us": 13,
+        "close_us": 1102350,
+        "backpressure_us": 0,
+        "last_point_build_us": 1101466,
+        "last_point_lag_us": 1101788,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.549759941990487,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2520550 sync_us=1514757 close_us=2372650 backpressure_us=0 last_point_build_us=1130762 last_point_lag_us=2321124 queue_peak_bytes=3285695 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2520550,
+        "sync_us": 1514757,
+        "close_us": 2372650,
+        "backpressure_us": 0,
+        "last_point_build_us": 1130762,
+        "last_point_lag_us": 2321124,
+        "queue_peak_bytes": 3285695,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 6407957,
+        "restore_us": 2070628
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.219259044039063,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2070628 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2070628
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3956666269805282,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=671168 sync_us=18 close_us=1125745 backpressure_us=0 last_point_build_us=1124754 last_point_lag_us=1125100 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056434 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 671168,
+        "sync_us": 18,
+        "close_us": 1125745,
+        "backpressure_us": 0,
+        "last_point_build_us": 1124754,
+        "last_point_lag_us": 1125100,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056434,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.9544093380100094,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2470918 sync_us=283338 close_us=1054381 backpressure_us=0 last_point_build_us=909824 last_point_lag_us=1010352 queue_peak_bytes=2097444 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2470918,
+        "sync_us": 283338,
+        "close_us": 1054381,
+        "backpressure_us": 0,
+        "last_point_build_us": 909824,
+        "last_point_lag_us": 1010352,
+        "queue_peak_bytes": 2097444,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3808637,
+        "restore_us": 2072114
+      },
+      "scenario": "200k_default",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.206745208008215,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2072114 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2072114
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-3-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.3071644059964456,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=670445 sync_us=19 close_us=67384 backpressure_us=0 last_point_build_us=66485 last_point_lag_us=66849 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 670445,
+        "sync_us": 19,
+        "close_us": 67384,
+        "backpressure_us": 0,
+        "last_point_build_us": 66485,
+        "last_point_lag_us": 66849,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      },
+      "scenario": "200k_default",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.367357028997503,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2546488 sync_us=1289392 close_us=2385740 backpressure_us=0 last_point_build_us=1139893 last_point_lag_us=2334188 queue_peak_bytes=3285695 mirrored_bytes=11631177 retained_index_bytes=15983626 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2546488,
+        "sync_us": 1289392,
+        "close_us": 2385740,
+        "backpressure_us": 0,
+        "last_point_build_us": 1139893,
+        "last_point_lag_us": 2334188,
+        "queue_peak_bytes": 3285695,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983626,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 6221620,
+        "restore_us": 2036988
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.1775584549759515,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2036988 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2036988
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-pipeline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3918684539967217,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=676419 sync_us=21 close_us=1119434 backpressure_us=0 last_point_build_us=1118434 last_point_lag_us=1118778 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056438 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 676419,
+        "sync_us": 21,
+        "close_us": 1119434,
+        "backpressure_us": 0,
+        "last_point_build_us": 1118434,
+        "last_point_lag_us": 1118778,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056438,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.7453576349653304,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=2251245 sync_us=280793 close_us=1065481 backpressure_us=0 last_point_build_us=916940 last_point_lag_us=1013695 queue_peak_bytes=3146166 mirrored_bytes=11631177 retained_index_bytes=15983624 validated_blob_bytes=212288952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 2251245,
+        "sync_us": 280793,
+        "close_us": 1065481,
+        "backpressure_us": 0,
+        "last_point_build_us": 916940,
+        "last_point_lag_us": 1013695,
+        "queue_peak_bytes": 3146166,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983624,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 0,
+        "write_sync_close_us": 3597519,
+        "restore_us": 2029280
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.1571952100493945,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2029280 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2029280
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-incremental/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 2.292401387996506,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=668237 sync_us=17 close_us=67860 backpressure_us=0 last_point_build_us=67007 last_point_lag_us=67373 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 validated_blob_bytes=212288952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 668237,
+        "sync_us": 17,
+        "close_us": 67860,
+        "backpressure_us": 0,
+        "last_point_build_us": 67007,
+        "last_point_lag_us": 67373,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436,
+        "validated_blob_bytes": 212288952,
+        "reused_tables": 1
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 6.519046143977903,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=200000 foreground_us=1855221 sync_us=2236563 close_us=2296321 backpressure_us=0 last_point_build_us=1093867 last_point_lag_us=2248566 queue_peak_bytes=15724075 mirrored_bytes=11631177 retained_index_bytes=15983625 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 1855221,
+        "sync_us": 2236563,
+        "close_us": 2296321,
+        "backpressure_us": 0,
+        "last_point_build_us": 1093867,
+        "last_point_lag_us": 2248566,
+        "queue_peak_bytes": 15724075,
+        "mirrored_bytes": 11631177,
+        "retained_index_bytes": 15983625,
+        "write_sync_close_us": 6388105,
+        "restore_us": 2043362
+      },
+      "scenario": "200k_default",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.1755756710190326,
+      "exit": 0,
+      "stdout": "metabypass restore_us=2043362 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 2043362
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/200k_default-4-baseline/backup",
+        "--num=200000",
+        "--value_size=1024",
+        "--sync=false"
+      ],
+      "elapsed_seconds": 3.3872039459529333,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=200000 foreground_us=675585 sync_us=14 close_us=1122808 backpressure_us=0 last_point_build_us=1121897 last_point_lag_us=1122231 queue_peak_bytes=12922 mirrored_bytes=9290 retained_index_bytes=13056436 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 200000,
+        "foreground_us": 675585,
+        "sync_us": 14,
+        "close_us": 1122808,
+        "backpressure_us": 0,
+        "last_point_build_us": 1121897,
+        "last_point_lag_us": 1122231,
+        "queue_peak_bytes": 12922,
+        "mirrored_bytes": 9290,
+        "retained_index_bytes": 13056436
+      },
+      "scenario": "200k_default",
+      "trial": 4,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.182257976033725,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=749986 sync_us=616552 close_us=694101 backpressure_us=324890 last_point_build_us=323480 last_point_lag_us=659803 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975888 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 749986,
+        "sync_us": 616552,
+        "close_us": 694101,
+        "backpressure_us": 324890,
+        "last_point_build_us": 323480,
+        "last_point_lag_us": 659803,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "write_sync_close_us": 2060639,
+        "restore_us": 663874
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0032790649565868,
+      "exit": 0,
+      "stdout": "metabypass restore_us=663874 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 663874
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0053985790000297,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174535 sync_us=10 close_us=317987 backpressure_us=0 last_point_build_us=317141 last_point_lag_us=317473 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174535,
+        "sync_us": 10,
+        "close_us": 317987,
+        "backpressure_us": 0,
+        "last_point_build_us": 317141,
+        "last_point_lag_us": 317473,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.023496099980548,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=637187 sync_us=489481 close_us=750283 backpressure_us=0 last_point_build_us=342240 last_point_lag_us=717288 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 637187,
+        "sync_us": 489481,
+        "close_us": 750283,
+        "backpressure_us": 0,
+        "last_point_build_us": 342240,
+        "last_point_lag_us": 717288,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1876951,
+        "restore_us": 691321
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0554363899864256,
+      "exit": 0,
+      "stdout": "metabypass restore_us=691321 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 691321
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.055587766051758,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174694 sync_us=22 close_us=344251 backpressure_us=0 last_point_build_us=343301 last_point_lag_us=343667 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174694,
+        "sync_us": 22,
+        "close_us": 344251,
+        "backpressure_us": 0,
+        "last_point_build_us": 343301,
+        "last_point_lag_us": 343667,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.4237401639693417,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=601252 sync_us=255482 close_us=410341 backpressure_us=0 last_point_build_us=277918 last_point_lag_us=376470 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 601252,
+        "sync_us": 255482,
+        "close_us": 410341,
+        "backpressure_us": 0,
+        "last_point_build_us": 277918,
+        "last_point_lag_us": 376470,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1267075,
+        "restore_us": 637396
+      },
+      "scenario": "50k_pressure",
+      "trial": 0
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9628913189517334,
+      "exit": 0,
+      "stdout": "metabypass restore_us=637396 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 637396
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-0-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7468840410001576,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=164159 sync_us=17 close_us=66387 backpressure_us=0 last_point_build_us=65582 last_point_lag_us=65906 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 164159,
+        "sync_us": 17,
+        "close_us": 66387,
+        "backpressure_us": 0,
+        "last_point_build_us": 65582,
+        "last_point_lag_us": 65906,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_pressure",
+      "trial": 0,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1081355119822547,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=618979 sync_us=583231 close_us=764624 backpressure_us=0 last_point_build_us=345751 last_point_lag_us=731314 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975887 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 618979,
+        "sync_us": 583231,
+        "close_us": 764624,
+        "backpressure_us": 0,
+        "last_point_build_us": 345751,
+        "last_point_lag_us": 731314,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975887,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1966834,
+        "restore_us": 672584
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0250182010349818,
+      "exit": 0,
+      "stdout": "metabypass restore_us=672584 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 672584
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0431049710023217,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173020 sync_us=15 close_us=343217 backpressure_us=0 last_point_build_us=342410 last_point_lag_us=342740 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173020,
+        "sync_us": 15,
+        "close_us": 343217,
+        "backpressure_us": 0,
+        "last_point_build_us": 342410,
+        "last_point_lag_us": 342740,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.3811975920107216,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=637095 sync_us=195523 close_us=402401 backpressure_us=0 last_point_build_us=272048 last_point_lag_us=369176 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 637095,
+        "sync_us": 195523,
+        "close_us": 402401,
+        "backpressure_us": 0,
+        "last_point_build_us": 272048,
+        "last_point_lag_us": 369176,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1235019,
+        "restore_us": 661923
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9924935930175707,
+      "exit": 0,
+      "stdout": "metabypass restore_us=661923 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 661923
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7647061449824832,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=174744 sync_us=16 close_us=65371 backpressure_us=0 last_point_build_us=64537 last_point_lag_us=64859 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 174744,
+        "sync_us": 16,
+        "close_us": 65371,
+        "backpressure_us": 0,
+        "last_point_build_us": 64537,
+        "last_point_lag_us": 64859,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1727976289694197,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=753389 sync_us=606956 close_us=688371 backpressure_us=315454 last_point_build_us=315442 last_point_lag_us=655000 queue_peak_bytes=2097088 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 753389,
+        "sync_us": 606956,
+        "close_us": 688371,
+        "backpressure_us": 315454,
+        "last_point_build_us": 315442,
+        "last_point_lag_us": 655000,
+        "queue_peak_bytes": 2097088,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 2048716,
+        "restore_us": 660655
+      },
+      "scenario": "50k_pressure",
+      "trial": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9961352489772253,
+      "exit": 0,
+      "stdout": "metabypass restore_us=660655 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 660655
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-1-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0051217850414105,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=176571 sync_us=13 close_us=319837 backpressure_us=0 last_point_build_us=318998 last_point_lag_us=319294 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 176571,
+        "sync_us": 13,
+        "close_us": 319837,
+        "backpressure_us": 0,
+        "last_point_build_us": 318998,
+        "last_point_lag_us": 319294,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_pressure",
+      "trial": 1,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.3261526789865457,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=575172 sync_us=195287 close_us=404634 backpressure_us=0 last_point_build_us=272022 last_point_lag_us=369622 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 575172,
+        "sync_us": 195287,
+        "close_us": 404634,
+        "backpressure_us": 0,
+        "last_point_build_us": 272022,
+        "last_point_lag_us": 369622,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1175093,
+        "restore_us": 663193
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.003323117038235,
+      "exit": 0,
+      "stdout": "metabypass restore_us=663193 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 663193
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7588865410070866,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173038 sync_us=17 close_us=67440 backpressure_us=0 last_point_build_us=66571 last_point_lag_us=66914 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173038,
+        "sync_us": 17,
+        "close_us": 67440,
+        "backpressure_us": 0,
+        "last_point_build_us": 66571,
+        "last_point_lag_us": 66914,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1923627119977027,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=773536 sync_us=607206 close_us=687843 backpressure_us=322519 last_point_build_us=315572 last_point_lag_us=654624 queue_peak_bytes=2097088 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 773536,
+        "sync_us": 607206,
+        "close_us": 687843,
+        "backpressure_us": 322519,
+        "last_point_build_us": 315572,
+        "last_point_lag_us": 654624,
+        "queue_peak_bytes": 2097088,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2068585,
+        "restore_us": 650453
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.967901255004108,
+      "exit": 0,
+      "stdout": "metabypass restore_us=650453 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 650453
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.990403025993146,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=175519 sync_us=12 close_us=314950 backpressure_us=0 last_point_build_us=314212 last_point_lag_us=314486 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 175519,
+        "sync_us": 12,
+        "close_us": 314950,
+        "backpressure_us": 0,
+        "last_point_build_us": 314212,
+        "last_point_lag_us": 314486,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.0748018879676238,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=569213 sync_us=615021 close_us=753048 backpressure_us=0 last_point_build_us=340225 last_point_lag_us=719523 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975889 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 569213,
+        "sync_us": 615021,
+        "close_us": 753048,
+        "backpressure_us": 0,
+        "last_point_build_us": 340225,
+        "last_point_lag_us": 719523,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975889,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1937282,
+        "restore_us": 668698
+      },
+      "scenario": "50k_pressure",
+      "trial": 2
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0092822009464726,
+      "exit": 0,
+      "stdout": "metabypass restore_us=668698 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 668698
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-2-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0341314219986089,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=164358 sync_us=15 close_us=344384 backpressure_us=0 last_point_build_us=343432 last_point_lag_us=343743 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 164358,
+        "sync_us": 15,
+        "close_us": 344384,
+        "backpressure_us": 0,
+        "last_point_build_us": 343432,
+        "last_point_lag_us": 343743,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_pressure",
+      "trial": 2,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.244091543951072,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=816480 sync_us=617910 close_us=688205 backpressure_us=335380 last_point_build_us=312705 last_point_lag_us=648637 queue_peak_bytes=2097147 mirrored_bytes=2876871 retained_index_bytes=3975890 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 816480,
+        "sync_us": 617910,
+        "close_us": 688205,
+        "backpressure_us": 335380,
+        "last_point_build_us": 312705,
+        "last_point_lag_us": 648637,
+        "queue_peak_bytes": 2097147,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "write_sync_close_us": 2122595,
+        "restore_us": 655524
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.986508606991265,
+      "exit": 0,
+      "stdout": "metabypass restore_us=655524 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 655524
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.01129045401467,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171689 sync_us=12 close_us=322908 backpressure_us=0 last_point_build_us=322154 last_point_lag_us=322446 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296157 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171689,
+        "sync_us": 12,
+        "close_us": 322908,
+        "backpressure_us": 0,
+        "last_point_build_us": 322154,
+        "last_point_lag_us": 322446,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296157
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.0849545749952085,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=601920 sync_us=594593 close_us=744278 backpressure_us=0 last_point_build_us=337987 last_point_lag_us=709362 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975891 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 601920,
+        "sync_us": 594593,
+        "close_us": 744278,
+        "backpressure_us": 0,
+        "last_point_build_us": 337987,
+        "last_point_lag_us": 709362,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1940791,
+        "restore_us": 689711
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0487159219919704,
+      "exit": 0,
+      "stdout": "metabypass restore_us=689711 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 689711
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0434355239849538,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=171526 sync_us=15 close_us=338888 backpressure_us=0 last_point_build_us=337875 last_point_lag_us=338223 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 171526,
+        "sync_us": 15,
+        "close_us": 338888,
+        "backpressure_us": 0,
+        "last_point_build_us": 337875,
+        "last_point_lag_us": 338223,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.4112784870085306,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=671452 sync_us=191218 close_us=404605 backpressure_us=0 last_point_build_us=272151 last_point_lag_us=371604 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 671452,
+        "sync_us": 191218,
+        "close_us": 404605,
+        "backpressure_us": 0,
+        "last_point_build_us": 272151,
+        "last_point_lag_us": 371604,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1267275,
+        "restore_us": 658622
+      },
+      "scenario": "50k_pressure",
+      "trial": 3
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9927028550300747,
+      "exit": 0,
+      "stdout": "metabypass restore_us=658622 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 658622
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-3-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7571806050254963,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=173189 sync_us=17 close_us=67379 backpressure_us=0 last_point_build_us=66416 last_point_lag_us=66780 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 173189,
+        "sync_us": 17,
+        "close_us": 67379,
+        "backpressure_us": 0,
+        "last_point_build_us": 66416,
+        "last_point_lag_us": 66780,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_pressure",
+      "trial": 3,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.1339888899819925,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=582163 sync_us=652251 close_us=754768 backpressure_us=0 last_point_build_us=342296 last_point_lag_us=721111 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975888 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 582163,
+        "sync_us": 652251,
+        "close_us": 754768,
+        "backpressure_us": 0,
+        "last_point_build_us": 342296,
+        "last_point_lag_us": 721111,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975888,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0,
+        "write_sync_close_us": 1989182,
+        "restore_us": 692731
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "pipeline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0539915369590744,
+      "exit": 0,
+      "stdout": "metabypass restore_us=692731 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 692731
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "pipeline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-full-scan",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-pipeline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.0525228939950466,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=168834 sync_us=18 close_us=343496 backpressure_us=0 last_point_build_us=342632 last_point_lag_us=342974 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296155 validated_blob_bytes=0 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 168834,
+        "sync_us": 18,
+        "close_us": 343496,
+        "backpressure_us": 0,
+        "last_point_build_us": 342632,
+        "last_point_lag_us": 342974,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296155,
+        "validated_blob_bytes": 0,
+        "reused_tables": 0
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "pipeline"
+    },
+    {
+      "variant": "incremental",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 1.4099442090373486,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=636580 sync_us=224098 close_us=406418 backpressure_us=0 last_point_build_us=276104 last_point_lag_us=373835 queue_peak_bytes=1080557 mirrored_bytes=2876871 retained_index_bytes=3975890 validated_blob_bytes=53038952 reused_tables=0 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 636580,
+        "sync_us": 224098,
+        "close_us": 406418,
+        "backpressure_us": 0,
+        "last_point_build_us": 276104,
+        "last_point_lag_us": 373835,
+        "queue_peak_bytes": 1080557,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975890,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 0,
+        "write_sync_close_us": 1267096,
+        "restore_us": 655665
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9857528050197288,
+      "exit": 0,
+      "stdout": "metabypass restore_us=655665 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 655665
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "incremental",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/async-incremental",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-incremental/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.7628873780486174,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=172247 sync_us=17 close_us=66291 backpressure_us=0 last_point_build_us=65444 last_point_lag_us=65790 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 validated_blob_bytes=53038952 reused_tables=1 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 172247,
+        "sync_us": 17,
+        "close_us": 66291,
+        "backpressure_us": 0,
+        "last_point_build_us": 65444,
+        "last_point_lag_us": 65790,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159,
+        "validated_blob_bytes": 53038952,
+        "reused_tables": 1
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "incremental"
+    },
+    {
+      "variant": "baseline",
+      "mode": "write",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=write",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 2.2082284960197285,
+      "exit": 0,
+      "stdout": "metabypass mode=write ops=50000 foreground_us=812861 sync_us=597459 close_us=676367 backpressure_us=340766 last_point_build_us=311608 last_point_lag_us=643284 queue_peak_bytes=2097095 mirrored_bytes=2876871 retained_index_bytes=3975891 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 812861,
+        "sync_us": 597459,
+        "close_us": 676367,
+        "backpressure_us": 340766,
+        "last_point_build_us": 311608,
+        "last_point_lag_us": 643284,
+        "queue_peak_bytes": 2097095,
+        "mirrored_bytes": 2876871,
+        "retained_index_bytes": 3975891,
+        "write_sync_close_us": 2086687,
+        "restore_us": 642887
+      },
+      "scenario": "50k_pressure",
+      "trial": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "restore",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=restore",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9585292960400693,
+      "exit": 0,
+      "stdout": "metabypass restore_us=642887 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "restore_us": 642887
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "baseline"
+    },
+    {
+      "variant": "baseline",
+      "mode": "verify",
+      "command": [
+        "/tmp/metabypass-scan-ablation-bin/baseline",
+        "--metabypass_mode=verify",
+        "--db=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/index",
+        "--metabypass_data_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/data",
+        "--metabypass_backup_dir=/tmp/metabypass-pipeline-benchmark-9gl4icsl/50k_pressure-4-baseline/backup",
+        "--num=50000",
+        "--value_size=1024",
+        "--sync=false",
+        "--metabypass_queue_capacity=2097152",
+        "--metabypass_batch_bytes=65536"
+      ],
+      "elapsed_seconds": 0.9788449229672551,
+      "exit": 0,
+      "stdout": "metabypass mode=verify ops=50000 foreground_us=162471 sync_us=11 close_us=316125 backpressure_us=0 last_point_build_us=315366 last_point_lag_us=315671 queue_peak_bytes=12919 mirrored_bytes=9287 retained_index_bytes=3296159 status=OK\n",
+      "stderr": "",
+      "metrics": {
+        "ops": 50000,
+        "foreground_us": 162471,
+        "sync_us": 11,
+        "close_us": 316125,
+        "backpressure_us": 0,
+        "last_point_build_us": 315366,
+        "last_point_lag_us": 315671,
+        "queue_peak_bytes": 12919,
+        "mirrored_bytes": 9287,
+        "retained_index_bytes": 3296159
+      },
+      "scenario": "50k_pressure",
+      "trial": 4,
+      "writer_variant": "baseline"
+    }
+  ],
+  "summary": {
+    "50k_default": {
+      "baseline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 429416,
+          "min": 416837,
+          "max": 454933
+        },
+        "sync_us": {
+          "median": 582877,
+          "min": 541514,
+          "max": 613669
+        },
+        "close_us": {
+          "median": 696569,
+          "min": 686288,
+          "max": 706553
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 321010,
+          "min": 316915,
+          "max": 325742
+        },
+        "last_point_lag_us": {
+          "median": 663923,
+          "min": 653347,
+          "max": 675458
+        },
+        "queue_peak_bytes": {
+          "median": 3779566,
+          "min": 3701852,
+          "max": 4129020
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975891,
+          "min": 3975885,
+          "max": 3975891
+        },
+        "write_sync_close_us": {
+          "median": 1716752,
+          "min": 1650798,
+          "max": 1746768
+        },
+        "restore_us": {
+          "median": 675373,
+          "min": 664891,
+          "max": 702356
+        }
+      },
+      "pipeline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 596551,
+          "min": 586643,
+          "max": 643832
+        },
+        "sync_us": {
+          "median": 632514,
+          "min": 385622,
+          "max": 691376
+        },
+        "close_us": {
+          "median": 764974,
+          "min": 744412,
+          "max": 775169
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 348044,
+          "min": 337469,
+          "max": 352003
+        },
+        "last_point_lag_us": {
+          "median": 732190,
+          "min": 710057,
+          "max": 742694
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975889,
+          "min": 3975888,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 2008634,
+          "min": 1733327,
+          "max": 2073291
+        },
+        "restore_us": {
+          "median": 698335,
+          "min": 689306,
+          "max": 723906
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 610556,
+          "min": 564226,
+          "max": 623016
+        },
+        "sync_us": {
+          "median": 190049,
+          "min": 185771,
+          "max": 219571
+        },
+        "close_us": {
+          "median": 404559,
+          "min": 398474,
+          "max": 412177
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 277980,
+          "min": 273997,
+          "max": 279800
+        },
+        "last_point_lag_us": {
+          "median": 371605,
+          "min": 365473,
+          "max": 377980
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975890,
+          "min": 3975887,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1210937,
+          "min": 1171049,
+          "max": 1212782
+        },
+        "restore_us": {
+          "median": 681761,
+          "min": 665346,
+          "max": 689908
+        }
+      }
+    },
+    "200k_default": {
+      "baseline": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 1812140,
+          "min": 1775911,
+          "max": 1855221
+        },
+        "sync_us": {
+          "median": 2319042,
+          "min": 2209784,
+          "max": 2364649
+        },
+        "close_us": {
+          "median": 2350857,
+          "min": 2296321,
+          "max": 2396714
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 1117841,
+          "min": 1093867,
+          "max": 1147842
+        },
+        "last_point_lag_us": {
+          "median": 2302624,
+          "min": 2248566,
+          "max": 2347612
+        },
+        "queue_peak_bytes": {
+          "median": 16334973,
+          "min": 15647651,
+          "max": 17104357
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983624,
+          "min": 15983623,
+          "max": 15983626
+        },
+        "write_sync_close_us": {
+          "median": 6499713,
+          "min": 6361193,
+          "max": 6537274
+        },
+        "restore_us": {
+          "median": 2071384,
+          "min": 2043362,
+          "max": 2096077
+        }
+      },
+      "pipeline": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 2546488,
+          "min": 2456422,
+          "max": 2656995
+        },
+        "sync_us": {
+          "median": 1514757,
+          "min": 1289392,
+          "max": 1686939
+        },
+        "close_us": {
+          "median": 2385740,
+          "min": 2372650,
+          "max": 2416229
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 1139893,
+          "min": 1130762,
+          "max": 1161798
+        },
+        "last_point_lag_us": {
+          "median": 2334188,
+          "min": 2321124,
+          "max": 2366302
+        },
+        "queue_peak_bytes": {
+          "median": 3285695,
+          "min": 2097444,
+          "max": 3285695
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983624,
+          "min": 15983620,
+          "max": 15983626
+        },
+        "validated_blob_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 6407957,
+          "min": 6221620,
+          "max": 6607322
+        },
+        "restore_us": {
+          "median": 2095420,
+          "min": 2036988,
+          "max": 2112473
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 200000,
+          "min": 200000,
+          "max": 200000
+        },
+        "foreground_us": {
+          "median": 2559750,
+          "min": 2251245,
+          "max": 2632294
+        },
+        "sync_us": {
+          "median": 283338,
+          "min": 229761,
+          "max": 318552
+        },
+        "close_us": {
+          "median": 1065481,
+          "min": 1054381,
+          "max": 1084225
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 911260,
+          "min": 903521,
+          "max": 929840
+        },
+        "last_point_lag_us": {
+          "median": 1013695,
+          "min": 1005842,
+          "max": 1032272
+        },
+        "queue_peak_bytes": {
+          "median": 2097444,
+          "min": 2097444,
+          "max": 3146166
+        },
+        "mirrored_bytes": {
+          "median": 11631177,
+          "min": 11631177,
+          "max": 11631177
+        },
+        "retained_index_bytes": {
+          "median": 15983624,
+          "min": 15983621,
+          "max": 15983626
+        },
+        "validated_blob_bytes": {
+          "median": 212288952,
+          "min": 212288952,
+          "max": 212288952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 3918148,
+          "min": 3597519,
+          "max": 4008549
+        },
+        "restore_us": {
+          "median": 2072114,
+          "min": 2029280,
+          "max": 2088822
+        }
+      }
+    },
+    "50k_pressure": {
+      "baseline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 773536,
+          "min": 749986,
+          "max": 816480
+        },
+        "sync_us": {
+          "median": 607206,
+          "min": 597459,
+          "max": 617910
+        },
+        "close_us": {
+          "median": 688205,
+          "min": 676367,
+          "max": 694101
+        },
+        "backpressure_us": {
+          "median": 324890,
+          "min": 315454,
+          "max": 340766
+        },
+        "last_point_build_us": {
+          "median": 315442,
+          "min": 311608,
+          "max": 323480
+        },
+        "last_point_lag_us": {
+          "median": 654624,
+          "min": 643284,
+          "max": 659803
+        },
+        "queue_peak_bytes": {
+          "median": 2097095,
+          "min": 2097088,
+          "max": 2097147
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975890,
+          "min": 3975888,
+          "max": 3975891
+        },
+        "write_sync_close_us": {
+          "median": 2068585,
+          "min": 2048716,
+          "max": 2122595
+        },
+        "restore_us": {
+          "median": 655524,
+          "min": 642887,
+          "max": 663874
+        }
+      },
+      "pipeline": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 601920,
+          "min": 569213,
+          "max": 637187
+        },
+        "sync_us": {
+          "median": 594593,
+          "min": 489481,
+          "max": 652251
+        },
+        "close_us": {
+          "median": 753048,
+          "min": 744278,
+          "max": 764624
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 342240,
+          "min": 337987,
+          "max": 345751
+        },
+        "last_point_lag_us": {
+          "median": 719523,
+          "min": 709362,
+          "max": 731314
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975889,
+          "min": 3975887,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1940791,
+          "min": 1876951,
+          "max": 1989182
+        },
+        "restore_us": {
+          "median": 689711,
+          "min": 668698,
+          "max": 692731
+        }
+      },
+      "incremental": {
+        "ops": {
+          "median": 50000,
+          "min": 50000,
+          "max": 50000
+        },
+        "foreground_us": {
+          "median": 636580,
+          "min": 575172,
+          "max": 671452
+        },
+        "sync_us": {
+          "median": 195523,
+          "min": 191218,
+          "max": 255482
+        },
+        "close_us": {
+          "median": 404634,
+          "min": 402401,
+          "max": 410341
+        },
+        "backpressure_us": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "last_point_build_us": {
+          "median": 272151,
+          "min": 272022,
+          "max": 277918
+        },
+        "last_point_lag_us": {
+          "median": 371604,
+          "min": 369176,
+          "max": 376470
+        },
+        "queue_peak_bytes": {
+          "median": 1080557,
+          "min": 1080557,
+          "max": 1080557
+        },
+        "mirrored_bytes": {
+          "median": 2876871,
+          "min": 2876871,
+          "max": 2876871
+        },
+        "retained_index_bytes": {
+          "median": 3975890,
+          "min": 3975889,
+          "max": 3975891
+        },
+        "validated_blob_bytes": {
+          "median": 53038952,
+          "min": 53038952,
+          "max": 53038952
+        },
+        "reused_tables": {
+          "median": 0,
+          "min": 0,
+          "max": 0
+        },
+        "write_sync_close_us": {
+          "median": 1267075,
+          "min": 1175093,
+          "max": 1267275
+        },
+        "restore_us": {
+          "median": 658622,
+          "min": 637396,
+          "max": 663193
+        }
+      }
+    }
+  },
+  "baseline_commit": "e7663cf90",
+  "source_sha256": {
+    "utilities/metabypass/native_files.cc": "a9e41fa2d808207036a827b3bea3ec8fac2b1bca5dc9209e018f185c755fae85",
+    "utilities/metabypass/backup.cc": "447fc32ffefc5a7b1666c87c856ffaa254ea3be1ce4d6535dfbbdc20a33e4785",
+    "utilities/metabypass/metabypass_db.cc": "1c123f6a5dffef0fc13a1d2b317b0e1b4a82282a4a80ff26d31027420b723632",
+    "utilities/metabypass/separated_storage.cc": "6331f5cfcc17e83e8ec2296ee010c57f2fa150c0e23893e839aa5b3dd1b11004",
+    "utilities/metabypass/metabypass_test.cc": "dfa7af4f67f36eb3771a25be447e0b1232a589e8de9fc8b1e8fee2d6f0f497d7",
+    "utilities/metabypass/separated_storage.h": "6b626863b60959da9890da33a332605cd901f0ca284887ca74e15b0e44baaca0",
+    "utilities/metabypass/native_files.h": "fa2e2bc54c7b320cb669d78eaad6208705a00b6d2c999011f0707b757f2cf43a",
+    "utilities/metabypass/backup.h": "460f3ab1fd2175d3011d131814e8b7681b40d13acda91204b904e27c48fbf9a7",
+    "include/rocksdb/utilities/metabypass.h": "94e54fe5ef09289976b130ce5e785a95bfa384831f47f07ae333a989099bd76e",
+    "tools/db_bench_tool.cc": "604448c1fff543c6e1aad60b811b83ed0a4b4c7019f4d96299633a234591c2d4"
+  }
+}

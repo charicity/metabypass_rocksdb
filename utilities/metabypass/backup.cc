@@ -183,8 +183,10 @@ Status Backup::Start(bool existing) {
       if (s.ok()) s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
       if (!s.ok()) return s;
       closed_.insert(f);
+      epochs_[f] = ++next_epoch_;
     }
   }
+  validator_ = std::thread(&Backup::ValidateLoop, this);
   thread_ = std::thread(&Backup::Run, this);
   return Status::OK();
 }
@@ -228,7 +230,14 @@ Status Backup::Reserve(size_t charge) {
       std::max(stats_.peak_queued_bytes, stats_.queued_bytes);
   return Status::OK();
 }
+void Backup::Fail(const Status& status) {
+  std::lock_guard<std::mutex> publish(publication_mutex_);
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (stats_.error.ok()) stats_.error = status;
+  cv_.notify_all();
+}
 void Backup::Finish(Event&& e, const Status& primary) {
+  if (!primary.ok()) Fail(primary);
   std::lock_guard<std::mutex> lock(mutex_);
   if (primary.ok()) {
     e.seq = ++accepted_;
@@ -238,7 +247,6 @@ void Backup::Finish(Event&& e, const Status& primary) {
     stats_.queued_bytes -= e.charge;
     // A failed primary append can leave a partial file. Never publish across
     // it.
-    if (stats_.error.ok()) stats_.error = primary;
   }
   cv_.notify_all();
 }
@@ -321,10 +329,12 @@ Status Backup::Apply(const Event& e) {
     Status s = close();
     if (!s.ok()) return s;
     closed_.erase(e.name);
+    epochs_[e.name] = ++next_epoch_;
     return disk_->NewWritableFile(path, FileOptions(), &writers_[e.name],
                                   nullptr);
   }
   if (e.kind == Kind::kAppend || e.kind == Kind::kTruncate) {
+    if (e.kind == Kind::kTruncate) epochs_[e.name] = ++next_epoch_;
     auto& writer = writers_[e.name];
     if (!writer) {
       Status s =
@@ -343,37 +353,74 @@ Status Backup::Apply(const Event& e) {
     return Status::OK();
   }
   closed_.erase(e.name);
+  epochs_.erase(e.name);
   if (e.kind == Kind::kDelete)
     return disk_->DeleteFile(path, IOOptions(), nullptr);
   closed_.insert(e.other);
+  epochs_[e.other] = ++next_epoch_;
   return disk_->RenameFile(path, work_ + "/" + e.other, IOOptions(), nullptr);
 }
-Status Backup::Publish(uint64_t seq) {
-  const uint64_t start = Now();
+Status Backup::Capture(Candidate* candidate) {
+  candidate->started = Now();
+  candidate->name = "point-" + std::to_string(++generation_);
+  candidate->path = options_.backup_dir + "/" + candidate->name;
+  candidate->closed = closed_;
+  candidate->epochs = epochs_;
   for (const auto& w : writers_) {
     if (!w.second) continue;
     Status s = w.second->Flush(IOOptions(), nullptr);
     if (!s.ok()) return s;
   }
+  Status s = disk_->CreateDir(candidate->path, IOOptions(), nullptr);
+  if (!s.ok()) return s;
+  std::vector<std::string> children;
+  s = disk_->GetChildren(work_, IOOptions(), &children, nullptr);
+  if (!s.ok()) return s;
+  for (const auto& file : children) {
+    uint64_t number;
+    FileType type;
+    if (!ParseFileName(file, &number, &type)) continue;
+    uint64_t size;
+    s = disk_->GetFileSize(work_ + "/" + file, IOOptions(), &size, nullptr);
+    if (!s.ok()) return s;
+    candidate->work_bytes += size;
+    if (type == kTempFile) continue;
+    const bool immutable = type == kTableFile;
+    if (immutable && !closed_.count(file)) continue;
+    if (immutable) {
+      s = disk_->LinkFile(work_ + "/" + file, candidate->path + "/" + file,
+                          IOOptions(), nullptr);
+      if (s.ok()) continue;
+    }
+    s = Copy(disk_, work_ + "/" + file, candidate->path + "/" + file, size);
+    if (!s.ok()) return s;
+  }
+  TEST_SYNC_POINT("MetaBypass::CandidateCaptured");
+  return Status::OK();
+}
+Status Backup::Publish(const Candidate& candidate) {
+  TEST_SYNC_POINT("MetaBypass::ValidateCandidate");
+  const std::string& point = candidate.path;
+  const std::string& name = candidate.name;
   NativeState state;
-  Status s = Inspect(disk_, work_, &state);
+  Status s = Inspect(disk_, point, &state);
   if (!s.ok())
     return s.IsNotFound() ? Status::Incomplete("baseline pending") : s;
-  if (state.manifest_end == 0 || !closed_.count("IDENTITY"))
+  if (state.manifest_end == 0 || !candidate.closed.count("IDENTITY"))
     return Status::Incomplete("baseline pending");
   std::map<std::string, uint64_t> files;
   files[state.manifest] = state.manifest_end;
   for (const auto& t : state.tables) {
     const std::string f = MakeTableFileName(t.first);
     uint64_t size = 0;
-    s = disk_->GetFileSize(work_ + "/" + f, IOOptions(), &size, nullptr);
+    s = disk_->GetFileSize(point + "/" + f, IOOptions(), &size, nullptr);
     if (!s.ok()) return s;
-    if (size != t.second || !closed_.count(f))
+    if (size != t.second || !candidate.closed.count(f))
       return Status::Incomplete("SST not complete");
     files[f] = size;
   }
   std::vector<std::string> children;
-  s = disk_->GetChildren(work_, IOOptions(), &children, nullptr);
+  s = disk_->GetChildren(point, IOOptions(), &children, nullptr);
   if (!s.ok()) return s;
   for (const auto& f : children) {
     uint64_t number;
@@ -382,31 +429,63 @@ Status Backup::Publish(uint64_t seq) {
     if (type == kWalFile && number >= state.log_number) {
       uint64_t end;
       s = ReadLog(
-          disk_, work_ + "/" + f, number,
+          disk_, point + "/" + f, number,
           [](const Slice&) { return Status::OK(); }, &end);
       if (!s.ok()) return s;
       files[f] = end;
     } else if (type == kIdentityFile || type == kOptionsFile) {
-      if (!closed_.count(f)) continue;
-      s = disk_->GetFileSize(work_ + "/" + f, IOOptions(), &files[f], nullptr);
+      if (!candidate.closed.count(f)) continue;
+      s = disk_->GetFileSize(point + "/" + f, IOOptions(), &files[f], nullptr);
       if (!s.ok()) return s;
     }
   }
-  std::map<uint64_t, uint64_t> blobs;
-  s = storage_->Dependencies(work_, state, &blobs);
-  if (!s.ok()) return s;
-  for (const auto& table : state.tables) {
-    s = storage_->ValidateTable(work_ + "/" + MakeTableFileName(table.first),
-                                db_options_, &blobs);
-    if (!s.ok()) return s;
+  // Creation, truncation and rename change epochs. Appends preserve them.
+  // Prune vanished files so cache memory follows the current candidate.
+  for (auto it = validation_epochs_.begin(); it != validation_epochs_.end();) {
+    auto epoch = candidate.epochs.find(it->first);
+    if (!files.count(it->first) || epoch == candidate.epochs.end() ||
+        epoch->second != it->second) {
+      wal_cache_.erase(it->first);
+      table_cache_.erase(it->first);
+      digest_cache_.erase(it->first);
+      it = validation_epochs_.erase(it);
+    } else
+      ++it;
   }
-  s = storage_->Persist(blobs);
+  for (const auto& f : files) {
+    auto epoch = candidate.epochs.find(f.first);
+    if (epoch != candidate.epochs.end())
+      validation_epochs_[f.first] = epoch->second;
+  }
+  std::map<uint64_t, uint64_t> blobs;
+  s = storage_->Dependencies(point, state, &blobs, &wal_cache_);
   if (!s.ok()) return s;
+  uint64_t reused_tables = 0;
+  for (const auto& table : state.tables) {
+    const std::string file = MakeTableFileName(table.first);
+    const uint64_t epoch = candidate.epochs.at(file);
+    auto& cached = table_cache_[file];
+    if (cached.epoch != epoch || cached.size != table.second) {
+      cached.blobs.clear();
+      s = storage_->ValidateTable(point + "/" + file, db_options_,
+                                  &cached.blobs);
+      if (!s.ok()) return s;
+      cached.epoch = epoch;
+      cached.size = table.second;
+    } else
+      ++reused_tables;
+    for (const auto& blob : cached.blobs)
+      blobs[blob.first] = std::max(blobs[blob.first], blob.second);
+  }
+  uint64_t scanned = 0;
+  s = storage_->PersistIncremental(blobs, &blob_cache_, &scanned);
+  if (!s.ok()) return s;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stats_.validated_blob_bytes += scanned;
+    stats_.reused_tables += reused_tables;
+  }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
-  if (!s.ok()) return s;
-  const std::string name = "point-" + std::to_string(++generation_);
-  const std::string point = options_.backup_dir + "/" + name;
-  s = disk_->CreateDir(point, IOOptions(), nullptr);
   if (!s.ok()) return s;
   std::ostringstream inventory;
   uint64_t total = 0;
@@ -415,30 +494,41 @@ Status Backup::Publish(uint64_t seq) {
     FileType type;
     const bool table =
         ParseFileName(f.first, &number, &type) && type == kTableFile;
-    if (table) {
-      s = disk_->SyncFile(work_ + "/" + f.first, FileOptions(), IOOptions(),
+    if (!table) {
+      std::unique_ptr<FSWritableFile> writer;
+      s = disk_->ReopenWritableFile(point + "/" + f.first, FileOptions(),
+                                    &writer, nullptr);
+      if (!s.ok()) return s;
+      s = writer->Truncate(f.second, IOOptions(), nullptr);
+      if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
+      s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
+    } else {
+      s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
                           true, nullptr);
-      if (s.ok()) {
-        s = disk_->LinkFile(work_ + "/" + f.first, point + "/" + f.first,
-                            IOOptions(), nullptr);
-        if (!s.ok())
-          s = Copy(disk_, work_ + "/" + f.first, point + "/" + f.first,
-                   f.second);
-      }
-    } else
-      s = Copy(disk_, work_ + "/" + f.first, point + "/" + f.first, f.second);
+    }
     if (!s.ok()) return s;
-    uint32_t crc;
-    s = Digest(disk_, point + "/" + f.first, f.second, &crc);
+    auto& digest = digest_cache_[f.first];
+    const uint64_t epoch = candidate.epochs.at(f.first);
+    if (digest.epoch != epoch || digest.length > f.second)
+      digest = FileDigest();
+    s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
+                     &digest.crc);
     if (!s.ok()) return s;
-    inventory << "I " << f.first << ' ' << f.second << ' ' << crc << '\n';
+    digest.epoch = epoch;
+    digest.length = f.second;
+    inventory << "I " << f.first << ' ' << f.second << ' ' << digest.crc
+              << '\n';
     total += f.second;
   }
   for (const auto& b : blobs) {
-    uint32_t crc;
-    s = Digest(disk_, storage_->BlobPath(b.first), b.second, &crc);
+    inventory << "B " << b.first << ' ' << b.second << ' '
+              << blob_cache_.at(b.first).crc << '\n';
+  }
+  for (const auto& file : children) {
+    if (file == "." || file == ".." || file == "CURRENT" || files.count(file))
+      continue;
+    s = disk_->DeleteFile(point + "/" + file, IOOptions(), nullptr);
     if (!s.ok()) return s;
-    inventory << "B " << b.first << ' ' << b.second << ' ' << crc << '\n';
   }
   s = Write(disk_, point + "/CURRENT", state.manifest + "\n");
   const std::string current = state.manifest + "\n";
@@ -458,11 +548,17 @@ Status Backup::Publish(uint64_t seq) {
   if (!points_.empty()) pointer += points_.front() + "\n";
   if (s.ok()) s = Write(disk_, options_.backup_dir + "/LATEST.tmp", pointer);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforePointerReplace", &s);
-  if (s.ok())
+  if (!s.ok()) return s;
+  {
+    // A blocked pointer sync must not block successful queue producers.
+    std::lock_guard<std::mutex> publish(publication_mutex_);
+    s = Error();
+    if (!s.ok()) return s;
     s = disk_->RenameFile(options_.backup_dir + "/LATEST.tmp",
                           options_.backup_dir + "/LATEST", IOOptions(),
                           nullptr);
-  if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+    if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+  }
   if (!s.ok()) return s;
   TEST_SYNC_POINT("MetaBypass::PointerSynced");
   points_.push_front(reference);
@@ -473,12 +569,10 @@ Status Backup::Publish(uint64_t seq) {
     if (!s.ok()) return s;
     points_.pop_back();
   }
-  total = 0;
-  std::vector<std::string> retained_dirs{work_};
-  for (const auto& p : points_)
-    retained_dirs.push_back(options_.backup_dir + "/" +
-                            p.substr(0, p.find(' ')));
-  for (const auto& dir : retained_dirs) {
+  total = candidate.work_bytes;
+  for (const auto& p : points_) {
+    const std::string dir =
+        options_.backup_dir + "/" + p.substr(0, p.find(' '));
     std::vector<FileAttributes> attributes;
     s = disk_->GetChildrenFileAttributes(dir, IOOptions(), &attributes,
                                          nullptr);
@@ -487,12 +581,11 @@ Status Backup::Publish(uint64_t seq) {
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    published_ = seq;
+    published_ = candidate.seq;
     ++stats_.recovery_points;
-    stats_.last_build_micros = Now() - start;
+    stats_.last_build_micros = Now() - candidate.started;
     stats_.last_publish_micros = Now();
-    stats_.last_point_lag_micros = Now() - oldest_unpublished_micros_;
-    oldest_unpublished_micros_ = 0;
+    stats_.last_point_lag_micros = Now() - candidate.oldest;
     stats_.retained_index_bytes = total;
     cv_.notify_all();
   }
@@ -500,14 +593,18 @@ Status Backup::Publish(uint64_t seq) {
 }
 void Backup::Run() {
   std::unique_lock<std::mutex> lock(mutex_);
+  auto fail = [&](const Status& status) {
+    lock.unlock();
+    Fail(status);
+    lock.lock();
+  };
   while (stats_.error.ok()) {
     cv_.wait_for(lock, std::chrono::milliseconds(options_.interval_ms), [&] {
-      // Reservations include producers still executing primary I/O. Waking
-      // on reserved bytes alone can spin with mutex_ held and prevent Finish
-      // from ever committing its event.
       return stopping_ || !stats_.error.ok() ||
-             (!queue_.empty() && (requested_ > published_ ||
-                                  stats_.queued_bytes >= options_.batch_bytes));
+             (!queue_.empty() &&
+              (requested_ > published_ ||
+               stats_.queued_bytes >= options_.batch_bytes)) ||
+             (active_ && !candidate_busy_ && applied_ > captured_);
     });
     if (!stats_.error.ok()) break;
     const uint64_t boundary = accepted_;
@@ -524,30 +621,75 @@ void Backup::Run() {
       applied_ = e.seq;
       cv_.notify_all();
       if (!s.ok()) {
-        stats_.error = s;
+        fail(s);
         break;
       }
     }
     if (!stats_.error.ok()) break;
-    if (active_ && applied_ > published_) {
-      const uint64_t seq = applied_;
+    if (active_ && !candidate_busy_ && applied_ > captured_) {
+      auto candidate = std::make_unique<Candidate>();
+      candidate->seq = applied_;
+      candidate->oldest = oldest_unpublished_micros_;
+      oldest_unpublished_micros_ = 0;
+      captured_ = applied_;
+      candidate_busy_ = true;
       lock.unlock();
-      Status s = Publish(seq);
+      Status s = Capture(candidate.get());
       lock.lock();
-      if (!s.ok() && (!s.IsIncomplete() || stopping_)) stats_.error = s;
-      // A fragmented log record or pending atomic group needs more events.
-      if (s.IsIncomplete()) requested_ = published_;
+      if (!s.ok()) {
+        fail(s);
+        candidate_busy_ = false;
+        break;
+      }
+      candidate_ = std::move(candidate);
+      cv_.notify_all();
     }
-    if (stopping_ && queue_.empty()) break;
+    if (stopping_ && queue_.empty()) {
+      if (candidate_busy_) {
+        cv_.wait(lock, [&] { return !candidate_busy_ || !stats_.error.ok(); });
+      } else if (!active_ || published_ >= applied_) {
+        break;
+      } else if (captured_ >= applied_) {
+        fail(Status::Incomplete("final recovery point incomplete"));
+      }
+    }
   }
   queue_.clear();
   stats_.queued_bytes = 0;
+  mirror_done_ = true;
   cv_.notify_all();
   lock.unlock();
   for (auto& w : writers_) {
     if (w.second) w.second->Close(IOOptions(), nullptr).PermitUncheckedError();
   }
   writers_.clear();
+}
+void Backup::ValidateLoop() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (true) {
+    cv_.wait(lock,
+             [&] { return candidate_ || mirror_done_ || !stats_.error.ok(); });
+    if (!stats_.error.ok() || (!candidate_ && mirror_done_)) break;
+    auto candidate = std::move(candidate_);
+    lock.unlock();
+    Status s = Publish(*candidate);
+    // Incomplete native groups need a later boundary. The previous point stays.
+    if (s.IsIncomplete()) {
+      Status cleanup = RemoveDir(disk_, candidate->path);
+      if (!cleanup.ok()) s = cleanup;
+    }
+    if (!s.ok() && !s.IsIncomplete()) Fail(s);
+    lock.lock();
+    if (s.IsIncomplete())
+      oldest_unpublished_micros_ =
+          oldest_unpublished_micros_
+              ? std::min(oldest_unpublished_micros_, candidate->oldest)
+              : candidate->oldest;
+    candidate_busy_ = false;
+    cv_.notify_all();
+  }
+  candidate_busy_ = false;
+  cv_.notify_all();
 }
 Status Backup::Sync() {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -566,6 +708,7 @@ Status Backup::Stop() {
     cv_.notify_all();
   }
   if (thread_.joinable()) thread_.join();
+  if (validator_.joinable()) validator_.join();
   return Error();
 }
 Status Backup::Error() const {

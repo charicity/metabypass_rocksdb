@@ -251,7 +251,8 @@ Status Scan(FileSystem* fs, const std::string& path, uint64_t required,
 }  // namespace
 Status SeparatedStorage::Dependencies(const std::string& index,
                                       const NativeState& state,
-                                      std::map<uint64_t, uint64_t>* lengths) {
+                                      std::map<uint64_t, uint64_t>* lengths,
+                                      WalValidationCache* cache) {
   lengths->clear();
   for (const auto& b : state.blobs) {
     if (b.second.GetTotalBlobBytes() > std::numeric_limits<uint64_t>::max() -
@@ -265,17 +266,25 @@ Status SeparatedStorage::Dependencies(const std::string& index,
   std::vector<std::string> files;
   Status s = target()->GetChildren(index, IOOptions(), &files, nullptr);
   if (!s.ok()) return s;
-  References references(target(), this, lengths);
   for (const auto& f : files) {
     uint64_t number;
     FileType type;
     if (!ParseFileName(f, &number, &type) || type != kWalFile ||
         number < state.log_number)
       continue;
-    uint64_t end;
+    WalValidation local;
+    WalValidation& validated = cache ? (*cache)[f] : local;
+    uint64_t size;
+    s = target()->GetFileSize(index + "/" + f, IOOptions(), &size, nullptr);
+    if (!s.ok()) return s;
+    if (size < validated.end) validated = WalValidation();
+    References references(target(), this, &validated.lengths);
+    uint64_t records = 0, end;
     s = ReadLog(
         target(), index + "/" + f, number,
         [&](const Slice& record) {
+          if (++records <= validated.records) return Status::OK();
+          TEST_SYNC_POINT("MetaBypass::WalRecordValidated");
           WriteBatch batch;
           Status decoded = WriteBatchInternal::SetContents(&batch, record);
           if (decoded.ok()) decoded = batch.Iterate(&references);
@@ -283,12 +292,19 @@ Status SeparatedStorage::Dependencies(const std::string& index,
         },
         &end);
     if (!s.ok()) return s;
+    if (records < validated.records)
+      return Status::Corruption("cached WAL prefix changed");
+    validated.records = records;
+    validated.end = end;
+    for (const auto& blob : validated.lengths)
+      (*lengths)[blob.first] = std::max((*lengths)[blob.first], blob.second);
   }
   return Status::OK();
 }
 Status SeparatedStorage::ValidateTable(const std::string& path,
                                        const Options& options,
                                        std::map<uint64_t, uint64_t>* lengths) {
+  TEST_SYNC_POINT("MetaBypass::TableValidated");
   SstFileReader reader(options);
   Status s = reader.Open(path);
   if (s.ok()) s = reader.VerifyChecksum();
@@ -322,6 +338,99 @@ Status SeparatedStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
     s = target()->SyncFile(BlobPath(b.first), FileOptions(), IOOptions(), true,
                            nullptr);
     if (!s.ok()) return s;
+  }
+  return SyncDir(target(), data_);
+}
+Status SeparatedStorage::PersistIncremental(
+    const std::map<uint64_t, uint64_t>& lengths, BlobValidationCache* cache,
+    uint64_t* scanned) {
+  *scanned = 0;
+  for (const auto& dependency : lengths) {
+    const std::string path = BlobPath(dependency.first);
+    const uint64_t required = dependency.second;
+    uint64_t size;
+    Status s = target()->GetFileSize(path, IOOptions(), &size, nullptr);
+    if (!s.ok()) return s;
+    if (size < required) return Status::Corruption("short blob", path);
+    auto& saved = (*cache)[dependency.first];
+    if (size < saved.length)
+      return Status::Corruption("cached blob shrank", path);
+    BlobValidation next = saved;
+    // A smaller dependency cannot use a CRC of a longer prefix.
+    if (required < next.length) next = BlobValidation();
+    std::unique_ptr<FSRandomAccessFile> file;
+    if (next.length < required) {
+      s = target()->NewRandomAccessFile(path, FileOptions(), &file, nullptr);
+      if (!s.ok()) return s;
+    }
+    std::array<char, 65536> buffer;
+    auto read = [&](uint64_t offset, size_t count, Slice* bytes) -> Status {
+      Status io =
+          file->Read(offset, count, IOOptions(), bytes, buffer.data(), nullptr);
+      if (!io.ok()) return io;
+      if (bytes->size() != count) return Status::Corruption("short blob", path);
+      *scanned += count;
+      return Status::OK();
+    };
+    Slice bytes;
+    if (next.length == 0) {
+      if (required < BlobLogHeader::kSize)
+        return Status::Corruption("invalid blob dependency", path);
+      s = read(0, BlobLogHeader::kSize, &bytes);
+      if (!s.ok()) return s;
+      BlobLogHeader header;
+      s = header.DecodeFrom(bytes);
+      if (!s.ok()) return s;
+      if (header.has_ttl || header.column_family_id != 0)
+        return Status::Corruption("unsupported blob header", path);
+      next.crc = crc32c::Value(bytes.data(), bytes.size());
+      next.length = bytes.size();
+    }
+    while (next.length < required) {
+      if (next.sealed) return Status::Corruption("sealed blob extended", path);
+      const uint64_t left = required - next.length;
+      if (left < BlobLogRecord::kHeaderSize)
+        return Status::Corruption("partial blob record", path);
+      s = read(next.length, BlobLogRecord::kHeaderSize, &bytes);
+      if (!s.ok()) return s;
+      if (left == BlobLogFooter::kSize) {
+        BlobLogFooter footer;
+        Status footer_status = footer.DecodeFrom(bytes);
+        if (footer_status.ok()) {
+          if (footer.blob_count != next.records)
+            return Status::Corruption("blob footer count", path);
+          next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
+          next.length += bytes.size();
+          next.sealed = true;
+          break;
+        }
+      }
+      BlobLogRecord record;
+      s = record.DecodeHeaderFrom(bytes);
+      if (!s.ok()) return s;
+      if (record.key_size > left - bytes.size() ||
+          record.value_size > left - bytes.size() - record.key_size)
+        return Status::Corruption("partial blob payload", path);
+      next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
+      next.length += bytes.size();
+      uint64_t remaining = record.key_size + record.value_size;
+      uint32_t payload_crc = 0;
+      while (remaining) {
+        s = read(next.length, std::min<uint64_t>(remaining, buffer.size()),
+                 &bytes);
+        if (!s.ok()) return s;
+        next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
+        payload_crc = crc32c::Extend(payload_crc, bytes.data(), bytes.size());
+        next.length += bytes.size();
+        remaining -= bytes.size();
+      }
+      if (crc32c::Mask(payload_crc) != record.blob_crc)
+        return Status::Corruption("blob CRC mismatch", path);
+      ++next.records;
+    }
+    s = target()->SyncFile(path, FileOptions(), IOOptions(), true, nullptr);
+    if (!s.ok()) return s;
+    saved = next;
   }
   return SyncDir(target(), data_);
 }

@@ -61,10 +61,33 @@ class Backup : public FileSystemWrapper {
   bool Tracked(const std::string& path) const;
   std::string Base(const std::string& path) const;
   Status Reserve(size_t charge);
+  void Fail(const Status& status);
   void Finish(Event&& event, const Status& primary);
   Status Apply(const Event& event);
-  Status Publish(uint64_t seq);
+  struct Candidate {
+    uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
+    std::string name, path;
+    std::set<std::string> closed;
+    std::map<std::string, uint64_t> epochs;
+  };
+  Status Capture(Candidate* candidate);
+  Status Publish(const Candidate& candidate);
   void Run();
+  void ValidateLoop();
+  struct TableValidation {
+    uint64_t epoch = 0, size = 0;
+    std::map<uint64_t, uint64_t> blobs;
+  };
+  struct FileDigest {
+    uint64_t epoch = 0, length = 0;
+    uint32_t crc = 0;
+  };
+  // Accessed only by the validator; never persisted or shared with recovery.
+  std::map<std::string, TableValidation> table_cache_;
+  std::map<std::string, FileDigest> digest_cache_;
+  std::map<std::string, uint64_t> validation_epochs_;
+  WalValidationCache wal_cache_;
+  BlobValidationCache blob_cache_;
   std::shared_ptr<SeparatedStorage> storage_;
   FileSystem* disk_;
   const std::string index_;
@@ -75,6 +98,9 @@ class Backup : public FileSystemWrapper {
   // acquires this mutex or any DB lock, including while persisting
   // dependencies.
   std::mutex operations_;
+  // Orders failure recording with pointer commit, without holding the queue
+  // mutex across filesystem I/O. Never acquired by successful producers.
+  std::mutex publication_mutex_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::deque<Event> queue_;
@@ -84,7 +110,12 @@ class Backup : public FileSystemWrapper {
   uint64_t oldest_unpublished_micros_ = 0;
   bool stopping_ = false;
   bool active_ = false;
-  std::thread thread_;
+  bool candidate_busy_ = false, mirror_done_ = false;
+  uint64_t captured_ = 0;
+  std::unique_ptr<Candidate> candidate_;
+  std::thread thread_, validator_;
+  uint64_t next_epoch_ = 0;
+  std::map<std::string, uint64_t> epochs_;
   std::set<std::string> closed_;
   std::map<std::string, std::unique_ptr<FSWritableFile>> writers_;
   std::deque<std::string> points_;

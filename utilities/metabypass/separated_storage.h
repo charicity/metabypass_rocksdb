@@ -11,6 +11,18 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+// Volatile, single-validator caches. Recovery never trusts these caches.
+struct WalValidation {
+  uint64_t records = 0, end = 0;
+  std::map<uint64_t, uint64_t> lengths;
+};
+using WalValidationCache = std::map<std::string, WalValidation>;
+struct BlobValidation {
+  uint64_t length = 0, records = 0;
+  uint32_t crc = 0;
+  bool sealed = false;
+};
+using BlobValidationCache = std::map<uint64_t, BlobValidation>;
 // Blob payload ownership, routing and recovery are isolated from mirroring.
 // The data-directory lock excludes recovery from live writers. Persistence
 // uses named-file sync, never the DB or partition-manager mutex.
@@ -22,10 +34,14 @@ class SeparatedStorage : public FileSystemWrapper {
   const char* Name() const override { return "MetaBypassSeparatedStorage"; }
   Status Lock();
   Status Dependencies(const std::string& index, const NativeState& state,
-                      std::map<uint64_t, uint64_t>* lengths);
+                      std::map<uint64_t, uint64_t>* lengths,
+                      WalValidationCache* cache = nullptr);
   Status ValidateTable(const std::string& path, const Options& options,
                        std::map<uint64_t, uint64_t>* lengths);
   Status Persist(const std::map<uint64_t, uint64_t>& lengths);
+  // Verify/hash only new complete records; synchronize the required files.
+  Status PersistIncremental(const std::map<uint64_t, uint64_t>& lengths,
+                            BlobValidationCache* cache, uint64_t* scanned);
   Status PrepareRecovery(const std::string& index);
   std::string BlobPath(uint64_t number) const;
   std::string Map(const std::string& path) const;

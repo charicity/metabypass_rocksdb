@@ -1,1 +1,1 @@
-Added an experimental single-column-family C++ MetaBypassDB utility with separated retained blob storage and asynchronous native index recovery points.
+Added an experimental single-column-family C++ MetaBypassDB utility with separated retained blob storage and asynchronous native index recovery points. Recovery-point validation runs independently of file mirroring and incrementally reuses validated immutable content.

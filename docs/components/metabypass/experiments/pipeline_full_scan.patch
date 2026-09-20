@@ -1,0 +1,95 @@
+--- a/utilities/metabypass/backup.cc
++++ b/utilities/metabypass/backup.cc
+@@ -439,52 +439,17 @@
+       if (!s.ok()) return s;
+     }
+   }
+-  // Creation, truncation and rename change epochs. Appends preserve them.
+-  // Prune vanished files so cache memory follows the current candidate.
+-  for (auto it = validation_epochs_.begin(); it != validation_epochs_.end();) {
+-    auto epoch = candidate.epochs.find(it->first);
+-    if (!files.count(it->first) || epoch == candidate.epochs.end() ||
+-        epoch->second != it->second) {
+-      wal_cache_.erase(it->first);
+-      table_cache_.erase(it->first);
+-      digest_cache_.erase(it->first);
+-      it = validation_epochs_.erase(it);
+-    } else
+-      ++it;
+-  }
+-  for (const auto& f : files) {
+-    auto epoch = candidate.epochs.find(f.first);
+-    if (epoch != candidate.epochs.end())
+-      validation_epochs_[f.first] = epoch->second;
+-  }
++  // Benchmark only: preserve the pipeline, repeat all content validation.
+   std::map<uint64_t, uint64_t> blobs;
+-  s = storage_->Dependencies(point, state, &blobs, &wal_cache_);
+-  if (!s.ok()) return s;
+-  uint64_t reused_tables = 0;
++  s = storage_->Dependencies(point, state, &blobs);
++  if (!s.ok()) return s;
+   for (const auto& table : state.tables) {
+-    const std::string file = MakeTableFileName(table.first);
+-    const uint64_t epoch = candidate.epochs.at(file);
+-    auto& cached = table_cache_[file];
+-    if (cached.epoch != epoch || cached.size != table.second) {
+-      cached.blobs.clear();
+-      s = storage_->ValidateTable(point + "/" + file, db_options_,
+-                                  &cached.blobs);
+-      if (!s.ok()) return s;
+-      cached.epoch = epoch;
+-      cached.size = table.second;
+-    } else
+-      ++reused_tables;
+-    for (const auto& blob : cached.blobs)
+-      blobs[blob.first] = std::max(blobs[blob.first], blob.second);
+-  }
+-  uint64_t scanned = 0;
+-  s = storage_->PersistIncremental(blobs, &blob_cache_, &scanned);
+-  if (!s.ok()) return s;
+-  {
+-    std::lock_guard<std::mutex> lock(mutex_);
+-    stats_.validated_blob_bytes += scanned;
+-    stats_.reused_tables += reused_tables;
+-  }
++    s = storage_->ValidateTable(point + "/" + MakeTableFileName(table.first),
++                                db_options_, &blobs);
++    if (!s.ok()) return s;
++  }
++  s = storage_->Persist(blobs);
++  if (!s.ok()) return s;
+   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
+   if (!s.ok()) return s;
+   std::ostringstream inventory;
+@@ -507,22 +472,17 @@
+                           true, nullptr);
+     }
+     if (!s.ok()) return s;
+-    auto& digest = digest_cache_[f.first];
+-    const uint64_t epoch = candidate.epochs.at(f.first);
+-    if (digest.epoch != epoch || digest.length > f.second)
+-      digest = FileDigest();
+-    s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
+-                     &digest.crc);
+-    if (!s.ok()) return s;
+-    digest.epoch = epoch;
+-    digest.length = f.second;
+-    inventory << "I " << f.first << ' ' << f.second << ' ' << digest.crc
+-              << '\n';
++    uint32_t crc;
++    s = Digest(disk_, point + "/" + f.first, f.second, &crc);
++    if (!s.ok()) return s;
++    inventory << "I " << f.first << ' ' << f.second << ' ' << crc << '\n';
+     total += f.second;
+   }
+   for (const auto& b : blobs) {
+-    inventory << "B " << b.first << ' ' << b.second << ' '
+-              << blob_cache_.at(b.first).crc << '\n';
++    uint32_t crc;
++    s = Digest(disk_, storage_->BlobPath(b.first), b.second, &crc);
++    if (!s.ok()) return s;
++    inventory << "B " << b.first << ' ' << b.second << ' ' << crc << '\n';
+   }
+   for (const auto& file : children) {
+     if (file == "." || file == ".." || file == "CURRENT" || files.count(file))

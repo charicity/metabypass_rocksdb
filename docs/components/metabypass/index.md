@@ -260,3 +260,14 @@ review findings, regression coverage and verification results.
 
 See [strong tiered storage](tiered-storage.md) for the optional fast staging
 layer, remote synchronous-write contract, capacity policy and recovery protocol.
+
+## Direct slow-storage research configuration
+
+See [direct writes and synchronous protection](direct-storage.md) for the primary
+SSD-index/HDD-payload layout and the strengthened direct-mode sync contract.
+See the [comprehensive test plan](direct-storage-test-plan.zh-CN.md) for execution
+in a separate task; no new measurements have been collected for this change.
+
+See the [revised test plan and failure analysis](direct-storage-test-plan-v2.zh-CN.md)
+for follow-up after the first execution: TSAN diagnosis, resource-aware admission,
+fixed-work comparisons, and separately qualified sustained-write experiments.

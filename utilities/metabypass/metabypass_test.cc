@@ -325,6 +325,74 @@ class MetaBypassTest : public testing::Test {
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
+TEST_F(MetaBypassTest, DirectSyncWritesWaitForPublicationAndReportFailure) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (bool fail : {false, true}) {
+    TestGate validating, waiters;
+    std::atomic<int> waiting{0};
+    std::atomic<int> completed{0};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                          [&](void*) { validating.Block(); });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                          [&](void*) {
+                                            if (++waiting == 3) waiters.Block();
+                                          });
+    if (fail) {
+      SyncPoint::GetInstance()->SetCallBack(
+          "MetaBypass::BeforePointerReplace", [](void* arg) {
+            *static_cast<Status*>(arg) = Status::IOError("publication failure");
+          });
+    }
+    SyncPoint::GetInstance()->EnableProcessing();
+    EXPECT_OK(db_->Put(WriteOptions(), "trigger", "value"));
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; ++i) {
+      threads.emplace_back([&, i] {
+        WriteOptions sync;
+        sync.sync = true;
+        Status status;
+        if (i == 2) {
+          status = db_->SyncBackup();
+        } else {
+          WriteBatch batch;
+          status = batch.Put("key" + std::to_string(i), fail ? "new" : "old");
+          if (status.ok()) status = batch.Put("pair" + std::to_string(i), "v");
+          if (status.ok()) status = db_->Write(sync, &batch);
+        }
+        if (fail) {
+          EXPECT_TRUE(status.IsIOError());
+        } else {
+          EXPECT_OK(status);
+        }
+        ++completed;
+      });
+    }
+    waiters.WaitUntilBlocked();
+    waiters.Release();
+    validating.WaitUntilBlocked();
+    EXPECT_EQ(completed.load(), 0);
+    // Publication is blocked, but primary writes and reads can still proceed.
+    EXPECT_OK(db_->Put(WriteOptions(), "async", "progress"));
+    Check("async", "progress");
+    validating.Release();
+    for (auto& thread : threads) thread.join();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    EXPECT_EQ(completed.load(), 3);
+  }
+  Check("key0", "new");
+  EXPECT_TRUE(db_->Put(WriteOptions(), "rejected", "v").IsIOError());
+  EXPECT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key0", "old");
+  Check("key1", "old");
+  Check("pair0", "v");
+  Check("pair1", "v");
+}
+
 TEST_F(MetaBypassTest, TieredSyncSurvivesCompleteFastStorageLoss) {
   EnableTier(1024 * 1024);
   Open();
@@ -1686,8 +1754,9 @@ int main(int argc, char** argv) {
     if (s.ok()) s = batch.Put("a", "last");
     if (s.ok()) s = batch.Put("b", "batch");
     if (s.ok()) s = batch.Delete("deleted");
-    if (s.ok()) s = db->Write(WriteOptions(), &batch);
-    if (s.ok()) s = db->SyncBackup();
+    WriteOptions sync;
+    sync.sync = true;
+    if (s.ok()) s = db->Write(sync, &batch);
     if (!s.ok()) {
       fprintf(stderr, "%s\n", s.ToString().c_str());
       return 2;

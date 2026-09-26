@@ -2,8 +2,10 @@
 
 Metabypass can stage Blob Direct Write payloads on a fast filesystem and migrate
 native blob bytes to a separate slow filesystem. This is an opt-in, experimental,
-single-column-family configuration. Existing non-tiered databases retain their
-previous behavior; converting an existing database is not supported.
+single-column-family configuration. Non-tiered databases retain their direct payload placement. Both modes now
+wait for a complete backup point on synchronous writes; see
+[direct storage](direct-storage.md). Converting an existing database to tiered
+storage is not supported.
 
 ```cpp
 MetaBypassOptions bypass;

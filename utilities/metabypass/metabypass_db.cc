@@ -374,31 +374,32 @@ Status MetaBypassDB::Write(const WriteOptions& o, WriteBatch* b) {
   if (s.ok() && !check.supported)
     s = Status::NotSupported("Metabypass LogData");
   if (s.ok()) s = impl_->backup->Error();
-  if (!s.ok() || !impl_->tier) {
-    if (s.ok()) s = impl_->db->Write(o, b);
-    return s;
+  if (!s.ok()) return s;
+  if (!impl_->tier) {
+    s = impl_->db->Write(o, b);
+  } else {
+    // Admission serializes tiered writes only, before acquiring any DB lock.
+    // A conservative compression and per-record envelope bounds staging growth.
+    std::unique_lock<std::mutex> admission(impl_->admission);
+    const uint64_t bytes = b->GetDataSize();
+    const uint64_t count = b->Count();
+    if (bytes > (UINT64_MAX - 4096) / 2 ||
+        count > (UINT64_MAX - bytes * 2 - 4096) / 128)
+      return Status::InvalidArgument("batch staging charge overflow");
+    const uint64_t charge = bytes * 2 + count * 128 + 4096;
+    auto* cf = static_cast_with_check<ColumnFamilyHandleImpl>(
+        impl_->db->DefaultColumnFamily());
+    s = impl_->tier->Reserve(charge, [&] {
+      auto* manager = cf->cfd()->blob_partition_manager();
+      return manager ? manager->SealForSpace(WriteOptions()) : Status::OK();
+    });
+    if (s.ok()) {
+      s = impl_->backup->Error();
+      if (s.ok()) s = impl_->db->Write(o, b);
+      impl_->tier->ReleaseReservation();
+    }
   }
-  // Admission serializes tiered writes only, before acquiring any DB lock.
-  // A conservative compression and per-record envelope bounds staging growth.
-  std::unique_lock<std::mutex> admission(impl_->admission);
-  const uint64_t bytes = b->GetDataSize();
-  const uint64_t count = b->Count();
-  if (bytes > (UINT64_MAX - 4096) / 2 ||
-      count > (UINT64_MAX - bytes * 2 - 4096) / 128)
-    return Status::InvalidArgument("batch staging charge overflow");
-  const uint64_t charge = bytes * 2 + count * 128 + 4096;
-  auto* cf = static_cast_with_check<ColumnFamilyHandleImpl>(
-      impl_->db->DefaultColumnFamily());
-  s = impl_->tier->Reserve(charge, [&] {
-    auto* manager = cf->cfd()->blob_partition_manager();
-    return manager ? manager->SealForSpace(WriteOptions()) : Status::OK();
-  });
-  if (s.ok()) {
-    s = impl_->backup->Error();
-    if (s.ok()) s = impl_->db->Write(o, b);
-    impl_->tier->ReleaseReservation();
-  }
-  admission.unlock();
+  // The primary write and any tiered admission lock finish before publication.
   if (s.ok() && o.sync) {
     const auto start = std::chrono::steady_clock::now();
     s = impl_->backup->Sync();

@@ -78,7 +78,7 @@ class MetaBypassDB {
   static Status Restore(const Options& options, const MetaBypassOptions& bypass,
                         const std::string& empty_index_dir);
   ~MetaBypassDB();
-  // With staging enabled, sync=true also waits for a complete remote point.
+  // In both storage modes, sync=true waits for a complete backup point.
   // A failed remote barrier can follow a successful primary mutation.
   Status Put(const WriteOptions&, const Slice& key, const Slice& value);
   Status Delete(const WriteOptions&, const Slice& key);

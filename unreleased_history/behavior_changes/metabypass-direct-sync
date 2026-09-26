@@ -1,0 +1,1 @@
+Experimental Metabypass direct blob storage now waits for a complete backup recovery point on successful synchronous writes, matching tiered mode and strengthening the previous local-sync-only guarantee. This can increase synchronous-write latency; asynchronous writes retain asynchronous index publication.

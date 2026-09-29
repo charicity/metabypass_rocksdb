@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "rocksdb/utilities/metabypass.h"
+#include "utilities/metabypass/native_files.h"
 #include "utilities/metabypass/separated_storage.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -77,6 +78,7 @@ class Backup : public FileSystemWrapper {
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
     std::string name, path;
+    NativeState state;
     std::set<std::string> closed;
     std::map<std::string, uint64_t> epochs;
   };
@@ -90,6 +92,14 @@ class Backup : public FileSystemWrapper {
   bool QueuesEmpty() const;
   void Run();
   void ValidateLoop();
+  void GarbageCollectLoop();
+  struct Point {
+    std::string reference;
+    uint64_t bytes = 0;
+    std::string Name() const {
+      return reference.substr(0, reference.find(' '));
+    }
+  };
   struct TableValidation {
     uint64_t epoch = 0, size = 0;
     std::map<uint64_t, uint64_t> blobs;
@@ -115,7 +125,7 @@ class Backup : public FileSystemWrapper {
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
   mutable std::mutex mutex_;
-  std::condition_variable mirror_cv_, validator_cv_, sync_cv_;
+  std::condition_variable mirror_cv_, validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
   MetaBypassStats stats_;
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
@@ -124,14 +134,16 @@ class Backup : public FileSystemWrapper {
   bool stopping_ = false;
   bool active_ = false;
   bool candidate_busy_ = false, mirror_done_ = false;
+  bool validator_done_ = false, retired_pending_ = false;
   uint64_t captured_ = 0;
   std::unique_ptr<Candidate> candidate_;
-  std::thread thread_, validator_;
+  std::thread thread_, validator_, garbage_collector_;
   uint64_t next_epoch_ = 0;
   std::map<std::string, uint64_t> epochs_;
   std::set<std::string> closed_;
   std::map<std::string, std::unique_ptr<FSWritableFile>> writers_;
-  std::deque<std::string> points_;
+  std::deque<Point> points_;
+  Point retired_;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

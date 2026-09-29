@@ -11,10 +11,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "rocksdb/file_system.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/utilities/metabypass.h"
 
@@ -50,7 +52,8 @@ int main(int argc, char** argv) {
   if (argc != 6) return 2;
   const std::string mode = argv[1], root = argv[2], workload = argv[4];
   const int count = std::stoi(argv[3]);
-  const bool mixed = workload != "default";
+  const bool mixed = workload != "default" && workload != "manifest";
+  const bool manifest = workload == "manifest";
   Options o;
   o.create_if_missing = true;
   o.allow_concurrent_memtable_write = false;
@@ -64,6 +67,14 @@ int main(int argc, char** argv) {
     o.max_bytes_for_level_base = 1024 * 1024;
     o.level0_file_num_compaction_trigger = 2;
     o.max_background_jobs = 4;
+  }
+  if (manifest) {
+    // About one thousand live SSTs with 8192 writes. Keep compaction from
+    // hiding MANIFEST parsing and file-selection costs.
+    o.disable_auto_compactions = true;
+    o.write_buffer_size = 64 * 1024;
+    o.level0_slowdown_writes_trigger = 10000;
+    o.level0_stop_writes_trigger = 20000;
   }
   auto events = std::make_shared<Events>();
   o.listeners.push_back(events);
@@ -117,7 +128,9 @@ int main(int argc, char** argv) {
     latency.push_back(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t)
             .count());
+    if (s.ok() && manifest && (i + 1) % 8 == 0) s = db->Flush(FlushOptions());
   }
+  if (s.ok() && manifest && count % 8 != 0) s = db->Flush(FlushOptions());
   const auto foreground_us = Micros(start);
 #ifdef MB_AB_PROFILE
   mb_profile_stop();
@@ -138,6 +151,27 @@ int main(int argc, char** argv) {
   const auto close_us = Micros(start);
   auto stats = db->GetBackupStats();
   s.UpdateIfOk(stats.error);
+  uint64_t manifest_bytes = 0, sst_count = 0;
+  std::vector<std::string> index_files;
+  auto fs = o.env->GetFileSystem();
+  Status listed =
+      fs->GetChildren(root + "/index", IOOptions(), &index_files, nullptr);
+  if (s.ok()) s = listed;
+  if (listed.ok()) {
+    std::ifstream current(root + "/index/CURRENT");
+    std::string selected_manifest;
+    std::getline(current, selected_manifest);
+    if (s.ok() && !current) s = Status::IOError("cannot read CURRENT");
+    if (!selected_manifest.empty()) {
+      Status sized = fs->GetFileSize(root + "/index/" + selected_manifest,
+                                     IOOptions(), &manifest_bytes, nullptr);
+      if (s.ok()) s = sized;
+    }
+    for (const auto& file : index_files) {
+      if (file.size() > 4 && file.substr(file.size() - 4) == ".sst")
+        ++sst_count;
+    }
+  }
   std::sort(latency.begin(), latency.end());
   auto percentile = [&](double q) {
     return latency[std::min(latency.size() - 1, size_t(q * latency.size()))];
@@ -145,9 +179,11 @@ int main(int argc, char** argv) {
   printf(
       "foreground_us=%llu sync_us=%llu close_us=%llu p50_ns=%llu p95_ns=%llu "
       "p99_ns=%llu max_ns=%llu "
-      "backpressure_us=%llu peak_bytes=%llu lag_us=%llu points=%llu "
+      "backpressure_us=%llu peak_bytes=%llu build_us=%llu lag_us=%llu "
+      "points=%llu "
       "mirrored_bytes=%llu "
-      "flushes=%llu compactions=%llu sst_bytes=%llu user_us=%ld system_us=%ld "
+      "flushes=%llu compactions=%llu sst_bytes=%llu manifest_bytes=%llu "
+      "sst_count=%llu user_us=%ld system_us=%ld "
       "voluntary=%ld involuntary=%ld status=%s\n",
       (unsigned long long)foreground_us, (unsigned long long)sync_us,
       (unsigned long long)close_us, (unsigned long long)percentile(.50),
@@ -155,12 +191,14 @@ int main(int argc, char** argv) {
       (unsigned long long)latency.back(),
       (unsigned long long)stats.backpressure_micros,
       (unsigned long long)stats.peak_queued_bytes,
+      (unsigned long long)stats.last_build_micros,
       (unsigned long long)stats.last_point_lag_micros,
       (unsigned long long)stats.recovery_points,
       (unsigned long long)stats.mirrored_bytes,
       (unsigned long long)foreground_flushes,
       (unsigned long long)foreground_compactions,
       (unsigned long long)events->sst_bytes.load(),
+      (unsigned long long)manifest_bytes, (unsigned long long)sst_count,
       Cpu(after.ru_utime) - Cpu(before.ru_utime),
       Cpu(after.ru_stime) - Cpu(before.ru_stime),
       after.ru_nvcsw - before.ru_nvcsw, after.ru_nivcsw - before.ru_nivcsw,

@@ -4,13 +4,16 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #include "rocksdb/utilities/metabypass.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
+#include "file/filename.h"
 #include "rocksdb/write_batch.h"
 #include "test_util/sync_point.h"
 #include "test_util/testharness.h"
@@ -46,6 +49,31 @@ class MarkerFailureFileSystem : public FileSystemWrapper {
       return IOStatus::IOError("injected failure after truncation");
     }
     return s;
+  }
+};
+class CandidateNoLinkFileSystem : public FileSystemWrapper {
+ public:
+  explicit CandidateNoLinkFileSystem(const std::shared_ptr<FileSystem>& fs)
+      : FileSystemWrapper(fs) {}
+  const char* Name() const override { return "CandidateNoLinkFileSystem"; }
+  std::atomic<uint64_t> rejected_links{0}, copied_tables{0};
+  IOStatus LinkFile(const std::string& from, const std::string& to,
+                    const IOOptions& options, IODebugContext* dbg) override {
+    if (from.find("/work/") != std::string::npos &&
+        to.find("/point-") != std::string::npos) {
+      ++rejected_links;
+      return IOStatus::NotSupported("injected candidate link failure");
+    }
+    return target()->LinkFile(from, to, options, dbg);
+  }
+  IOStatus NewSequentialFile(const std::string& path,
+                             const FileOptions& options,
+                             std::unique_ptr<FSSequentialFile>* result,
+                             IODebugContext* dbg) override {
+    if (path.find("/work/") != std::string::npos && path.size() >= 4 &&
+        path.substr(path.size() - 4) == ".sst")
+      ++copied_tables;
+    return target()->NewSequentialFile(path, options, result, dbg);
   }
 };
 class UnsupportedCompactionService : public CompactionService {
@@ -117,6 +145,18 @@ class MetaBypassTest : public testing::Test {
     m_.staging_capacity = capacity;
   }
   void Open() { ASSERT_OK(MetaBypassDB::Open(o_, m_, index_, &db_)); }
+  void EnsureTwoPoints() {
+    for (int i = 0; i < 3; ++i) {
+      auto stats = db_->GetBackupStats();
+      ASSERT_OK(stats.error);
+      if (stats.recovery_points >= 2) return;
+      ASSERT_OK(db_->Put(WriteOptions(), "point" + std::to_string(i), "value"));
+      ASSERT_OK(db_->SyncBackup());
+    }
+    auto stats = db_->GetBackupStats();
+    ASSERT_OK(stats.error);
+    ASSERT_GE(stats.recovery_points, 2);
+  }
   void Check(const std::string& key, const std::string& expected) {
     std::string value;
     ASSERT_OK(db_->Get(ReadOptions(), key, &value));
@@ -1068,7 +1108,7 @@ TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
   int points = 0;
   for (const auto& f : files)
     if (f.compare(0, 6, "point-") == 0) ++points;
-  EXPECT_LE(points, 3);
+  EXPECT_LE(points, 4);
   gate.Release();
   sync.join();
   SyncPoint::GetInstance()->DisableProcessing();
@@ -1078,6 +1118,240 @@ TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("old", "retained");
   Check(std::string(128, 'k') + "999", std::string(100, 'v'));
+}
+TEST_F(MetaBypassTest, RetiredPointCleanupDoesNotDelaySyncOrMirror) {
+  m_.queue_capacity = 32768;
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_NO_FATAL_FAILURE(EnsureTwoPoints());
+  TestGate gc, next_publication;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::GCStarted",
+                                        [&](void*) { gc.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  WriteOptions sync_write;
+  sync_write.sync = true;
+  ASSERT_OK(db_->Put(sync_write, "third", "durable"));
+  ASSERT_OK(db_->SyncBackup());
+  gc.WaitUntilBlocked();
+  auto pending = db_->GetBackupStats();
+  ASSERT_OK(pending.error);
+  ASSERT_EQ(pending.pending_gc_points, 1);
+  ASSERT_GT(pending.pending_gc_bytes, 0);
+  std::string pointer;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pointer));
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::BeforeGCSlotWait", [&](void*) { next_publication.Block(); });
+  ASSERT_OK(db_->Put(WriteOptions(), "fourth", "durable"));
+  Status fourth_status;
+  std::thread fourth([&] { fourth_status = db_->SyncBackup(); });
+  next_publication.WaitUntilBlocked();
+  next_publication.Release();
+  std::string unchanged;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &unchanged));
+  EXPECT_EQ(unchanged, pointer);
+  // Validation is waiting for the GC slot; mirroring still drains the queue.
+  for (int i = 0; i < 300; ++i)
+    EXPECT_OK(db_->Put(WriteOptions(), "tail" + std::to_string(i), "v"));
+  gc.Release();
+  fourth.join();
+  ASSERT_OK(fourth_status);
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  auto closed = db_->GetBackupStats();
+  ASSERT_OK(closed.error);
+  EXPECT_EQ(closed.pending_gc_points, 0);
+  std::vector<std::string> files;
+  ASSERT_OK(fs_->GetChildren(m_.backup_dir, IOOptions(), &files, nullptr));
+  int points = 0;
+  for (const auto& file : files)
+    if (file.compare(0, 6, "point-") == 0) ++points;
+  EXPECT_EQ(points, 2);
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("third", "durable");
+  Check("tail299", "v");
+}
+TEST_F(MetaBypassTest, RetiredPointCleanupFailureIsSticky) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_NO_FATAL_FAILURE(EnsureTwoPoints());
+  TestGate gc, failed;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::GCStarted",
+                                        [&](void*) { gc.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::GCStatus", [](void* arg) {
+    *static_cast<Status*>(arg) = Status::IOError("retired point cleanup");
+  });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::GCFailureRecorded",
+                                        [&](void*) { failed.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "third", "durable"));
+  ASSERT_OK(db_->SyncBackup());
+  gc.WaitUntilBlocked();
+  gc.Release();
+  failed.WaitUntilBlocked();
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  EXPECT_TRUE(db_->Put(WriteOptions(), "rejected", "v").IsIOError());
+  auto stats = db_->GetBackupStats();
+  EXPECT_TRUE(stats.error.IsIOError());
+  EXPECT_EQ(stats.pending_gc_points, 1);
+  failed.Release();
+  EXPECT_TRUE(db_->Close().IsIOError());
+  SyncPoint::GetInstance()->DisableProcessing();
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("third", "durable");
+}
+TEST_F(MetaBypassTest, CandidateSkipsUnreferencedIndexFiles) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "first", "v"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  std::string pointer;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pointer));
+  metabypass::NativeState state;
+  ASSERT_OK(metabypass::Inspect(
+      fs_.get(), m_.backup_dir + "/" + pointer.substr(0, pointer.find(' ')),
+      &state));
+  ASSERT_GT(state.log_number, 0);
+  auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  const std::vector<std::string> unused = {"MANIFEST-999999", "000000.log",
+                                           "999999.sst"};
+  std::atomic<bool> injected{false}, checked{false}, absent{true};
+  Status injection;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::BeforeCaptureSnapshot", [&](void* arg) {
+        if (injected.exchange(true)) return;
+        static_cast<std::set<std::string>*>(arg)->insert("999999.sst");
+        for (const auto& file : unused) {
+          injection = metabypass::Write(
+              fs_.get(), m_.backup_dir + "/work/" + file, "unreferenced");
+          if (!injection.ok()) return;
+        }
+      });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::CandidateCaptured", [&](void* arg) {
+        std::vector<std::string> files;
+        Status s = fs_->GetChildren(*static_cast<std::string*>(arg),
+                                    IOOptions(), &files, nullptr);
+        if (!s.ok()) {
+          absent = false;
+        } else {
+          for (const auto& file : unused)
+            if (std::find(files.begin(), files.end(), file) != files.end())
+              absent = false;
+        }
+        checked = true;
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "second", "v"));
+  ASSERT_OK(db_->SyncBackup());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(injection);
+  EXPECT_TRUE(injected);
+  EXPECT_TRUE(checked);
+  EXPECT_TRUE(absent);
+  auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_GT(after.candidate_copied_bytes, before.candidate_copied_bytes);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("second", "v");
+}
+TEST_F(MetaBypassTest, MissingReferencedSstFailsCapture) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "first", "v"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  std::string pointer;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pointer));
+  metabypass::NativeState state;
+  ASSERT_OK(metabypass::Inspect(
+      fs_.get(), m_.backup_dir + "/" + pointer.substr(0, pointer.find(' ')),
+      &state));
+  ASSERT_FALSE(state.tables.empty());
+  const std::string table = MakeTableFileName(state.tables.begin()->first);
+  std::atomic<bool> removed{false};
+  Status removal;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::BeforeCaptureFiles", [&](void*) {
+        if (removed.exchange(true)) return;
+        removal = fs_->DeleteFile(m_.backup_dir + "/work/" + table, IOOptions(),
+                                  nullptr);
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "second", "v"));
+  EXPECT_TRUE(db_->SyncBackup().IsCorruption());
+  SyncPoint::GetInstance()->DisableProcessing();
+  EXPECT_TRUE(removed);
+  ASSERT_OK(removal);
+  auto stats = db_->GetBackupStats();
+  EXPECT_TRUE(stats.error.IsCorruption());
+  EXPECT_TRUE(db_->Put(WriteOptions(), "rejected", "v").IsCorruption());
+  Status close = db_->Close();
+  EXPECT_FALSE(close.ok()) << close.ToString();
+}
+TEST_F(MetaBypassTest, CandidateSstFallsBackToCopyWhenLinkFails) {
+  auto no_links = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(no_links);
+  Options options = o_;
+  options.env = env.get();
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_GT(no_links->rejected_links.load(), 0);
+  EXPECT_GT(no_links->copied_tables.load(), 0);
+  auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  EXPECT_GT(stats.candidate_copied_bytes, 0);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, IncompleteCaptureDefersUntilNextBoundary) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "first", "v"));
+  ASSERT_OK(db_->SyncBackup());
+  std::string current;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/CURRENT", &current));
+  TestGate deferred;
+  std::atomic<bool> injected{false};
+  Status mutation;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::BeforeCaptureFiles", [&](void*) {
+        if (injected.exchange(true)) return;
+        mutation = metabypass::Write(fs_.get(), m_.backup_dir + "/work/CURRENT",
+                                     "MANIFEST-");
+      });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::CaptureDeferred",
+                                        [&](void*) { deferred.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "second", "v"));
+  Status sync_status;
+  std::thread sync([&] { sync_status = db_->SyncBackup(); });
+  deferred.WaitUntilBlocked();
+  ASSERT_OK(mutation);
+  ASSERT_OK(
+      metabypass::Write(fs_.get(), m_.backup_dir + "/work/CURRENT", current));
+  ASSERT_OK(db_->Put(WriteOptions(), "third", "v"));
+  deferred.Release();
+  sync.join();
+  ASSERT_OK(sync_status);
+  ASSERT_OK(db_->SyncBackup());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("second", "v");
+  Check("third", "v");
 }
 TEST_F(MetaBypassTest, MirrorFailureWhileValidatingDoesNotPublish) {
   m_.batch_bytes = 1;
@@ -1655,6 +1929,25 @@ TEST_F(MetaBypassTest, SigkillPublicationStages) {
     ASSERT_OK(fs_->CreateDir(root_, IOOptions(), nullptr));
   }
 }
+TEST_F(MetaBypassTest, SigkillDuringRetiredPointCleanup) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("MetaBypass::GCFileDeleted"));
+  std::vector<std::string> files;
+  ASSERT_OK(fs_->GetChildren(m_.backup_dir, IOOptions(), &files, nullptr));
+  int points = 0;
+  for (const auto& file : files)
+    if (file.compare(0, 6, "point-") == 0) ++points;
+  ASSERT_GE(points, 3);
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("a", "last");
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  files.clear();
+  ASSERT_OK(fs_->GetChildren(m_.backup_dir, IOOptions(), &files, nullptr));
+  points = 0;
+  for (const auto& file : files)
+    if (file.compare(0, 6, "point-") == 0) ++points;
+  EXPECT_EQ(points, 2);
+}
 TEST_F(MetaBypassTest, InterruptedBlobPreparationIsRetryable) {
   ASSERT_NO_FATAL_FAILURE(RunCrashWriter());
   Clean(index_);
@@ -1740,10 +2033,26 @@ int main(int argc, char** argv) {
     MetaBypassOptions bypass;
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
+    const bool gc_crash =
+        argc == 6 && std::string(argv[5]) == "MetaBypass::GCFileDeleted";
+    if (gc_crash) {
+      bypass.batch_bytes = bypass.queue_capacity;
+      bypass.interval_ms = 60000;
+    }
     std::unique_ptr<MetaBypassDB> db;
     Status s = MetaBypassDB::Open(options, bypass, argv[2], &db);
     if (s.ok()) s = db->Put(WriteOptions(), "a", "old");
     if (s.ok()) s = db->SyncBackup();
+    if (s.ok() && gc_crash) {
+      auto stats = db->GetBackupStats();
+      s.UpdateIfOk(stats.error);
+      for (int i = 0; s.ok() && stats.recovery_points < 2 && i < 3; ++i) {
+        s = db->Put(WriteOptions(), "middle" + std::to_string(i), "value");
+        if (s.ok()) s = db->SyncBackup();
+        stats = db->GetBackupStats();
+        s.UpdateIfOk(stats.error);
+      }
+    }
     if (argc == 6) {
       SyncPoint::GetInstance()->SetCallBack(
           argv[5], [](void*) { kill(getpid(), SIGKILL); });
@@ -1760,6 +2069,13 @@ int main(int argc, char** argv) {
     if (!s.ok()) {
       fprintf(stderr, "%s\n", s.ToString().c_str());
       return 2;
+    }
+    if (gc_crash) {
+      // Close must wait for GC. Only the GCFileDeleted hook may kill us here.
+      s = db->Close();
+      fprintf(stderr, "GCFileDeleted hook did not run: %s\n",
+              s.ToString().c_str());
+      return 3;
     }
     kill(getpid(), SIGKILL);
     return 3;

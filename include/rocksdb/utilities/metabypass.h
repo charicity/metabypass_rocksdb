@@ -55,6 +55,13 @@ struct MetaBypassStats {
   // Logical sizes of work at capture plus published points; hardlinks count
   // per path. Concurrent mirror progress after capture is not included.
   uint64_t retained_index_bytes = 0;
+  // One retired point remains pending until its directory is fully removed.
+  // Bytes are the point's logical size, not live disk usage during deletion.
+  uint64_t pending_gc_points = 0;
+  uint64_t pending_gc_bytes = 0;
+  uint64_t gc_micros = 0;
+  // Cumulative successful candidate file copies; hardlinks do not count.
+  uint64_t candidate_copied_bytes = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

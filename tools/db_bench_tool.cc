@@ -11127,12 +11127,16 @@ static int RunMetaBypassBenchmark() {
          " last_point_build_us=%" PRIu64 " last_point_lag_us=%" PRIu64
          " queue_peak_bytes=%" PRIu64 " mirrored_bytes=%" PRIu64
          " retained_index_bytes=%" PRIu64 " validated_blob_bytes=%" PRIu64
-         " reused_tables=%" PRIu64 " status=%s\n",
+         " reused_tables=%" PRIu64 " pending_gc_points=%" PRIu64
+         " pending_gc_bytes=%" PRIu64 " gc_micros=%" PRIu64
+         " candidate_copied_bytes=%" PRIu64 " status=%s\n",
          FLAGS_metabypass_mode.c_str(), FLAGS_num, foreground, sync_us,
          close_us, stats.backpressure_micros, stats.last_build_micros,
          stats.last_point_lag_micros, stats.peak_queued_bytes,
          stats.mirrored_bytes, stats.retained_index_bytes,
-         stats.validated_blob_bytes, stats.reused_tables, s.ToString().c_str());
+         stats.validated_blob_bytes, stats.reused_tables,
+         stats.pending_gc_points, stats.pending_gc_bytes, stats.gc_micros,
+         stats.candidate_copied_bytes, s.ToString().c_str());
   printf("metabypass tiered=%d p99_us=%" PRIu64 " staging_bytes=%" PRIu64
          " staging_peak=%" PRIu64 " migrated_blob_bytes=%" PRIu64
          " pending_blob_bytes=%" PRIu64 " staging_wait_us=%" PRIu64

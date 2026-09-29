@@ -1410,9 +1410,25 @@ Status DB::OpenAndCompact(
   std::unique_ptr<DB> db;
   std::vector<ColumnFamilyHandle*> handles;
   const uint64_t db_open_start_micros = db_options.env->NowMicros();
-  s = DBImplSecondary::OpenAsSecondaryImpl(db_options, name, output_directory,
-                                           column_families, &handles, &db,
-                                           /*recover_wal=*/false);
+  // A primary can obsolete an unrelated SST between its verification during
+  // MANIFEST replay and the secondary's initial table open. A fresh recovery
+  // can then see the missing file as obsolete and use a later complete version.
+  // Only retry path-not-found during open; missing compaction inputs and other
+  // errors must still fail normally.
+  constexpr int kMaxSecondaryOpenAttempts = 3;
+  for (int attempt = 1; attempt <= kMaxSecondaryOpenAttempts; ++attempt) {
+    s = DBImplSecondary::OpenAsSecondaryImpl(db_options, name, output_directory,
+                                             column_families, &handles, &db,
+                                             /*recover_wal=*/false);
+    if (s.ok() || !s.IsPathNotFound() || attempt == kMaxSecondaryOpenAttempts) {
+      break;
+    }
+    ROCKS_LOG_WARN(db_options.info_log,
+                   "OpenAndCompact secondary open failed with a missing path "
+                   "(%s); retrying recovery (%d/%d)",
+                   s.ToString().c_str(), attempt + 1,
+                   kMaxSecondaryOpenAttempts);
+  }
   RecordTimeToHistogram(db_options.statistics.get(),
                         OPEN_AND_COMPACT_DB_OPEN_MICROS,
                         db_options.env->NowMicros() - db_open_start_micros);

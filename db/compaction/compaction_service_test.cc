@@ -3,10 +3,13 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
+#include <atomic>
+#include <cstdio>
 #include <memory>
 
 #include "db/db_test_util.h"
 #include "file/file_util.h"
+#include "file/filename.h"
 #include "port/stack_trace.h"
 #include "rocksdb/utilities/options_util.h"
 #include "table/unique_id_impl.h"
@@ -160,13 +163,35 @@ class MyTestCompactionService : public CompactionService {
     if (s.ok()) {
       return CompactionServiceJobStatus::kSuccess;
     } else {
+      std::fprintf(
+          stderr,
+          "MyTestCompactionService::Wait job_id=%s status=%s result.size=%zu\n",
+          scheduled_job_id.c_str(), s.ToString().c_str(), result->size());
+      CompactionServiceInput parsed_input;
+      Status parse_status =
+          CompactionServiceInput::Read(compaction_input, &parsed_input);
+      if (parse_status.ok()) {
+        std::string input_file_numbers;
+        for (const auto& file : parsed_input.input_files) {
+          if (!input_file_numbers.empty()) {
+            input_file_numbers += ",";
+          }
+          input_file_numbers += std::to_string(TableFileNameToNumber(file));
+        }
+        std::fprintf(stderr, "  cf_name=%s input_file_numbers=[%s]\n",
+                     parsed_input.cf_name.c_str(), input_file_numbers.c_str());
+      } else {
+        std::fprintf(stderr, "  input_parse_status=%s\n",
+                     parse_status.ToString().c_str());
+      }
       return CompactionServiceJobStatus::kFailure;
     }
   }
 
   CompactionServiceOptionsOverride GetOptionsOverride() {
     CompactionServiceOptionsOverride options_override;
-    options_override.env = options_.env;
+    options_override.env =
+        worker_env_override_ ? worker_env_override_.get() : options_.env;
     options_override.file_checksum_gen_factory =
         options_.file_checksum_gen_factory;
     options_override.comparator = options_.comparator;
@@ -250,8 +275,16 @@ class MyTestCompactionService : public CompactionService {
   }
 
  private:
+  friend class
+      CompactionServiceSecondaryOpenRetryTest_MissingSstDuringOpen_Test;
+
+  void SetWorkerEnvOverride(std::shared_ptr<Env> env) {
+    worker_env_override_ = std::move(env);
+  }
+
   std::atomic_int compaction_num_{0};
   Options options_;
+  std::shared_ptr<Env> worker_env_override_;
   CompactionServiceJobInfo start_info_;
   CompactionServiceJobInfo wait_info_;
   bool is_override_start_status_ = false;
@@ -1329,92 +1362,99 @@ TEST_F(CompactionServiceTest, CorruptedOutputParanoidFileCheck) {
   }
 }
 
-TEST_F(CompactionServiceTest, CorruptedOutputVerifyOutputFlags) {
-  for (VerifyOutputFlags verify_output_flags :
-       {VerifyOutputFlags::kVerifyNone,
-        VerifyOutputFlags::kEnableForLocalCompaction |
-            VerifyOutputFlags::kVerifyBlockChecksum,
-        VerifyOutputFlags::kEnableForRemoteCompaction |
-            VerifyOutputFlags::kVerifyBlockChecksum,
-        VerifyOutputFlags::kEnableForRemoteCompaction |
-            VerifyOutputFlags::kVerifyIteration,
-        VerifyOutputFlags::kEnableForRemoteCompaction |
-            VerifyOutputFlags::kVerifyFileChecksum,
-        VerifyOutputFlags::kVerifyAll}) {
-    SCOPED_TRACE(
-        "verify_output_flags=" +
-        std::to_string(static_cast<std::underlying_type_t<VerifyOutputFlags>>(
-            verify_output_flags)));
+class CompactionServiceVerifyOutputFlagsTest
+    : public CompactionServiceTest,
+      public ::testing::WithParamInterface<VerifyOutputFlags> {};
 
-    Options options = CurrentOptions();
-    Destroy(options);
-    options.disable_auto_compactions = true;
-    options.paranoid_file_checks = false;
-    options.verify_output_flags = verify_output_flags;
-    options.file_checksum_gen_factory = GetFileChecksumGenCrc32cFactory();
-    ReopenWithCompactionService(&options);
-    GenerateTestData();
+TEST_P(CompactionServiceVerifyOutputFlagsTest,
+       CorruptedOutputVerifyOutputFlags) {
+  VerifyOutputFlags verify_output_flags = GetParam();
+  SCOPED_TRACE(
+      "verify_output_flags=" +
+      std::to_string(static_cast<std::underlying_type_t<VerifyOutputFlags>>(
+          verify_output_flags)));
 
-    auto my_cs = GetCompactionService();
+  Options options = CurrentOptions();
+  Destroy(options);
+  options.disable_auto_compactions = true;
+  options.paranoid_file_checks = false;
+  options.verify_output_flags = verify_output_flags;
+  options.file_checksum_gen_factory = GetFileChecksumGenCrc32cFactory();
+  ReopenWithCompactionService(&options);
+  GenerateTestData();
 
-    std::string start_str = Key(15);
-    std::string end_str = Key(45);
-    Slice start(start_str);
-    Slice end(end_str);
-    uint64_t comp_num = my_cs->GetCompactionNum();
+  auto my_cs = GetCompactionService();
 
-    ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
-        "CompactionServiceCompactionJob::Run:0", [&](void* arg) {
-          CompactionServiceResult* compaction_result =
-              *(static_cast<CompactionServiceResult**>(arg));
-          ASSERT_TRUE(compaction_result != nullptr &&
-                      !compaction_result->output_files.empty());
-          // Corrupt files here
-          for (const auto& output_file : compaction_result->output_files) {
-            std::string file_name =
-                compaction_result->output_path + "/" + output_file.file_name;
+  std::string start_str = Key(15);
+  std::string end_str = Key(45);
+  Slice start(start_str);
+  Slice end(end_str);
+  uint64_t comp_num = my_cs->GetCompactionNum();
 
-            // Corrupt very small range of bytes. This corruption is so small
-            // that this isn't caught by default light-weight check
-            ASSERT_OK(test::CorruptFile(env_, file_name, 0, 1,
-                                        false /* verifyChecksum */));
-          }
-        });
-    SyncPoint::GetInstance()->EnableProcessing();
-    const bool is_enabled_for_remote_compaction =
-        !!(verify_output_flags & VerifyOutputFlags::kEnableForRemoteCompaction);
-    const bool should_verify_block_checksum =
-        !!(verify_output_flags & VerifyOutputFlags::kVerifyBlockChecksum);
-    const bool should_verify_iteration =
-        !!(verify_output_flags & VerifyOutputFlags::kVerifyIteration);
-    const bool should_verify_file_checksum =
-        !!(verify_output_flags & VerifyOutputFlags::kVerifyFileChecksum);
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
+      "CompactionServiceCompactionJob::Run:0", [&](void* arg) {
+        CompactionServiceResult* compaction_result =
+            *(static_cast<CompactionServiceResult**>(arg));
+        ASSERT_TRUE(compaction_result != nullptr &&
+                    !compaction_result->output_files.empty());
+        // Corrupt files here
+        for (const auto& output_file : compaction_result->output_files) {
+          std::string file_name =
+              compaction_result->output_path + "/" + output_file.file_name;
 
-    Status s = db_->CompactRange(CompactRangeOptions(), &start, &end);
-    if (is_enabled_for_remote_compaction &&
-        (should_verify_block_checksum || should_verify_iteration ||
-         should_verify_file_checksum)) {
-      ASSERT_NOK(s);
-      ASSERT_TRUE(s.IsCorruption());
-    } else {
-      // CompactRange() goes through if block checksum wasn't verified
-      ASSERT_OK(s);
-    }
+          // Corrupt very small range of bytes. This corruption is so small
+          // that this isn't caught by default light-weight check
+          ASSERT_OK(test::CorruptFile(env_, file_name, 0, 1,
+                                      false /* verifyChecksum */));
+        }
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  const bool is_enabled_for_remote_compaction =
+      !!(verify_output_flags & VerifyOutputFlags::kEnableForRemoteCompaction);
+  const bool should_verify_block_checksum =
+      !!(verify_output_flags & VerifyOutputFlags::kVerifyBlockChecksum);
+  const bool should_verify_iteration =
+      !!(verify_output_flags & VerifyOutputFlags::kVerifyIteration);
+  const bool should_verify_file_checksum =
+      !!(verify_output_flags & VerifyOutputFlags::kVerifyFileChecksum);
 
-    ASSERT_GE(my_cs->GetCompactionNum(), comp_num + 1);
-
-    SyncPoint::GetInstance()->DisableProcessing();
-    SyncPoint::GetInstance()->ClearAllCallBacks();
-
-    // On the worker side, the compaction is considered success
-    // Verification is done on the primary side
-    CompactionServiceResult result;
-    my_cs->GetResult(&result);
-    ASSERT_OK(result.status);
-    ASSERT_TRUE(result.stats.is_manual_compaction);
-    ASSERT_TRUE(result.stats.is_remote_compaction);
+  Status s = db_->CompactRange(CompactRangeOptions(), &start, &end);
+  if (is_enabled_for_remote_compaction &&
+      (should_verify_block_checksum || should_verify_iteration ||
+       should_verify_file_checksum)) {
+    ASSERT_NOK(s);
+    ASSERT_TRUE(s.IsCorruption());
+  } else {
+    // CompactRange() goes through if block checksum wasn't verified
+    ASSERT_OK(s);
   }
+
+  ASSERT_GE(my_cs->GetCompactionNum(), comp_num + 1);
+
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+
+  // On the worker side, the compaction is considered success
+  // Verification is done on the primary side
+  CompactionServiceResult result;
+  my_cs->GetResult(&result);
+  ASSERT_OK(result.status);
+  ASSERT_TRUE(result.stats.is_manual_compaction);
+  ASSERT_TRUE(result.stats.is_remote_compaction);
 }
+
+INSTANTIATE_TEST_CASE_P(
+    VerifyOutputFlags, CompactionServiceVerifyOutputFlagsTest,
+    ::testing::Values(VerifyOutputFlags::kVerifyNone,
+                      VerifyOutputFlags::kEnableForLocalCompaction |
+                          VerifyOutputFlags::kVerifyBlockChecksum,
+                      VerifyOutputFlags::kEnableForRemoteCompaction |
+                          VerifyOutputFlags::kVerifyBlockChecksum,
+                      VerifyOutputFlags::kEnableForRemoteCompaction |
+                          VerifyOutputFlags::kVerifyIteration,
+                      VerifyOutputFlags::kEnableForRemoteCompaction |
+                          VerifyOutputFlags::kVerifyFileChecksum,
+                      VerifyOutputFlags::kVerifyAll));
 
 TEST_F(CompactionServiceTest, TruncatedOutput) {
   Options options = CurrentOptions();
@@ -1800,6 +1840,213 @@ TEST_F(CompactionServiceTest, CompactionFilter) {
   auto my_cs = GetCompactionService();
   ASSERT_GE(my_cs->GetCompactionNum(), 1);
 }
+
+enum class SecondaryOpenFailureMode {
+  kDeletedHistoricalFile,
+  kMissingInputFile,
+  kOtherIOError,
+};
+
+class SecondaryOpenFailureFS : public FileSystemWrapper {
+ public:
+  SecondaryOpenFailureFS(const std::shared_ptr<FileSystem>& base,
+                         SecondaryOpenFailureMode mode)
+      : FileSystemWrapper(base), mode_(mode) {}
+
+  const char* Name() const override { return "SecondaryOpenFailureFS"; }
+
+  void SetTargetPath(std::string path) { target_path_ = std::move(path); }
+
+  int manifest_opens() const { return manifest_opens_.load(); }
+  int target_opens() const { return target_opens_.load(); }
+
+  IOStatus NewSequentialFile(const std::string& fname,
+                             const FileOptions& options,
+                             std::unique_ptr<FSSequentialFile>* result,
+                             IODebugContext* dbg) override {
+    if (fname.find("/MANIFEST-") != std::string::npos) {
+      ++manifest_opens_;
+    }
+    return target()->NewSequentialFile(fname, options, result, dbg);
+  }
+
+  IOStatus NewRandomAccessFile(const std::string& fname,
+                               const FileOptions& options,
+                               std::unique_ptr<FSRandomAccessFile>* result,
+                               IODebugContext* dbg) override {
+    if (fname == target_path_) {
+      result->reset();
+      int target_open = ++target_opens_;
+      if (mode_ == SecondaryOpenFailureMode::kDeletedHistoricalFile &&
+          target_open == 1) {
+        IOStatus deletion = target()->DeleteFile(fname, IOOptions(), dbg);
+        if (!deletion.ok()) {
+          return deletion;
+        }
+      }
+      if (mode_ == SecondaryOpenFailureMode::kOtherIOError) {
+        return IOStatus::IOError("Injected non-path error");
+      }
+      return IOStatus::PathNotFound("Injected missing SST", fname);
+    }
+    return target()->NewRandomAccessFile(fname, options, result, dbg);
+  }
+
+ private:
+  const SecondaryOpenFailureMode mode_;
+  std::string target_path_;
+  std::atomic<int> manifest_opens_{0};
+  std::atomic<int> target_opens_{0};
+};
+
+class CompactionServiceSecondaryOpenRetryTest
+    : public CompactionServiceTest,
+      public ::testing::WithParamInterface<SecondaryOpenFailureMode> {};
+
+TEST_P(CompactionServiceSecondaryOpenRetryTest, MissingSstDuringOpen) {
+  const SecondaryOpenFailureMode mode = GetParam();
+  Options options = CurrentOptions();
+  options.disable_auto_compactions = true;
+  // Keep verification from opening and caching the historical file before
+  // LoadTableHandlers reaches it at the invalid historical version boundary.
+  options.verify_sst_unique_id_in_manifest = false;
+  ReopenWithCompactionService(&options);
+
+  // Retain two obsolete SSTs. B is removed before worker recovery, so replay
+  // encounters a valid version with A followed by an invalid version with B.
+  // Loading the last valid version opens A; that open removes A permanently.
+  ASSERT_OK(Put(2, Key(0), "old"));
+  ASSERT_OK(Flush(2));
+  std::vector<LiveFileMetaData> live_files;
+  db_->GetLiveFilesMetaData(&live_files);
+  uint64_t historical_file_number = 0;
+  for (const auto& file : live_files) {
+    if (file.column_family_name == "cf_2") {
+      historical_file_number = TableFileNameToNumber(file.name);
+    }
+  }
+  ASSERT_NE(historical_file_number, 0);
+  const std::string historical_path =
+      MakeTableFileName(dbname_, historical_file_number);
+  ASSERT_OK(db_->DisableFileDeletions());
+  Defer enable_file_deletions(
+      [&] { db_->EnableFileDeletions().PermitUncheckedError(); });
+  ASSERT_OK(Put(2, Key(0), "new"));
+  ASSERT_OK(Flush(2));
+  live_files.clear();
+  db_->GetLiveFilesMetaData(&live_files);
+  uint64_t missing_historical_file_number = 0;
+  for (const auto& file : live_files) {
+    if (file.column_family_name == "cf_2" &&
+        TableFileNameToNumber(file.name) != historical_file_number) {
+      missing_historical_file_number = TableFileNameToNumber(file.name);
+    }
+  }
+  ASSERT_NE(missing_historical_file_number, 0);
+  const std::string missing_historical_path =
+      MakeTableFileName(dbname_, missing_historical_file_number);
+  // CompactFiles names both overlapping L0 files explicitly; CompactRange can
+  // leave the newest L0 file live when it stops at an intermediate level.
+  std::vector<std::string> historical_inputs;
+  for (const auto& file : live_files) {
+    if (file.column_family_name == "cf_2") {
+      uint64_t number = TableFileNameToNumber(file.name);
+      if (number == historical_file_number ||
+          number == missing_historical_file_number) {
+        historical_inputs.push_back(file.name);
+      }
+    }
+  }
+  ASSERT_EQ(historical_inputs.size(), 2);
+  ASSERT_OK(db_->CompactFiles(CompactionOptions(), handles_[2],
+                              historical_inputs, 1));
+  live_files.clear();
+  db_->GetLiveFilesMetaData(&live_files);
+  for (const auto& file : live_files) {
+    ASSERT_NE(historical_file_number, TableFileNameToNumber(file.name));
+    ASSERT_NE(missing_historical_file_number, TableFileNameToNumber(file.name));
+  }
+  ASSERT_OK(env_->FileExists(historical_path));
+  ASSERT_OK(env_->FileExists(missing_historical_path));
+  ASSERT_OK(env_->DeleteFile(missing_historical_path));
+
+  auto fs =
+      std::make_shared<SecondaryOpenFailureFS>(env_->GetFileSystem(), mode);
+  if (mode != SecondaryOpenFailureMode::kMissingInputFile) {
+    fs->SetTargetPath(historical_path);
+  }
+  GetCompactionService()->MyTestCompactionService::SetWorkerEnvOverride(
+      std::make_shared<CompositeEnvWrapper>(env_, fs));
+
+  std::vector<uint64_t> input_file_numbers;
+  auto* sync_point = ROCKSDB_NAMESPACE::SyncPoint::GetInstance();
+  sync_point->SetCallBack(
+      "CompactionServiceJob::ProcessKeyValueCompactionWithCompactionService",
+      [&](void* arg) {
+        const auto* input = static_cast<CompactionServiceInput*>(arg);
+        if (input->cf_name != "cf_2") {
+          return;
+        }
+        input_file_numbers.clear();
+        for (const auto& file : input->input_files) {
+          input_file_numbers.push_back(TableFileNameToNumber(file));
+        }
+        if (mode == SecondaryOpenFailureMode::kMissingInputFile &&
+            !input_file_numbers.empty()) {
+          fs->SetTargetPath(
+              MakeTableFileName(dbname_, input_file_numbers.front()));
+        }
+      });
+  sync_point->EnableProcessing();
+  Defer clear_sync_point([&] {
+    sync_point->DisableProcessing();
+    sync_point->ClearAllCallBacks();
+  });
+
+  ASSERT_OK(Put(2, Key(0), "first"));
+  ASSERT_OK(Flush(2));
+  ASSERT_OK(Put(2, Key(0), "second"));
+  ASSERT_OK(Flush(2));
+  live_files.clear();
+  db_->GetLiveFilesMetaData(&live_files);
+  std::vector<std::string> current_inputs;
+  for (const auto& file : live_files) {
+    if (file.column_family_name == "cf_2") {
+      current_inputs.push_back(file.name);
+    }
+  }
+  ASSERT_GE(current_inputs.size(), 3);
+  const int compactions_before = GetCompactionService()->GetCompactionNum();
+  Status s =
+      db_->CompactFiles(CompactionOptions(), handles_[2], current_inputs, 2);
+  ASSERT_FALSE(input_file_numbers.empty());
+  for (uint64_t input_file_number : input_file_numbers) {
+    ASSERT_NE(historical_file_number, input_file_number);
+    ASSERT_NE(missing_historical_file_number, input_file_number);
+  }
+  ASSERT_EQ(compactions_before + 1, GetCompactionService()->GetCompactionNum());
+  if (mode == SecondaryOpenFailureMode::kDeletedHistoricalFile) {
+    ASSERT_OK(s);
+    ASSERT_EQ(fs->manifest_opens(), 2);
+    ASSERT_EQ(fs->target_opens(), 1);
+    Status file_status = env_->FileExists(historical_path);
+    ASSERT_TRUE(file_status.IsNotFound()) << file_status.ToString();
+    ASSERT_EQ("second", Get(2, Key(0)));
+  } else {
+    ASSERT_NOK(s);
+    ASSERT_TRUE(s.IsIncomplete());
+    ASSERT_EQ(fs->manifest_opens(),
+              mode == SecondaryOpenFailureMode::kMissingInputFile ? 3 : 1);
+    ASSERT_EQ(fs->target_opens(),
+              mode == SecondaryOpenFailureMode::kMissingInputFile ? 3 : 1);
+  }
+}
+
+INSTANTIATE_TEST_CASE_P(
+    MissingSst, CompactionServiceSecondaryOpenRetryTest,
+    ::testing::Values(SecondaryOpenFailureMode::kDeletedHistoricalFile,
+                      SecondaryOpenFailureMode::kMissingInputFile,
+                      SecondaryOpenFailureMode::kOtherIOError));
 
 TEST_F(CompactionServiceTest, MergeOperator) {
   Options options = CurrentOptions();

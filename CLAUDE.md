@@ -242,7 +242,12 @@ from an implementation detail instead of an explicit option.
 * When a new .cc file is added, update Makefile, CMakeLists.txt, src.mk, BUCK.
 * Don't manually edit BUCK file, after updating src.mk, run
     /usr/local/bin/python3 buckifier/buckify_rocksdb.py to update it
-* For -j in make command, use the number of CPU cores to decide it.
+* Default to `make -j48` for compilation. Only if a build fails because of
+  out-of-memory, retry the same target and flags with `-j32`, then `-j16`, then
+  `-j8`. Keep `AUTO_CLEAN=1` and successful objects; do not run an extra
+  `make clean`. Diagnose non-OOM failures instead of reducing parallelism.
+  Make's `-j` controls compilation; test concurrency is independent and must
+  not be set to 48 because compilation uses `-j48`.
 * When searching for references to something (a symbol, library, etc.), do not
   restrict or truncate your search based on presumed relevance or scope. It is
   important and time-saving to keep the repo reasonably consistent across
@@ -254,10 +259,10 @@ from an implementation detail instead of an explicit option.
 Object files are written to the same paths regardless of build flags, so
 reusing objects from a prior build with different flags causes confusing
 linker errors, etc. This problem is essentially avoidable by ALWAYS using
-`AUTO_CLEAN=1 make -j<n> <something>` for manual make invocations. This
-will automatically clean object files if the build parameters/flavor have
-changed. The `build_tools/rockstest.sh` / `rocksptest.sh` helpers described
-below set `AUTO_CLEAN=1` for you.
+`AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j48 <target>` for manual make
+invocations. This automatically cleans object files if build flags
+or flavor have changed. The `build_tools/rockstest.sh` / `rocksptest.sh`
+helpers described below set `AUTO_CLEAN=1` for you.
 
 ### Source checks
 * Run `make check-sources` before committing. This catches non-ASCII
@@ -318,26 +323,38 @@ rather than relying on libstdc++ transitive includes.
     unit tests. This should be done every time unit test is updated.
 * Don't use sleep to wait for certain events to happen. This will cause test to
     be flaky. Instead, use sync point to synchronize thread progress.
-* Cap unit test execution with 60 seconds timeout.
-* To build and run unit tests locally, prefer these helper scripts:
+* Cap each test case at 60 seconds, not an entire shard or binary. Keep the
+    test's operations, coverage, and assertions unchanged on retries.
+* For a requested test scope, run every case in the first round with 8 test
+    workers. In later rounds, run only the exact `(binary, fully qualified test
+    name)` cases that failed or timed out in the preceding round, using 2, 1,
+    and 1 workers respectively. Preserve each round's results and logs. Stop
+    rerunning a case as soon as it passes; classify it as persistent only if it
+    fails or times out in all four rounds. A cancelled case is not a failure.
+    Do not rewrite an earlier timeout or failure as a pass when a retry passes.
+* The following helpers are available for local tests. If a helper cannot
+    control compilation and test concurrency independently, build with the
+    explicit `make -j48` command above and invoke the test runner separately.
+    Keep `ASSERT_STATUS_CHECKED=1` for either approach:
     * `build_tools/rocksptest.sh <test_binary> [more_binaries...] [args...]`
         builds the binary(ies) with parallel make and `AUTO_CLEAN=1` and runs
-        them under gtest-parallel, sharding the test cases across CPUs. Prefer
-        this whenever running more than a couple of test cases, e.g.
-        `build_tools/rocksptest.sh table_test` or
-        `build_tools/rocksptest.sh db_test env_test --gtest_filter=*Foo*`.
+        them under gtest-parallel, sharding the test cases across CPUs. It is
+        useful for more than a couple of test cases, e.g.
+        `ASSERT_STATUS_CHECKED=1 build_tools/rocksptest.sh table_test` or
+        `ASSERT_STATUS_CHECKED=1 build_tools/rocksptest.sh db_test env_test --gtest_filter=*Foo*`.
     * `build_tools/rockstest.sh <test_binary> [args...]` builds with parallel
         make and `AUTO_CLEAN=1` and runs the binary directly (serially).
         Use it only for a very small number of test cases, e.g.
-        `build_tools/rockstest.sh db_test --gtest_filter=*MixedSlowdown*`.
+        `ASSERT_STATUS_CHECKED=1 build_tools/rockstest.sh db_test --gtest_filter=*MixedSlowdown*`.
 * After writing a test, stress-test for flakiness (AUTO_CLEAN handles the
     rebuild needed by the `COERCE_CONTEXT_SWITCH=1` flag change):
     ```bash
-    COERCE_CONTEXT_SWITCH=1 build_tools/rockstest.sh {test_binary} -r100 \
+    ASSERT_STATUS_CHECKED=1 COERCE_CONTEXT_SWITCH=1 \
+        build_tools/rockstest.sh {test_binary} -r100 \
         --gtest_filter="*YourTestName*"
     ```
 * For CI-style flaky tests that do not reproduce with `gtest_parallel.py`,
-    `--gtest_repeat`, or normal coerce-mode runs, inspect
+    `--gtest_repeat`, or ordinary coerce-mode runs, inspect
     `tools/gtest_parallel_repro.py --help`.
 * Each unit test file has overheads, so avoid creating new unit test files
   for random minor features. Consider adding to slice_test, db_etc3_test, or
@@ -396,21 +413,24 @@ rather than relying on libstdc++ transitive includes.
 * Blog post authors must be defined in `docs/_data/authors.yml` to be displayed
 
 ### Final verification of the change
-* Execute `AUTO_CLEAN=1 make check` to build all of the changes and execute all
-    of the tests. `AUTO_CLEAN=1` ensures a clean rebuild if your previous build
-    used different parameters. Note that executing all of the tests could take
-    multiple minutes.
-* Run `AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make check` to verify all Status
-    objects are properly checked. This catches missing error handling that can
-    lead to silent data corruption.
+* For a requested full check, run only strict Status checking:
+    `AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j48 J=8 check`.
+    `-j48` controls compilation, while `J=8` controls concurrent test jobs;
+    neither sets the per-case timeout. Configure the test runner with
+    `--timeout_per_test=60` (or equivalent) and audit the full requested case
+    list; a 60-second timeout for a shard does not meet this rule. Avoid
+    multiplying `J=8` by nested test-runner workers. Use the 8, 2, 1, 1 retry
+    sequence above for exact failures or timeouts, keeping
+    `ASSERT_STATUS_CHECKED=1` for every round. Do not run a separate
+    non-strict verification mode.
 
 ### Monitoring make check progress
 * Use `make check-progress` to get machine-parseable JSON progress while
     `make check` is running. This is useful for Claude Code to monitor long
     builds without timeout issues.
-* Run `make check` in background, then poll progress:
+* Run a requested strict-mode check in background, then poll progress:
     ```bash
-    AUTO_CLEAN=1 make check &
+    AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j48 J=8 check &
     # Poll periodically:
     make check-progress
     ```
@@ -434,11 +454,11 @@ rather than relying on libstdc++ transitive includes.
 * `output`: last 50 lines of test log including error messages and stack traces
 
 ### Executing benchmark using db_bench
-* Since the goal is to measure performance, we need to build a release binary
-    using `AUTO_CLEAN=1 DEBUG_LEVEL=0 make db_bench`. If there is an engine
-    crash due to a bug, switch back to a debug build with
-    `AUTO_CLEAN=1 make dbg`; `AUTO_CLEAN=1` handles the release<->debug rebuild
-    automatically.
+* Since the goal is to measure performance, build a release binary using
+    `AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j48 db_bench`.
+    If there is an engine crash due to a bug, switch back to a debug build with
+    `AUTO_CLEAN=1 ASSERT_STATUS_CHECKED=1 make -j48 dbg`; `AUTO_CLEAN=1`
+    handles the release<->debug rebuild automatically.
 
 ### Formatting code
 * After making change, use `make format-auto` to auto-apply formatting without

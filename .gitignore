@@ -114,3 +114,6 @@ tools/__pycache__/
 # Keep documentation trackable even if broader ignores match names like "*_test".
 !docs/
 !docs/**
+
+paper_ref/
+__pycache__/

@@ -359,6 +359,13 @@ class ExternalSSTFileTest
     return sst_file_writer.Finish();
   }
 
+ private:
+  friend class
+      ExternalSSTFileTest_IngestFileWithGlobalSeqnoRandomizedMemtable_Test;
+  friend class
+      ExternalSSTFileTest_IngestFileWithGlobalSeqnoRandomizedExternalFiles_Test;
+  void RunIngestFileWithGlobalSeqnoRandomized(bool write_to_memtable);
+
  protected:
   int last_file_id_ = 0;
   bool two_phase_ingest_ = false;
@@ -2444,7 +2451,11 @@ TEST_F(ExternalSSTFileTest, WithUnorderedWrite) {
 }
 
 #if !defined(ROCKSDB_VALGRIND_RUN) || defined(ROCKSDB_FULL_VALGRIND_RUN)
-TEST_P(ExternalSSTFileTest, IngestFileWithGlobalSeqnoRandomized) {
+void ExternalSSTFileTest::RunIngestFileWithGlobalSeqnoRandomized(
+    bool write_to_memtable) {
+  SCOPED_TRACE(write_to_memtable ? "mode=memtable"
+                                 : "mode=external_files_only");
+  SCOPED_TRACE("seed=301");
   env_->skip_fsync_ = true;
   Options options = CurrentOptions();
   options.IncreaseParallelism(20);
@@ -2453,38 +2464,44 @@ TEST_P(ExternalSSTFileTest, IngestFileWithGlobalSeqnoRandomized) {
 
   bool write_global_seqno = std::get<0>(GetParam());
   bool verify_checksums_before_ingest = std::get<1>(GetParam());
-  for (int iter = 0; iter < 2; iter++) {
-    bool write_to_memtable = (iter == 0);
-    DestroyAndReopen(options);
+  DestroyAndReopen(options);
 
-    Random rnd(301);
-    std::map<std::string, std::string> true_data;
-    for (int i = 0; i < 500; i++) {
-      std::vector<std::pair<std::string, std::string>> random_data;
-      for (int j = 0; j < 100; j++) {
-        std::string k =
-            rnd.RandomString(rnd.Next() % 20 + 1);  // requires non-empty keys
-        std::string v = rnd.RandomString(rnd.Next() % 50);
-        random_data.emplace_back(k, v);
-      }
-
-      if (write_to_memtable && rnd.OneIn(4)) {
-        // 25% of writes go through memtable
-        for (auto& entry : random_data) {
-          ASSERT_OK(Put(entry.first, entry.second));
-          true_data[entry.first] = entry.second;
-        }
-      } else {
-        ASSERT_OK(GenerateAndAddExternalFile(
-            options, random_data, -1, true, write_global_seqno,
-            verify_checksums_before_ingest, false, true, &true_data));
-      }
+  Random rnd(301);
+  std::map<std::string, std::string> true_data;
+  for (int i = 0; i < 500; i++) {
+    SCOPED_TRACE("file_index=" + std::to_string(i));
+    std::vector<std::pair<std::string, std::string>> random_data;
+    for (int j = 0; j < 100; j++) {
+      std::string k =
+          rnd.RandomString(rnd.Next() % 20 + 1);  // requires non-empty keys
+      std::string v = rnd.RandomString(rnd.Next() % 50);
+      random_data.emplace_back(k, v);
     }
-    size_t kcnt = 0;
-    VerifyDBFromMap(true_data, &kcnt, false);
-    ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
-    VerifyDBFromMap(true_data, &kcnt, false);
+
+    if (write_to_memtable && rnd.OneIn(4)) {
+      // 25% of writes go through memtable
+      for (auto& entry : random_data) {
+        ASSERT_OK(Put(entry.first, entry.second));
+        true_data[entry.first] = entry.second;
+      }
+    } else {
+      ASSERT_OK(GenerateAndAddExternalFile(
+          options, random_data, -1, true, write_global_seqno,
+          verify_checksums_before_ingest, false, true, &true_data));
+    }
   }
+  size_t kcnt = 0;
+  VerifyDBFromMap(true_data, &kcnt, false);
+  ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  VerifyDBFromMap(true_data, &kcnt, false);
+}
+
+TEST_P(ExternalSSTFileTest, IngestFileWithGlobalSeqnoRandomizedMemtable) {
+  ExternalSSTFileTest::RunIngestFileWithGlobalSeqnoRandomized(true);
+}
+
+TEST_P(ExternalSSTFileTest, IngestFileWithGlobalSeqnoRandomizedExternalFiles) {
+  ExternalSSTFileTest::RunIngestFileWithGlobalSeqnoRandomized(false);
 }
 #endif  // !defined(ROCKSDB_VALGRIND_RUN) || defined(ROCKSDB_FULL_VALGRIND_RUN)
 
@@ -4674,15 +4691,71 @@ TEST_P(IngestDBGeneratedFileTest, FailureCase) {
 class IngestDBGeneratedFileTest2
     : public ExternalSSTFileTestBase,
       public ::testing::WithParamInterface<
-          std::tuple<bool, bool, bool, bool, bool>> {
+          std::tuple<bool, bool, bool, bool, bool, size_t>> {
  public:
   IngestDBGeneratedFileTest2() = default;
+  static constexpr size_t kConfigsPerBatch = 5;
+
+  static const std::vector<std::vector<int>>& OptionConfigBatches() {
+    static const std::vector<std::vector<int>> batches = [] {
+      std::vector<std::vector<int>> result;
+      for (int config = kDefault; config < kEnd; ++config) {
+        if (ShouldSkipOptions(config, kSkipPlainTable | kSkipFIFOCompaction)) {
+          continue;
+        }
+        if (result.empty() || result.back().size() == kConfigsPerBatch) {
+          result.emplace_back();
+        }
+        result.back().push_back(config);
+      }
+      return result;
+    }();
+    return batches;
+  }
+
+ protected:
+  void SetUp() override {
+    const auto& batches = OptionConfigBatches();
+    ASSERT_LT(std::get<5>(GetParam()), batches.size());
+
+    const auto& batch = CurrentOptionConfigBatch();
+    ASSERT_FALSE(batch.empty());
+    ASSERT_LE(batch.size(), kConfigsPerBatch);
+    option_config_ = batch.front();
+    if (option_config_ != kDefault) {
+      DestroyAndReopen(CurrentOptions());
+    }
+  }
+
+  bool ChangeOptionsWithinBatch() {
+    const auto& batch = CurrentOptionConfigBatch();
+    if (++config_index_ == batch.size()) {
+      return false;
+    }
+    if (!ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction)) {
+      ADD_FAILURE() << "Missing option config " << batch[config_index_];
+      return false;
+    }
+    EXPECT_EQ(option_config_, batch[config_index_]);
+    return true;
+  }
+
+ private:
+  const std::vector<int>& CurrentOptionConfigBatch() const {
+    return OptionConfigBatches()[std::get<5>(GetParam())];
+  }
+
+  size_t config_index_ = 0;
 };
 
-INSTANTIATE_TEST_CASE_P(VaryingOptions, IngestDBGeneratedFileTest2,
-                        testing::Combine(testing::Bool(), testing::Bool(),
-                                         testing::Bool(), testing::Bool(),
-                                         testing::Bool()));
+INSTANTIATE_TEST_CASE_P(
+    VaryingOptions, IngestDBGeneratedFileTest2,
+    testing::Combine(
+        testing::Bool(), testing::Bool(), testing::Bool(), testing::Bool(),
+        testing::Bool(),
+        testing::Range(
+            size_t{0},
+            IngestDBGeneratedFileTest2::OptionConfigBatches().size())));
 
 TEST_P(IngestDBGeneratedFileTest2, NotOverlapWithDB) {
   // Use a separate column family to sort some data, generate multiple SST
@@ -4809,35 +4882,40 @@ TEST_P(IngestDBGeneratedFileTest2, NotOverlapWithDB) {
       ASSERT_OK(db_->DropColumnFamily(temp_cfh));
       ASSERT_OK(db_->DestroyColumnFamilyHandle(temp_cfh));
     }
-  } while (ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction));
+  } while (ChangeOptionsWithinBatch());
 }
 
 TEST_P(IngestDBGeneratedFileTest2, NonZeroSeqno) {
   // Test ingestion of DB-generated SST files that contain non-zero sequence
   // numbers.
-  IngestExternalFileOptions ingest_opts;
-  ingest_opts.allow_db_generated_files = true;
+  IngestExternalFileOptions param_ingest_opts;
+  param_ingest_opts.allow_db_generated_files = true;
   // This only works since we are ingesting without snapshot
   // Failure case will be tested below.
-  ingest_opts.snapshot_consistency = std::get<0>(GetParam());
-  ingest_opts.allow_global_seqno = std::get<1>(GetParam());
-  ingest_opts.allow_blocking_flush = std::get<2>(GetParam());
-  ingest_opts.fail_if_not_bottommost_level = std::get<3>(GetParam());
-  ingest_opts.link_files = std::get<4>(GetParam());
+  param_ingest_opts.snapshot_consistency = std::get<0>(GetParam());
+  param_ingest_opts.allow_global_seqno = std::get<1>(GetParam());
+  param_ingest_opts.allow_blocking_flush = std::get<2>(GetParam());
+  param_ingest_opts.fail_if_not_bottommost_level = std::get<3>(GetParam());
+  param_ingest_opts.link_files = std::get<4>(GetParam());
+  const IngestExternalFileOptions base_ingest_opts = param_ingest_opts;
   Random* rnd = Random::GetTLSInstance();
   rnd->Reset(std::random_device{}());
   std::ostringstream ingest_opts_trace;
-  ingest_opts_trace << "ingest_opts params: " << "snapshot_consistency="
-                    << ingest_opts.snapshot_consistency << ", "
-                    << "allow_global_seqno=" << ingest_opts.allow_global_seqno
-                    << ", " << "allow_blocking_flush="
-                    << ingest_opts.allow_blocking_flush << ", "
+  ingest_opts_trace << "ingest_opts params: "
+                    << "snapshot_consistency="
+                    << base_ingest_opts.snapshot_consistency << ", "
+                    << "allow_global_seqno="
+                    << base_ingest_opts.allow_global_seqno << ", "
+                    << "allow_blocking_flush="
+                    << base_ingest_opts.allow_blocking_flush << ", "
                     << "fail_if_not_bottommost_level="
-                    << ingest_opts.fail_if_not_bottommost_level << ", "
-                    << "link_files=" << ingest_opts.link_files;
+                    << base_ingest_opts.fail_if_not_bottommost_level << ", "
+                    << "link_files=" << base_ingest_opts.link_files;
   SCOPED_TRACE(ingest_opts_trace.str());
 
   do {
+    // The temporary false setting below must not leak into the next config.
+    IngestExternalFileOptions ingest_opts = base_ingest_opts;
     SCOPED_TRACE("option_config_ = " + std::to_string(option_config_));
 
     Options options = CurrentOptions();
@@ -4973,9 +5051,12 @@ TEST_P(IngestDBGeneratedFileTest2, NonZeroSeqno) {
       snapshot = db_->GetSnapshot();
       s = db_->IngestExternalFile(non_overlap_cf, sst_file_paths, ingest_opts);
       ASSERT_NOK(s);
-      ASSERT_TRUE(s.ToString().find(
-          "An ingested file overlaps with existing data in the DB and has been "
-          "assigned a non-zero sequence number"));
+      ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
+      ASSERT_TRUE(s.ToString().find("An ingested file overlaps with existing "
+                                    "data in the DB and has been "
+                                    "assigned a non-zero sequence number") !=
+                  std::string::npos)
+          << s.ToString();
       db_->ReleaseSnapshot(snapshot);
     }
 
@@ -5007,11 +5088,13 @@ TEST_P(IngestDBGeneratedFileTest2, NonZeroSeqno) {
       s = db_->IngestExternalFile(overlap_cf, sst_file_paths, ingest_opts);
 
       ASSERT_NOK(s);
-      if (ingest_opts.fail_if_not_bottommost_level) {
+      if (ingest_opts.fail_if_not_bottommost_level && options.num_levels > 1) {
+        ASSERT_TRUE(s.IsTryAgain()) << s.ToString();
         ASSERT_TRUE(s.ToString().find("Files cannot be ingested to Lmax") !=
                     std::string::npos)
             << s.ToString();
       } else {
+        ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
         ASSERT_TRUE(s.ToString().find("An ingested file overlaps with existing "
                                       "data in the DB and has been "
                                       "assigned a non-zero sequence number") !=
@@ -5032,7 +5115,7 @@ TEST_P(IngestDBGeneratedFileTest2, NonZeroSeqno) {
       ASSERT_OK(db_->DropColumnFamily(temp_cfh));
       ASSERT_OK(db_->DestroyColumnFamilyHandle(temp_cfh));
     }
-  } while (ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction));
+  } while (ChangeOptionsWithinBatch());
 }
 
 std::string GenSecondaryKey(const std::string& pk, const std::string& val) {
@@ -5274,7 +5357,7 @@ TEST_P(IngestDBGeneratedFileTest2, ZeroAndNonZeroSeqno) {
     ASSERT_OK(temp_db->Close());
     temp_db.reset();
     ASSERT_OK(DestroyDB(temp_db_name, temp_db_opts));
-  } while (ChangeOptions(kSkipPlainTable | kSkipFIFOCompaction));
+  } while (ChangeOptionsWithinBatch());
 }
 
 }  // namespace ROCKSDB_NAMESPACE

@@ -6,8 +6,10 @@
 #include "db/db_test_util.h"
 #include "file/file_prefetch_buffer.h"
 #include "file/file_util.h"
+#include "options/db_options.h"
 #include "rocksdb/file_system.h"
 #include "test_util/sync_point.h"
+#include "util/defer.h"
 #ifdef GFLAGS
 #include "tools/io_tracer_parser_tool.h"
 #endif
@@ -236,6 +238,12 @@ TEST_P(PrefetchTest, Basic) {
   SyncPoint::GetInstance()->SetCallBack("FilePrefetchBuffer::Prefetch:Start",
                                         [&](void*) { buff_prefetch_count++; });
   SyncPoint::GetInstance()->EnableProcessing();
+  Defer cleanup([&]() {
+    Close();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearCallBack(
+        "FilePrefetchBuffer::Prefetch:Start");
+  });
 
   Status s = TryReopen(options);
   if (use_direct_io && (s.IsNotSupported() || s.IsInvalidArgument())) {
@@ -344,9 +352,14 @@ TEST_P(PrefetchTest, Basic) {
 
     ASSERT_GT(post_compaction_prefetch_bytes.count, 0);
 
-    // Not an exact match due to potential roundup/down for alignment
-    auto expected_compaction_readahead_size =
-        Options().compaction_readahead_size;
+    // The file system may cap compaction readahead below the DB option.
+    // Compare against the size actually passed to compaction readers.
+    const DBOptions db_options = db_->GetDBOptions();
+    const auto expected_compaction_readahead_size =
+        fs->OptimizeForCompactionTableRead(FileOptions(db_options),
+                                           ImmutableDBOptions(db_options))
+            .compaction_readahead_size;
+    // Not an exact match due to potential roundup/down for alignment.
     ASSERT_LE(post_compaction_prefetch_bytes.max,
               expected_compaction_readahead_size * 1.1);
     ASSERT_GE(post_compaction_prefetch_bytes.max,
@@ -390,7 +403,6 @@ TEST_P(PrefetchTest, Basic) {
       buff_prefetch_count = 0;
     }
   }
-  Close();
 }
 
 class PrefetchTailTest : public PrefetchTest {

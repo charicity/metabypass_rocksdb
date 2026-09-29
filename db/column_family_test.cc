@@ -54,7 +54,7 @@ class EnvCounter : public SpecialEnv {
   Status NewWritableFile(const std::string& f, std::unique_ptr<WritableFile>* r,
                          const EnvOptions& soptions) override {
     ++num_new_writable_file_;
-    return EnvWrapper::NewWritableFile(f, r, soptions);
+    return SpecialEnv::NewWritableFile(f, r, soptions);
   }
 
  private:

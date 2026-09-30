@@ -30,9 +30,11 @@
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1133,6 +1135,50 @@ DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
               "Pending event bytes");
 DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
 DEFINE_uint64(metabypass_interval_ms, 1000, "Background trigger interval");
+DEFINE_string(metabypass_sst_mode, "disabled",
+              "SST tiering policy for metabypass_mode=sst_tiering: disabled, "
+              "observe, adaptive");
+DEFINE_uint64(metabypass_sst_capacity_bytes, 0,
+              "SSD SST byte budget for adaptive tiering");
+DEFINE_uint64(metabypass_sst_sample_one_in, 64,
+              "Sample one in N SST-backed point reads");
+DEFINE_uint64(metabypass_sst_reserve_percent, 10,
+              "SSD SST budget reserve percent");
+DEFINE_uint64(metabypass_sst_sample_buffer_capacity, 4096,
+              "SST heat-sample buffer capacity");
+DEFINE_uint64(metabypass_sst_interval_ms, 1000,
+              "SST tiering evaluation interval");
+DEFINE_uint64(metabypass_sst_half_life_ms, 10000, "SST heat-score half-life");
+DEFINE_uint64(metabypass_sst_promote_rounds, 2,
+              "SST tiering consecutive promotion rounds");
+DEFINE_uint64(metabypass_sst_demote_rounds, 3,
+              "SST tiering consecutive demotion rounds");
+DEFINE_uint64(metabypass_sst_residency_ms, 10000,
+              "SST tiering minimum residence time");
+DEFINE_double(metabypass_sst_replacement_margin, 0.25,
+              "SST tiering minimum replacement score advantage");
+DEFINE_uint64(metabypass_sst_migration_bytes_per_sec, 32 * 1024 * 1024,
+              "SST copy rate limit in bytes per second");
+DEFINE_uint64(metabypass_sst_migration_queue_capacity, 64,
+              "SST migration queue capacity");
+DEFINE_uint64(metabypass_sst_read_delay_us, 0,
+              "Benchmark-only delay for random reads from backup/sst-store");
+DEFINE_string(metabypass_sst_workload, "uniform",
+              "SST benchmark workload: uniform, hotspot, switch, scan, mixed");
+DEFINE_uint64(metabypass_sst_seed, 1, "Deterministic SST workload seed");
+DEFINE_uint64(metabypass_sst_warmup_ops, 10000,
+              "SST workload warmup operations");
+DEFINE_uint64(metabypass_sst_measure_ops, 50000,
+              "SST workload measured operations");
+DEFINE_uint64(metabypass_sst_window_ms, 1000,
+              "SST workload statistics window in milliseconds");
+DEFINE_uint64(metabypass_sst_flush_every, 4096,
+              "Flush every N keys during SST dataset creation");
+DEFINE_uint64(metabypass_sst_cache_bytes, 64 * 1024,
+              "Block cache bytes for the isolated SST workload");
+DEFINE_uint64(
+    metabypass_sst_target_ops_per_sec, 10000,
+    "Maximum offered SST workload operations per second; 0 unlimited");
 
 DEFINE_bool(use_blob_db, false, "[Stacked BlobDB] Open a BlobDB instance.");
 
@@ -11007,8 +11053,42 @@ class MetaBypassDelayedFS : public FileSystemWrapper {
     if (s.ok()) Wrap(p, f);
     return s;
   }
+  IOStatus NewRandomAccessFile(const std::string& p, const FileOptions& o,
+                               std::unique_ptr<FSRandomAccessFile>* f,
+                               IODebugContext* d) override {
+    IOStatus s = target()->NewRandomAccessFile(p, o, f, d);
+    const std::string cold_dir = FLAGS_metabypass_backup_dir + "/sst-store/";
+    if (s.ok() && FLAGS_metabypass_sst_read_delay_us != 0 &&
+        p.compare(0, cold_dir.size(), cold_dir) == 0 && p.size() >= 4 &&
+        p.compare(p.size() - 4, 4, ".sst") == 0) {
+      f->reset(new DelayedReadFile(std::move(*f),
+                                   FLAGS_metabypass_sst_read_delay_us));
+    }
+    return s;
+  }
 
  private:
+  class DelayedReadFile : public FSRandomAccessFileOwnerWrapper {
+   public:
+    DelayedReadFile(std::unique_ptr<FSRandomAccessFile> f, uint64_t delay)
+        : FSRandomAccessFileOwnerWrapper(std::move(f)), delay_(delay) {}
+    IOStatus Read(uint64_t offset, size_t n, const IOOptions& o, Slice* result,
+                  char* scratch, IODebugContext* d) const override {
+      Pause();
+      return target()->Read(offset, n, o, result, scratch, d);
+    }
+    IOStatus MultiRead(FSReadRequest* reqs, size_t num_reqs, const IOOptions& o,
+                       IODebugContext* d) override {
+      Pause();
+      return target()->MultiRead(reqs, num_reqs, o, d);
+    }
+
+   private:
+    void Pause() const {
+      std::this_thread::sleep_for(std::chrono::microseconds(delay_));
+    }
+    uint64_t delay_;
+  };
   void Wrap(const std::string& p, std::unique_ptr<FSWritableFile>* f) {
     for (const auto& dir :
          {FLAGS_metabypass_data_dir, FLAGS_metabypass_backup_dir}) {
@@ -11021,10 +11101,436 @@ class MetaBypassDelayedFS : public FileSystemWrapper {
   }
 };
 
+static uint64_t MetaBypassBenchRandom(uint64_t* state) {
+  *state += 0x9e3779b97f4a7c15ULL;
+  uint64_t value = *state;
+  value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+  return value ^ (value >> 31);
+}
+
+static std::string MetaBypassBenchKey(uint64_t index) {
+  char key[32];
+  std::snprintf(key, sizeof(key), "%016" PRIu64, index);
+  return key;
+}
+
+static std::string MetaBypassBenchValue(uint64_t index, uint64_t version,
+                                        size_t size) {
+  std::string value(size, char('a' + (index + version) % 26));
+  char prefix[64];
+  std::snprintf(prefix, sizeof(prefix), "%016" PRIu64 ":%016" PRIu64, index,
+                version);
+  value.replace(0, 33, prefix);
+  return value;
+}
+
+static uint64_t MetaBypassBenchPercentile(std::vector<uint64_t>* samples,
+                                          uint64_t percent) {
+  if (samples->empty()) return 0;
+  std::sort(samples->begin(), samples->end());
+  return (*samples)[(samples->size() - 1) * percent / 100];
+}
+
+// An isolated, single-threaded, fixed-operation workload. The Python runner
+// records process CPU/RSS and physical allocation outside this entry point.
+static int RunMetaBypassSstBenchmark(const Options& base_options,
+                                     const MetaBypassOptions& base_bypass) {
+  if (FLAGS_num < 4 || FLAGS_value_size < 33 || FLAGS_disable_wal ||
+      FLAGS_metabypass_sst_flush_every == 0 ||
+      FLAGS_metabypass_sst_window_ms == 0 ||
+      FLAGS_metabypass_sst_cache_bytes == 0 ||
+      FLAGS_metabypass_sst_sample_one_in == 0 ||
+      FLAGS_metabypass_sst_sample_one_in >
+          std::numeric_limits<uint32_t>::max() ||
+      FLAGS_metabypass_sst_reserve_percent >
+          std::numeric_limits<uint32_t>::max() ||
+      FLAGS_metabypass_sst_promote_rounds == 0 ||
+      FLAGS_metabypass_sst_promote_rounds >
+          std::numeric_limits<uint32_t>::max() ||
+      FLAGS_metabypass_sst_demote_rounds == 0 ||
+      FLAGS_metabypass_sst_demote_rounds >
+          std::numeric_limits<uint32_t>::max() ||
+      FLAGS_metabypass_sst_sample_buffer_capacity >
+          std::numeric_limits<size_t>::max() ||
+      FLAGS_metabypass_sst_migration_queue_capacity >
+          std::numeric_limits<size_t>::max()) {
+    fprintf(stderr,
+            "SST benchmark requires num >= 4, value_size >= 33, WAL, "
+            "positive flush/window/cache/sample/round settings, and "
+            "supported option widths\n");
+    return 1;
+  }
+  const std::string workload = FLAGS_metabypass_sst_workload;
+  if (workload != "uniform" && workload != "hotspot" && workload != "switch" &&
+      workload != "scan" && workload != "mixed") {
+    fprintf(stderr, "Unknown --metabypass_sst_workload\n");
+    return 1;
+  }
+  MetaBypassOptions bypass = base_bypass;
+  if (FLAGS_metabypass_sst_mode == "disabled") {
+    bypass.sst_tiering.mode = SstTieringMode::kDisabled;
+  } else if (FLAGS_metabypass_sst_mode == "observe") {
+    bypass.sst_tiering.mode = SstTieringMode::kObserveOnly;
+  } else if (FLAGS_metabypass_sst_mode == "adaptive") {
+    bypass.sst_tiering.mode = SstTieringMode::kAdaptive;
+  } else {
+    fprintf(stderr, "Unknown --metabypass_sst_mode\n");
+    return 1;
+  }
+  bypass.sst_tiering.ssd_capacity_bytes = FLAGS_metabypass_sst_capacity_bytes;
+  bypass.sst_tiering.sample_one_in = FLAGS_metabypass_sst_sample_one_in;
+  bypass.sst_tiering.reserve_percent = FLAGS_metabypass_sst_reserve_percent;
+  bypass.sst_tiering.sample_buffer_capacity =
+      FLAGS_metabypass_sst_sample_buffer_capacity;
+  bypass.sst_tiering.interval_ms = FLAGS_metabypass_sst_interval_ms;
+  bypass.sst_tiering.heat_half_life_ms = FLAGS_metabypass_sst_half_life_ms;
+  bypass.sst_tiering.promote_rounds = FLAGS_metabypass_sst_promote_rounds;
+  bypass.sst_tiering.demote_rounds = FLAGS_metabypass_sst_demote_rounds;
+  bypass.sst_tiering.min_residency_ms = FLAGS_metabypass_sst_residency_ms;
+  bypass.sst_tiering.replacement_margin =
+      FLAGS_metabypass_sst_replacement_margin;
+  bypass.sst_tiering.migration_bytes_per_sec =
+      FLAGS_metabypass_sst_migration_bytes_per_sec;
+  bypass.sst_tiering.migration_queue_capacity =
+      FLAGS_metabypass_sst_migration_queue_capacity;
+  Options options = base_options;
+  options.write_buffer_size = 1024 * 1024;
+  options.target_file_size_base = 1024 * 1024;
+  options.max_bytes_for_level_base = 16 * 1024 * 1024;
+  options.level0_file_num_compaction_trigger = 1000;
+  options.max_background_jobs = 2;
+  BlockBasedTableOptions table;
+  table.block_cache = NewLRUCache(FLAGS_metabypass_sst_cache_bytes, 0);
+  options.table_factory.reset(NewBlockBasedTableFactory(table));
+  options.error_if_exists = true;
+  std::unique_ptr<MetaBypassDB> db;
+  Status s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);
+  if (!s.ok()) {
+    fprintf(stderr, "SST benchmark open: %s\n", s.ToString().c_str());
+    return 1;
+  }
+  const uint64_t key_count = static_cast<uint64_t>(FLAGS_num);
+  std::vector<uint64_t> versions(key_count, 1);
+  WriteOptions write;
+  write.sync = FLAGS_sync;
+  FlushOptions flush;
+  flush.wait = true;
+  auto clock = options.env->GetSystemClock();
+  auto emit_phase_stats = [&](const char* phase) {
+    MetaBypassStats snapshot = db->GetBackupStats();
+    snapshot.error.PermitUncheckedError();
+    const auto& tier = snapshot.sst_tiering;
+    printf(
+        "MB_SST_JSON {\"event\":\"phase_stats\",\"name\":\"%s\","
+        "\"sampled_reads\":%" PRIu64 ",\"promotions\":%" PRIu64
+        ",\"demotions\":%" PRIu64 ",\"ssd_sst_bytes\":%" PRIu64
+        ",\"hdd_sst_bytes\":%" PRIu64 ",\"protected_bytes\":%" PRIu64
+        ",\"unprotected_bytes\":%" PRIu64 ",\"reserved_bytes\":%" PRIu64
+        ",\"pending_delete_bytes\":%" PRIu64 "}\n",
+        phase, tier.sampled_reads, tier.promotions, tier.demotions,
+        tier.ssd_bytes, tier.hdd_bytes, tier.protected_bytes,
+        tier.unprotected_bytes, tier.reserved_bytes, tier.pending_delete_bytes);
+    fflush(stdout);
+  };
+  printf(
+      "MB_SST_JSON {\"event\":\"phase\",\"name\":\"fill\","
+      "\"keys\":%" PRIu64 ",\"value_size\":%d,\"seed\":%" PRIu64
+      ",\"cache_bytes\":%" PRIu64 "}\n",
+      key_count, FLAGS_value_size, FLAGS_metabypass_sst_seed,
+      FLAGS_metabypass_sst_cache_bytes);
+  fflush(stdout);
+  uint64_t fill_start = clock->NowMicros();
+  for (uint64_t i = 0; s.ok() && i < key_count; ++i) {
+    s = db->Put(write, MetaBypassBenchKey(i),
+                MetaBypassBenchValue(i, 1, FLAGS_value_size));
+    if (s.ok() && (i + 1) % FLAGS_metabypass_sst_flush_every == 0)
+      s = db->Flush(flush);
+  }
+  if (s.ok()) s = db->Flush(flush);
+  if (s.ok()) s = db->SyncBackup();
+  printf(
+      "MB_SST_JSON {\"event\":\"phase_end\",\"name\":\"fill\","
+      "\"elapsed_us\":%" PRIu64 ",\"ok\":%s}\n",
+      clock->NowMicros() - fill_start, s.ok() ? "true" : "false");
+  fflush(stdout);
+  emit_phase_stats("fill");
+  if (!s.ok()) {
+    fprintf(stderr, "SST benchmark fill: %s\n", s.ToString().c_str());
+    Status close = db->Close();
+    close.PermitUncheckedError();
+    return 1;
+  }
+
+  uint64_t random = FLAGS_metabypass_sst_seed;
+  uint64_t total_scanned = 0;
+  uint64_t total_mutations = 0;
+  uint64_t switch_elapsed_us = 0;
+  uint64_t measured_hot_gets = 0;
+  uint64_t measured_cold_gets = 0;
+  uint64_t measured_cold_key_mod10_mask = 0;
+  MetaBypassStats previous = db->GetBackupStats();
+  previous.error.PermitUncheckedError();
+  auto run_phase = [&](const char* phase, uint64_t operations, bool measured) {
+    printf(
+        "MB_SST_JSON {\"event\":\"phase\",\"name\":\"%s\","
+        "\"ops\":%" PRIu64 "}\n",
+        phase, operations);
+    fflush(stdout);
+    uint64_t phase_start = clock->NowMicros();
+    uint64_t window_start = phase_start;
+    uint64_t window_ops = 0;
+    uint64_t window_gets = 0;
+    uint64_t window_scans = 0;
+    uint64_t window_writes = 0;
+    uint64_t window_hot = 0;
+    uint64_t window_cold = 0;
+    uint64_t window_index = 0;
+    std::vector<uint64_t> all_latencies;
+    std::vector<uint64_t> hot_latencies;
+    std::vector<uint64_t> cold_latencies;
+    auto emit_window = [&](uint64_t now) {
+      if (!measured || window_ops == 0) return;
+      MetaBypassStats stats = db->GetBackupStats();
+      stats.error.PermitUncheckedError();
+      const auto& tier = stats.sst_tiering;
+      const auto& prev = previous.sst_tiering;
+      uint64_t p50 = MetaBypassBenchPercentile(&all_latencies, 50);
+      uint64_t p95 = MetaBypassBenchPercentile(&all_latencies, 95);
+      uint64_t p99 = MetaBypassBenchPercentile(&all_latencies, 99);
+      uint64_t hot_p50 = MetaBypassBenchPercentile(&hot_latencies, 50);
+      uint64_t hot_p95 = MetaBypassBenchPercentile(&hot_latencies, 95);
+      uint64_t hot_p99 = MetaBypassBenchPercentile(&hot_latencies, 99);
+      uint64_t cold_p50 = MetaBypassBenchPercentile(&cold_latencies, 50);
+      uint64_t cold_p95 = MetaBypassBenchPercentile(&cold_latencies, 95);
+      uint64_t cold_p99 = MetaBypassBenchPercentile(&cold_latencies, 99);
+      uint64_t elapsed = now - window_start;
+      printf(
+          "MB_SST_JSON {\"event\":\"window\",\"workload\":\"%s\","
+          "\"phase\":\"%s\",\"window\":%" PRIu64 ",\"elapsed_us\":%" PRIu64
+          ",\"phase_elapsed_us\":%" PRIu64 ",\"ops\":%" PRIu64
+          ",\"gets\":%" PRIu64 ",\"scans\":%" PRIu64 ",\"writes\":%" PRIu64
+          ",\"hot_gets\":%" PRIu64 ",\"cold_gets\":%" PRIu64
+          ",\"get_p50_us\":%" PRIu64 ",\"get_p95_us\":%" PRIu64
+          ",\"get_p99_us\":%" PRIu64
+          ",\"get_ops_per_sec\":%.3f"
+          ",\"hot_p50_us\":%" PRIu64 ",\"hot_p95_us\":%" PRIu64
+          ",\"hot_p99_us\":%" PRIu64 ",\"cold_p50_us\":%" PRIu64
+          ",\"cold_p95_us\":%" PRIu64 ",\"cold_p99_us\":%" PRIu64
+          ",\"ssd_sst_bytes\":%" PRIu64 ",\"hdd_sst_bytes\":%" PRIu64
+          ",\"sampled_reads_delta\":%" PRIu64 ",\"promotions_delta\":%" PRIu64
+          ",\"demotions_delta\":%" PRIu64 ",\"promoted_bytes_delta\":%" PRIu64
+          ",\"demoted_bytes_delta\":%" PRIu64
+          ",\"ssd_over_budget_us_delta\":%" PRIu64
+          ",\"cutoff_score\":%.9g,\"publish_lag_us\":%" PRIu64 "}\n",
+          workload.c_str(), phase, window_index++, elapsed, now - phase_start,
+          window_ops, window_gets, window_scans, window_writes, window_hot,
+          window_cold, p50, p95, p99,
+          double(window_gets) * 1000000.0 / std::max(uint64_t{1}, elapsed),
+          hot_p50, hot_p95, hot_p99, cold_p50, cold_p95, cold_p99,
+          tier.ssd_bytes, tier.hdd_bytes,
+          tier.sampled_reads - prev.sampled_reads,
+          tier.promotions - prev.promotions, tier.demotions - prev.demotions,
+          tier.promoted_bytes - prev.promoted_bytes,
+          tier.demoted_bytes - prev.demoted_bytes,
+          tier.over_budget_micros - prev.over_budget_micros,
+          std::isfinite(tier.cutoff_score) ? tier.cutoff_score : 0.0,
+          stats.last_point_lag_micros);
+      fflush(stdout);
+      previous = stats;
+      previous.error.PermitUncheckedError();
+      window_start = now;
+      window_ops = window_gets = window_scans = window_writes = 0;
+      window_hot = window_cold = 0;
+      all_latencies.clear();
+      hot_latencies.clear();
+      cold_latencies.clear();
+    };
+    for (uint64_t op = 0; s.ok() && op < operations; ++op) {
+      if (FLAGS_metabypass_sst_target_ops_per_sec != 0) {
+        uint64_t due = phase_start +
+                       op * 1000000 / FLAGS_metabypass_sst_target_ops_per_sec;
+        uint64_t now = clock->NowMicros();
+        if (due > now)
+          std::this_thread::sleep_for(std::chrono::microseconds(due - now));
+      }
+      const uint64_t selector = MetaBypassBenchRandom(&random);
+      const uint64_t key_random = MetaBypassBenchRandom(&random);
+      uint64_t quarter = std::max(uint64_t{1}, key_count / 4);
+      uint64_t hot_base =
+          workload == "switch" && measured && op >= operations / 2 ? quarter
+                                                                   : 0;
+      const bool hot = workload != "uniform" && selector % 10 < 8;
+      uint64_t index = key_random % key_count;
+      if (workload != "uniform") {
+        if (hot) {
+          index = hot_base + key_random % quarter;
+        } else {
+          const uint64_t cold_rank = key_random % (key_count - quarter);
+          index = cold_rank < hot_base ? cold_rank : cold_rank + quarter;
+        }
+      }
+      const bool hot_key = workload != "uniform" && index >= hot_base &&
+                           index < hot_base + quarter;
+      if (workload == "switch" && op == operations / 2 && measured) {
+        emit_window(clock->NowMicros());
+        switch_elapsed_us = clock->NowMicros() - phase_start;
+        printf(
+            "MB_SST_JSON {\"event\":\"hotspot_switch\","
+            "\"elapsed_us\":%" PRIu64 "}\n",
+            switch_elapsed_us);
+        fflush(stdout);
+      }
+      const uint64_t op_start = clock->NowMicros();
+      if (workload == "scan" && op % 4096 == 0) {
+        std::unique_ptr<Iterator> iterator(db->NewIterator(ReadOptions()));
+        for (iterator->SeekToFirst(); iterator->Valid(); iterator->Next()) {
+          uint64_t found =
+              std::strtoull(iterator->key().ToString().c_str(), nullptr, 10);
+          if (found >= key_count || versions[found] == 0 ||
+              iterator->value().ToString() !=
+                  MetaBypassBenchValue(found, versions[found],
+                                       FLAGS_value_size)) {
+            s = Status::Corruption("SST scan mismatch");
+            break;
+          }
+          ++total_scanned;
+        }
+        if (s.ok()) s = iterator->status();
+        ++window_scans;
+      } else if (workload == "mixed" && op % 16 == 0) {
+        ++versions[index];
+        if (versions[index] == 1) versions[index] = 2;
+        s = db->Put(
+            write, MetaBypassBenchKey(index),
+            MetaBypassBenchValue(index, versions[index], FLAGS_value_size));
+        ++total_mutations;
+        ++window_writes;
+      } else if (workload == "mixed" && op % 31 == 0) {
+        s = db->Delete(write, MetaBypassBenchKey(index));
+        versions[index] = 0;
+        ++total_mutations;
+        ++window_writes;
+      } else {
+        std::string actual;
+        s = db->Get(ReadOptions(), MetaBypassBenchKey(index), &actual);
+        if (versions[index] == 0) {
+          if (s.IsNotFound())
+            s = Status::OK();
+          else if (s.ok())
+            s = Status::Corruption("deleted key returned");
+        } else if (s.ok() &&
+                   actual != MetaBypassBenchValue(index, versions[index],
+                                                  FLAGS_value_size)) {
+          s = Status::Corruption("SST point value mismatch");
+        }
+        ++window_gets;
+        if (hot_key)
+          ++window_hot;
+        else
+          ++window_cold;
+        if (measured) {
+          if (hot_key) {
+            ++measured_hot_gets;
+          } else {
+            ++measured_cold_gets;
+            measured_cold_key_mod10_mask |= uint64_t{1} << (index % 10);
+          }
+          uint64_t latency = clock->NowMicros() - op_start;
+          all_latencies.push_back(latency);
+          (hot_key ? hot_latencies : cold_latencies).push_back(latency);
+        }
+      }
+      if (s.ok() && workload == "mixed" && total_mutations != 0 &&
+          total_mutations % 512 == 0 && window_writes != 0) {
+        s = db->Flush(flush);
+        if (s.ok())
+          s = db->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+        ++total_mutations;
+      }
+      ++window_ops;
+      uint64_t now = clock->NowMicros();
+      if (now - window_start >= FLAGS_metabypass_sst_window_ms * 1000)
+        emit_window(now);
+    }
+    emit_window(clock->NowMicros());
+    printf(
+        "MB_SST_JSON {\"event\":\"phase_end\",\"name\":\"%s\","
+        "\"elapsed_us\":%" PRIu64 ",\"ok\":%s}\n",
+        phase, clock->NowMicros() - phase_start, s.ok() ? "true" : "false");
+    fflush(stdout);
+    emit_phase_stats(phase);
+  };
+  run_phase("warmup", FLAGS_metabypass_sst_warmup_ops, false);
+  if (s.ok()) {
+    previous = db->GetBackupStats();
+    previous.error.PermitUncheckedError();
+    run_phase("measured", FLAGS_metabypass_sst_measure_ops, true);
+  }
+  if (s.ok()) s = db->SyncBackup();
+  if (s.ok()) {
+    printf("MB_SST_JSON {\"event\":\"phase\",\"name\":\"verify\"}\n");
+    fflush(stdout);
+    uint64_t verified = 0;
+    for (uint64_t i = 0; s.ok() && i < key_count; ++i) {
+      std::string actual;
+      s = db->Get(ReadOptions(), MetaBypassBenchKey(i), &actual);
+      if (versions[i] == 0) {
+        if (s.IsNotFound())
+          s = Status::OK();
+        else if (s.ok())
+          s = Status::Corruption("deleted key returned");
+      } else if (s.ok() && actual != MetaBypassBenchValue(i, versions[i],
+                                                          FLAGS_value_size)) {
+        s = Status::Corruption("final value mismatch");
+      }
+      if (s.ok()) ++verified;
+    }
+    printf("MB_SST_JSON {\"event\":\"verification\",\"keys\":%" PRIu64
+           ",\"ok\":%s}\n",
+           verified, s.ok() ? "true" : "false");
+    fflush(stdout);
+  }
+  Status close = db->Close();
+  s.UpdateIfOk(close);
+  MetaBypassStats final_stats = db->GetBackupStats();
+  final_stats.error.PermitUncheckedError();
+  auto& tier = final_stats.sst_tiering;
+  const bool tier_ok = tier.error.empty() && tier.migration_errors == 0;
+  printf(
+      "MB_SST_JSON {\"event\":\"summary\",\"ok\":%s,"
+      "\"ssd_sst_bytes\":%" PRIu64 ",\"peak_ssd_sst_bytes\":%" PRIu64
+      ",\"hdd_sst_bytes\":%" PRIu64 ",\"sampled_reads\":%" PRIu64
+      ",\"dropped_samples\":%" PRIu64 ",\"scan_reads\":%" PRIu64
+      ",\"promotions\":%" PRIu64 ",\"demotions\":%" PRIu64
+      ",\"promoted_bytes\":%" PRIu64 ",\"demoted_bytes\":%" PRIu64
+      ",\"migration_errors\":%" PRIu64 ",\"observed_promotions\":%" PRIu64
+      ",\"observed_demotions\":%" PRIu64 ",\"scanned_keys\":%" PRIu64
+      ",\"mutations\":%" PRIu64 ",\"switch_elapsed_us\":%" PRIu64
+      ",\"measured_hot_gets\":%" PRIu64 ",\"measured_cold_gets\":%" PRIu64
+      ",\"measured_cold_key_mod10_mask\":%" PRIu64
+      ",\"ssd_over_budget_us\":%" PRIu64
+      ",\"cutoff_score\":%.9g,\"publish_lag_us\":%" PRIu64 "}\n",
+      s.ok() && tier_ok ? "true" : "false", tier.ssd_bytes, tier.peak_ssd_bytes,
+      tier.hdd_bytes, tier.sampled_reads, tier.dropped_samples, tier.scan_reads,
+      tier.promotions, tier.demotions, tier.promoted_bytes, tier.demoted_bytes,
+      tier.migration_errors, tier.observed_promotions, tier.observed_demotions,
+      total_scanned, total_mutations, switch_elapsed_us, measured_hot_gets,
+      measured_cold_gets, measured_cold_key_mod10_mask, tier.over_budget_micros,
+      std::isfinite(tier.cutoff_score) ? tier.cutoff_score : 0.0,
+      final_stats.last_point_lag_micros);
+  fflush(stdout);
+  if (!s.ok()) fprintf(stderr, "SST benchmark: %s\n", s.ToString().c_str());
+  if (!tier.error.empty())
+    fprintf(stderr, "SST tiering: %s\n", tier.error.c_str());
+  return s.ok() && tier_ok ? 0 : 1;
+}
+
 static int RunMetaBypassBenchmark() {
   Options options;
   std::unique_ptr<Env> delayed_env;
-  if (FLAGS_metabypass_slow_write_delay_us != 0) {
+  if (FLAGS_metabypass_slow_write_delay_us != 0 ||
+      FLAGS_metabypass_sst_read_delay_us != 0) {
     delayed_env = NewCompositeEnv(
         std::make_shared<MetaBypassDelayedFS>(FLAGS_env->GetFileSystem()));
   }
@@ -11043,6 +11549,8 @@ static int RunMetaBypassBenchmark() {
   bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
+  if (FLAGS_metabypass_mode == "sst_tiering")
+    return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();
   uint64_t start = clock->NowMicros();
   if (FLAGS_metabypass_mode == "restore") {

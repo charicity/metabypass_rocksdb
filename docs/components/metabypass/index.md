@@ -285,6 +285,11 @@ review findings, regression coverage and verification results.
 See [strong tiered storage](tiered-storage.md) for the optional fast staging
 layer, remote synchronous-write contract, capacity policy and recovery protocol.
 
+## Whole-SST tiering
+
+See [whole-SST SSD/HDD tiering](sst-tiering.md) for the optional cold index
+store, policy defaults, recovery boundary and benchmark protocol.
+
 ## Direct slow-storage research configuration
 
 See [direct writes and synchronous protection](direct-storage.md) for the primary

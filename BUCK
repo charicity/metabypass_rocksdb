@@ -329,6 +329,8 @@ cpp_library_wrapper(name="rocksdb_lib", srcs=[
         "utilities/metabypass/metabypass_db.cc",
         "utilities/metabypass/native_files.cc",
         "utilities/metabypass/separated_storage.cc",
+        "utilities/metabypass/sst_storage.cc",
+        "utilities/metabypass/sst_tiering.cc",
         "utilities/metabypass/tiered_storage.cc",
         "utilities/object_registry.cc",
         "utilities/option_change_migration/option_change_migration.cc",
@@ -5598,6 +5600,12 @@ cpp_unittest_wrapper(name="sst_dump_test",
 
 cpp_unittest_wrapper(name="sst_file_reader_test",
             srcs=["table/sst_file_reader_test.cc"],
+            deps=[":rocksdb_test_lib"],
+            extra_compiler_flags=[])
+
+
+cpp_unittest_wrapper(name="sst_tiering_test",
+            srcs=["utilities/metabypass/sst_tiering_test.cc"],
             deps=[":rocksdb_test_lib"],
             extra_compiler_flags=[])
 

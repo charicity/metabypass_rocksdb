@@ -147,11 +147,16 @@ Backup::Channel& Backup::ChannelFor(const std::string& name) {
   assert(parsed);
   return parsed && type == kWalFile ? wal_channel_ : metadata_channel_;
 }
-Status Backup::Start(bool existing) {
+Status Backup::Lock() {
+  if (lock_) return Status::OK();
   Status s = EnsureDir(disk_, options_.backup_dir);
   if (s.ok())
     s = disk_->LockFile(options_.backup_dir + "/LOCK", IOOptions(), &lock_,
                         nullptr);
+  return s;
+}
+Status Backup::Start(bool existing) {
+  Status s = Lock();
   if (!s.ok()) return s;
   std::vector<std::string> files;
   s = disk_->GetChildren(options_.backup_dir, IOOptions(), &files, nullptr);
@@ -211,7 +216,18 @@ Status Backup::Start(bool existing) {
       if (!Tracked(index_ + "/" + f)) continue;
       uint64_t size;
       s = disk_->GetFileSize(index_ + "/" + f, IOOptions(), &size, nullptr);
-      if (s.ok()) s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
+      if (s.ok()) {
+        uint64_t number;
+        FileType type;
+        if (storage_->sst() && ParseFileName(f, &number, &type) &&
+            type == kTableFile) {
+          s = disk_->LinkFile(index_ + "/" + f, work_ + "/" + f, IOOptions(),
+                              nullptr);
+          if (!s.ok()) s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
+        } else {
+          s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
+        }
+      }
       if (!s.ok()) return s;
       closed_.insert(f);
       epochs_[f] = ++next_epoch_;
@@ -719,6 +735,11 @@ Status Backup::Publish(const Candidate& candidate) {
       sync_cv_.notify_all();
     }
   }
+  // Only a fully verified and durably published point may authorize eviction.
+  if (storage_->sst()) {
+    s = storage_->sst()->Protect(point, state);
+    if (!s.ok()) return s;
+  }
   TEST_SYNC_POINT("MetaBypass::PointerSynced");
   return Status::OK();
 }
@@ -1038,7 +1059,14 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
   s = Inspect(fs, point, &state);
   if (!s.ok()) return s;
   for (const auto& e : entries) {
-    s = Copy(fs, point + "/" + e.file, destination + "/" + e.file, e.length);
+    uint64_t number;
+    FileType type;
+    if (storage.sst() && ParseFileName(e.file, &number, &type) &&
+        type == kTableFile) {
+      s = storage.sst()->RestoreTable(point + "/" + e.file, number, e.length);
+    } else {
+      s = Copy(fs, point + "/" + e.file, destination + "/" + e.file, e.length);
+    }
     if (!s.ok()) return s;
   }
   s = Write(fs, destination + "/CURRENT", state.manifest + "\n");

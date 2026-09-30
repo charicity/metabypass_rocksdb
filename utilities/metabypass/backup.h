@@ -22,6 +22,7 @@ class Backup : public FileSystemWrapper {
          MetaBypassOptions options, Options db_options = Options());
   ~Backup() override;
   const char* Name() const override { return "MetaBypassBackup"; }
+  Status Lock();
   Status Start(bool existing);
   Status Activate(const std::string& identity);
   Status Sync();

@@ -288,6 +288,8 @@ LIB_SOURCES =                                                   \
   utilities/cassandra/format.cc                                 \
   utilities/cassandra/merge_operator.cc                         \
   utilities/metabypass/tiered_storage.cc \
+  utilities/metabypass/sst_tiering.cc \
+  utilities/metabypass/sst_storage.cc \
   utilities/metabypass/native_files.cc \
   utilities/metabypass/separated_storage.cc \
   utilities/metabypass/backup.cc \
@@ -663,6 +665,7 @@ TEST_MAIN_SOURCES =                                                     \
   utilities/cassandra/cassandra_row_merge_test.cc                       \
   utilities/cassandra/cassandra_serialize_test.cc                       \
   utilities/metabypass/metabypass_test.cc \
+  utilities/metabypass/sst_tiering_test.cc \
   utilities/checkpoint/checkpoint_test.cc                               \
   utilities/copy_engine/copy_engine_test.cc                     \
   utilities/sorted_run_builder/sorted_run_builder_test.cc               \

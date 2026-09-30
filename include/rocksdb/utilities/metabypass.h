@@ -12,6 +12,41 @@
 #include "rocksdb/db.h"
 
 namespace ROCKSDB_NAMESPACE {
+// Whole-SST placement applies only to the MetaBypass index directory.
+enum class SstTieringMode { kDisabled, kObserveOnly, kAdaptive };
+struct SstTieringOptions {
+  SstTieringMode mode = SstTieringMode::kDisabled;
+  // Soft logical SST budget on SSD. Ordinary writes may exceed it until a
+  // complete recovery point protects their SSTs. Zero is invalid when enabled.
+  uint64_t ssd_capacity_bytes = 0;
+  uint32_t reserve_percent = 10;
+  // Samples file reads attributed to foreground Get, after block-cache misses.
+  // OS page-cache hits are included; these are not physical disk I/O counters.
+  uint32_t sample_one_in = 64;
+  size_t sample_buffer_capacity = 4096;
+  uint64_t interval_ms = 1000;
+  uint64_t heat_half_life_ms = 10000;
+  uint32_t promote_rounds = 2;
+  uint32_t demote_rounds = 3;
+  uint64_t min_residency_ms = 10000;
+  double replacement_margin = 0.25;
+  uint64_t migration_bytes_per_sec = 32 * 1024 * 1024;
+  size_t migration_queue_capacity = 64;
+};
+struct SstTieringStats {
+  std::string error;
+  uint64_t ssd_bytes = 0, peak_ssd_bytes = 0, hdd_bytes = 0;
+  uint64_t protected_bytes = 0, unprotected_bytes = 0;
+  uint64_t reserved_bytes = 0, pending_delete_bytes = 0;
+  uint64_t sampled_reads = 0, dropped_samples = 0, scan_reads = 0;
+  uint64_t promotions = 0, demotions = 0;
+  uint64_t promoted_bytes = 0, demoted_bytes = 0;
+  uint64_t migration_errors = 0, queued_migrations = 0, oversized_files = 0;
+  uint64_t observed_promotions = 0, observed_demotions = 0;
+  uint64_t copied_bytes = 0, reused_links = 0;
+  uint64_t over_budget_micros = 0;
+  double cutoff_score = 0;
+};
 struct MetaBypassOptions {
   // Absolute, normalized, disjoint directories. Values are retained forever.
   std::string data_dir;
@@ -28,6 +63,7 @@ struct MetaBypassOptions {
   // Required when staging_dir is set. Logical bytes, excluding filesystem
   // allocation overhead. Oversized batches are rejected before DB writes.
   uint64_t staging_capacity = 0;
+  SstTieringOptions sst_tiering;
 };
 struct MetaBypassStats {
   Status error;
@@ -62,6 +98,7 @@ struct MetaBypassStats {
   uint64_t gc_micros = 0;
   // Cumulative successful candidate file copies; hardlinks do not count.
   uint64_t candidate_copied_bytes = 0;
+  SstTieringStats sst_tiering;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

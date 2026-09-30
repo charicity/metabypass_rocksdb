@@ -8,6 +8,7 @@
 
 #include "rocksdb/file_system.h"
 #include "utilities/metabypass/native_files.h"
+#include "utilities/metabypass/sst_storage.h"
 #include "utilities/metabypass/tiered_storage.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -31,11 +32,13 @@ class SeparatedStorage : public FileSystemWrapper {
  public:
   SeparatedStorage(std::shared_ptr<FileSystem> fs, std::string index,
                    std::string data,
-                   std::shared_ptr<TieredStorage> tier = nullptr);
+                   std::shared_ptr<TieredStorage> tier = nullptr,
+                   std::shared_ptr<SstStorage> sst = nullptr);
   ~SeparatedStorage() override;
   const char* Name() const override { return "MetaBypassSeparatedStorage"; }
   Status Lock();
   TieredStorage* tier() const { return tier_.get(); }
+  SstStorage* sst() const { return sst_.get(); }
   Status Dependencies(const std::string& index, const NativeState& state,
                       std::map<uint64_t, uint64_t>* lengths,
                       WalValidationCache* cache = nullptr);
@@ -75,6 +78,7 @@ class SeparatedStorage : public FileSystemWrapper {
  private:
   std::string index_, data_;
   std::shared_ptr<TieredStorage> tier_;
+  std::shared_ptr<SstStorage> sst_;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

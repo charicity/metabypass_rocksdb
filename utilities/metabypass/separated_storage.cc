@@ -20,11 +20,15 @@ namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
 SeparatedStorage::SeparatedStorage(std::shared_ptr<FileSystem> fs,
                                    std::string index, std::string data,
-                                   std::shared_ptr<TieredStorage> tier)
-    : FileSystemWrapper(tier ? tier : fs),
+                                   std::shared_ptr<TieredStorage> tier,
+                                   std::shared_ptr<SstStorage> sst)
+    : FileSystemWrapper(sst    ? std::shared_ptr<FileSystem>(sst)
+                        : tier ? std::shared_ptr<FileSystem>(tier)
+                               : fs),
       index_(std::move(index)),
       data_(std::move(data)),
-      tier_(std::move(tier)) {}
+      tier_(std::move(tier)),
+      sst_(std::move(sst)) {}
 SeparatedStorage::~SeparatedStorage() {
   if (lock_)
     target()->UnlockFile(lock_, IOOptions(), nullptr).PermitUncheckedError();

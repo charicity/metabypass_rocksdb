@@ -11,9 +11,11 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <thread>
 
 #include "file/filename.h"
+#include "rocksdb/sst_file_reader.h"
 #include "rocksdb/write_batch.h"
 #include "test_util/sync_point.h"
 #include "test_util/testharness.h"
@@ -143,6 +145,38 @@ class MetaBypassTest : public testing::Test {
   void EnableTier(uint64_t capacity = 1024 * 1024) {
     m_.staging_dir = root_ + "/staging";
     m_.staging_capacity = capacity;
+  }
+  void EnableSst(SstTieringMode mode = SstTieringMode::kAdaptive,
+                 uint64_t capacity = 1) {
+    m_.sst_tiering.mode = mode;
+    m_.sst_tiering.ssd_capacity_bytes = capacity;
+    m_.sst_tiering.interval_ms = 1;
+    m_.sst_tiering.min_residency_ms = 0;
+    m_.sst_tiering.sample_one_in = 1;
+    m_.sst_tiering.migration_bytes_per_sec = 0;
+  }
+  void AwaitSst(const std::function<bool(const SstTieringStats&)>& ready) {
+    std::mutex mutex;
+    std::condition_variable cv;
+    auto notify = [&](void*) {
+      std::lock_guard<std::mutex> lock(mutex);
+      cv.notify_all();
+    };
+    SyncPoint::GetInstance()->SetCallBack("MetaBypassSst::TickComplete",
+                                          notify);
+    SyncPoint::GetInstance()->SetCallBack("MetaBypassSst::MigrationComplete",
+                                          notify);
+    SyncPoint::GetInstance()->EnableProcessing();
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(20), [&] {
+        auto stats = db_->GetBackupStats();
+        EXPECT_OK(stats.error);
+        return ready(stats.sst_tiering);
+      }));
+    }
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
   }
   void Open() { ASSERT_OK(MetaBypassDB::Open(o_, m_, index_, &db_)); }
   void EnsureTwoPoints() {
@@ -844,6 +878,272 @@ TEST_F(MetaBypassTest, TieredRejectsOversizedBatchBeforeWrite) {
   ASSERT_OK(db_->Put(WriteOptions(), "small", "value"));
 }
 
+TEST_F(MetaBypassTest, SstAdaptiveOperationsColdReopenAndSmallBudgetRestore) {
+  EnableSst();
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "a", "old"));
+  ASSERT_OK(db_->Put(WriteOptions(), "b", "gone"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.ssd_bytes == 0;
+  });
+  std::unique_ptr<Iterator> pinned(db_->NewIterator(ReadOptions()));
+  pinned->SeekToFirst();
+  ASSERT_TRUE(pinned->Valid());
+  WriteBatch batch;
+  ASSERT_OK(batch.Put("a", "new"));
+  ASSERT_OK(batch.Delete("b"));
+  ASSERT_OK(batch.Put("c", "last"));
+  ASSERT_OK(db_->Write(WriteOptions(), &batch));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  ASSERT_OK(db_->SyncBackup());
+  Check("a", "new");
+  Check("c", "last");
+  ASSERT_EQ(pinned->value().ToString(), "old");
+  pinned->Next();
+  ASSERT_TRUE(pinned->Valid());
+  ASSERT_EQ(pinned->key().ToString(), "b");
+  ASSERT_OK(pinned->status());
+  pinned.reset();
+  std::unique_ptr<Iterator> iterator(db_->NewIterator(ReadOptions()));
+  iterator->SeekToLast();
+  ASSERT_TRUE(iterator->Valid());
+  ASSERT_EQ(iterator->key().ToString(), "c");
+  iterator->Prev();
+  ASSERT_TRUE(iterator->Valid());
+  ASSERT_EQ(iterator->key().ToString(), "a");
+  ASSERT_OK(iterator->status());
+  iterator.reset();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Open();
+  Check("a", "new");
+  Check("c", "last");
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  std::vector<std::string> files;
+  ASSERT_OK(fs_->GetChildren(index_, IOOptions(), &files, nullptr));
+  for (const auto& file : files) {
+    uint64_t number;
+    FileType type;
+    ASSERT_FALSE(ParseFileName(file, &number, &type) && type == kTableFile);
+  }
+  Open();
+  Check("a", "new");
+  Check("c", "last");
+  std::string value;
+  ASSERT_TRUE(db_->Get(ReadOptions(), "b", &value).IsNotFound());
+  ASSERT_OK(db_->Put(WriteOptions(), "after", "restore"));
+  ASSERT_OK(db_->SyncBackup());
+}
+TEST_F(MetaBypassTest, SstForegroundFileMissesPromoteButScansDoNot) {
+  EnableSst(SstTieringMode::kAdaptive, 6000);
+  o_.disable_auto_compactions = true;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (int round = 0; round < 6; ++round) {
+    WriteBatch batch;
+    for (int key = 0; key < 64; ++key)
+      ASSERT_OK(
+          batch.Put("range" + std::to_string(round) + "/" + std::to_string(key),
+                    std::string(1000, 'a' + round)));
+    ASSERT_OK(db_->Write(WriteOptions(), &batch));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+  }
+  ASSERT_OK(db_->SyncBackup());
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.pending_delete_bytes == 0 &&
+           stats.ssd_bytes <= 5400;
+  });
+  auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  ASSERT_EQ(before.sst_tiering.promotions, 0U);
+  // Publication can protect older SSTs before newer outputs. Select an
+  // actual cold, budget-admissible object rather than assuming creation order
+  // determines which range is cold after pressure converges.
+  std::string placement;
+  ASSERT_OK(metabypass::Read(fs_.get(), index_ + "/SST-PLACEMENT", &placement));
+  SCOPED_TRACE(placement);
+  std::istringstream map(placement);
+  std::string version, identity, object, cold_object;
+  ASSERT_TRUE(bool(map >> version >> identity));
+  uint64_t number, size;
+  uint32_t crc;
+  int hot;
+  while (map >> number >> size >> crc >> hot >> object) {
+    if (!hot && size <= 5400) {
+      cold_object = object;
+      break;
+    }
+  }
+  ASSERT_FALSE(cold_object.empty());
+  std::string cold_key, expected_value;
+  {
+    SstFileReader table(o_);
+    ASSERT_OK(table.Open(m_.backup_dir + "/sst-store/" + cold_object));
+    auto entries = table.NewTableIterator();
+    entries->SeekToFirst();
+    ASSERT_OK(entries->status());
+    ASSERT_TRUE(entries->Valid());
+    ParsedEntryInfo entry;
+    ASSERT_OK(table.ParseTableIteratorKey(entries->key(), &entry));
+    cold_key = entry.user_key.ToString();
+  }
+  SCOPED_TRACE(cold_key);
+  ReadOptions scan;
+  scan.fill_cache = false;
+  {
+    std::unique_ptr<Iterator> iterator(db_->NewIterator(scan));
+    size_t count = 0;
+    for (iterator->SeekToFirst(); iterator->Valid(); iterator->Next()) {
+      if (iterator->key().ToString() == cold_key)
+        expected_value = iterator->value().ToString();
+      ++count;
+    }
+    ASSERT_OK(iterator->status());
+    ASSERT_EQ(count, 384U);
+  }
+  ASSERT_FALSE(expected_value.empty());
+  auto scanned = db_->GetBackupStats();
+  ASSERT_OK(scanned.error);
+  ASSERT_EQ(scanned.sst_tiering.sampled_reads,
+            before.sst_tiering.sampled_reads);
+  ASSERT_GT(scanned.sst_tiering.scan_reads, before.sst_tiering.scan_reads);
+  ASSERT_EQ(scanned.sst_tiering.promotions, 0U);
+  // Repeated misses with cache insertion disabled create real SST heat.
+  std::atomic<bool> stop{false};
+  std::thread reader([&] {
+    ReadOptions reads;
+    reads.fill_cache = false;
+    while (!stop.load()) {
+      std::string value;
+      EXPECT_OK(db_->Get(reads, cold_key, &value));
+      EXPECT_EQ(value, expected_value);
+    }
+  });
+  AwaitSst([](const auto& stats) { return stats.promotions > 0; });
+  stop = true;
+  reader.join();
+  auto promoted = db_->GetBackupStats();
+  ASSERT_OK(promoted.error);
+  ASSERT_GT(promoted.sst_tiering.sampled_reads,
+            scanned.sst_tiering.sampled_reads);
+  ASSERT_GT(promoted.sst_tiering.promoted_bytes, 0U);
+  Check(cold_key, expected_value);
+  Check("range0/0", std::string(1000, 'a'));
+}
+TEST_F(MetaBypassTest, SstObserveOnlyAndDisabledConfiguration) {
+  EnableSst(SstTieringMode::kObserveOnly);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  AwaitSst([](const auto& stats) { return stats.observed_demotions > 0; });
+  auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.sst_tiering.demotions, 0U);
+  ASSERT_GT(stats.sst_tiering.ssd_bytes, 0U);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  m_.sst_tiering.mode = SstTieringMode::kDisabled;
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsInvalidArgument());
+  EnableSst();
+  o_.allow_mmap_reads = true;
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsNotSupported());
+  o_.allow_mmap_reads = false;
+  m_.sst_tiering.sample_one_in = 0;
+  ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsInvalidArgument());
+}
+TEST_F(MetaBypassTest, SstRandomizedConcurrentReadersCompactionAndBlobStaging) {
+  const uint32_t seed = uint32_t(o_.env->NowMicros());
+  SCOPED_TRACE("seed=" + std::to_string(seed));
+  Random random(seed);
+  EnableTier(1024 * 1024);
+  EnableSst();
+  m_.sst_tiering.sample_one_in = 1U << random.Uniform(7);
+  m_.sst_tiering.migration_queue_capacity = 1 + random.Uniform(8);
+  Open();
+  ASSERT_OK(db_->Put(WriteOptions(), "stable", "fixed"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  std::atomic<bool> stop{false};
+  std::thread reader([&] {
+    while (!stop.load()) {
+      std::string value;
+      EXPECT_OK(db_->Get(ReadOptions(), "stable", &value));
+      EXPECT_EQ(value, "fixed");
+      std::unique_ptr<Iterator> it(db_->NewIterator(ReadOptions()));
+      for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        (void)it->value();
+      }
+      EXPECT_OK(it->status());
+    }
+  });
+  for (int round = 0; round < 8; ++round) {
+    WriteBatch batch;
+    for (int i = 0; i < 32; ++i) {
+      const auto key = "key" + std::to_string(i);
+      if (random.OneIn(4))
+        EXPECT_OK(batch.Delete(key));
+      else
+        EXPECT_OK(batch.Put(
+            key, std::string(200 + random.Uniform(800), 'a' + round)));
+    }
+    EXPECT_OK(db_->Write(WriteOptions(), &batch));
+    EXPECT_OK(db_->Flush(FlushOptions()));
+    if (random.OneIn(2)) {
+      EXPECT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+    }
+    EXPECT_OK(db_->SyncBackup());
+  }
+  stop = true;
+  reader.join();
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.ssd_bytes == 0;
+  });
+  Check("stable", "fixed");
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  Clean(m_.staging_dir);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("stable", "fixed");
+}
+#ifndef OS_WIN
+TEST_F(MetaBypassTest, SstCompleteSsdLossRestoresExactlyPublishedState) {
+  EnableSst();
+  const pid_t child = fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    execl(executable.c_str(), executable.c_str(), "--sst-crash-writer",
+          index_.c_str(), m_.data_dir.c_str(), m_.backup_dir.c_str(), nullptr);
+    _exit(127);
+  }
+  int status;
+  ASSERT_EQ(waitpid(child, &status, 0), child);
+  ASSERT_TRUE(WIFSIGNALED(status));
+  ASSERT_EQ(WTERMSIG(status), SIGKILL);
+  Clean(index_);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("updated", "published");
+  Check("deleted", "published");
+  std::string value;
+  ASSERT_TRUE(db_->Get(ReadOptions(), "tail", &value).IsNotFound());
+  ASSERT_OK(db_->Put(WriteOptions(), "new-generation", "safe"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+  Open();
+  Check("new-generation", "safe");
+}
+#endif
 TEST_F(MetaBypassTest, CloseRestoreAppendAndReopen) {
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "a", "old"));
@@ -1988,6 +2288,44 @@ int main(int argc, char** argv) {
   using ROCKSDB_NAMESPACE::WriteBatch;
   using ROCKSDB_NAMESPACE::WriteOptions;
 #ifndef OS_WIN
+  if (argc == 5 && std::string(argv[1]) == "--sst-crash-writer") {
+    using ROCKSDB_NAMESPACE::FlushOptions;
+    using ROCKSDB_NAMESPACE::SstTieringMode;
+    Options options;
+    options.create_if_missing = true;
+    options.allow_concurrent_memtable_write = false;
+    MetaBypassOptions bypass;
+    bypass.data_dir = argv[3];
+    bypass.backup_dir = argv[4];
+    bypass.sst_tiering.mode = SstTieringMode::kAdaptive;
+    bypass.sst_tiering.ssd_capacity_bytes = 1;
+    bypass.sst_tiering.interval_ms = 1;
+    std::unique_ptr<MetaBypassDB> db;
+    Status s = MetaBypassDB::Open(options, bypass, argv[2], &db);
+    if (s.ok()) s = db->Put(WriteOptions(), "updated", "published");
+    if (s.ok()) s = db->Put(WriteOptions(), "deleted", "published");
+    if (s.ok()) s = db->Flush(FlushOptions());
+    if (s.ok()) s = db->SyncBackup();
+    // Freeze publication after the chosen point, while letting the mirror and
+    // primary WAL accumulate unflushed updates and a deletion.
+    std::mutex mutex;
+    std::condition_variable cv;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::ValidateCandidate", [&](void*) {
+          std::unique_lock<std::mutex> lock(mutex);
+          cv.wait(lock, [] { return false; });
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    if (s.ok()) s = db->Put(WriteOptions(), "updated", "unpublished");
+    if (s.ok()) s = db->Delete(WriteOptions(), "deleted");
+    if (s.ok()) s = db->Put(WriteOptions(), "tail", "unpublished");
+    if (!s.ok()) {
+      fprintf(stderr, "%s\n", s.ToString().c_str());
+      return 2;
+    }
+    kill(getpid(), SIGKILL);
+    return 3;
+  }
   if (argc == 7 && std::string(argv[1]) == "--tiered-crash-writer") {
     Options options;
     options.create_if_missing = true;

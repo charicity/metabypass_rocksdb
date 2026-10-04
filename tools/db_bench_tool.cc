@@ -1135,6 +1135,16 @@ DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
               "Pending event bytes");
 DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
 DEFINE_uint64(metabypass_interval_ms, 1000, "Background trigger interval");
+DEFINE_string(metabypass_sst_action, "legacy",
+              "SST protocol: legacy, seed, run, rpo_write, rpo_restore");
+DEFINE_uint64(metabypass_sst_warmup_seconds, 60,
+              "Node warmup/read recovery seconds");
+DEFINE_uint64(metabypass_sst_measure_seconds, 120, "Node fixed-rate seconds");
+DEFINE_uint64(metabypass_sst_saturated_seconds, 30, "Node saturated seconds");
+DEFINE_uint64(metabypass_sst_flush_interval_ms, 10000,
+              "Node timed flush interval");
+DEFINE_uint64(metabypass_sst_verify_keys, 256,
+              "Node final deterministic sample size");
 DEFINE_string(metabypass_sst_mode, "disabled",
               "SST tiering policy for metabypass_mode=sst_tiering: disabled, "
               "observe, adaptive");
@@ -11132,6 +11142,428 @@ static uint64_t MetaBypassBenchPercentile(std::vector<uint64_t>* samples,
   return (*samples)[(samples->size() - 1) * percent / 100];
 }
 
+// Linux steady_clock uses CLOCK_MONOTONIC, shared with the external controller.
+static uint64_t MetaBypassNodeNow() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+// Bounded mergeable histograms with four subdivisions per power of two.
+// Quantiles are bucket upper bounds, not exact order statistics.
+struct MetaBypassNodeHistogram {
+  static constexpr unsigned kBuckets = 193;
+  uint64_t buckets[kBuckets] = {};
+  uint64_t count = 0, maximum = 0;
+  static uint64_t Upper(unsigned i) {
+    if (i < 4) return i + 1;
+    if (i == kBuckets - 1) return UINT64_MAX;
+    const unsigned exponent = (i - 4) / 4 + 2;
+    return (uint64_t{1} << exponent) +
+           (uint64_t{1} << (exponent - 2)) * ((i - 4) % 4 + 1);
+  }
+  void Add(uint64_t value) {
+    unsigned lo = 0, hi = kBuckets - 1;
+    while (lo < hi) {
+      const unsigned mid = (lo + hi) / 2;
+      if (value <= Upper(mid))
+        hi = mid;
+      else
+        lo = mid + 1;
+    }
+    ++buckets[lo];
+    ++count;
+    maximum = std::max(maximum, value);
+  }
+  uint64_t Percentile(uint64_t percent) const {
+    if (count == 0) return 0;
+    uint64_t cumulative = 0;
+    for (unsigned i = 0; i < kBuckets; ++i) {
+      cumulative += buckets[i];
+      if (cumulative >= (count * percent + 99) / 100) return Upper(i);
+    }
+    return maximum;
+  }
+  void Print() const {
+    printf("{\"count\":%" PRIu64 ",\"p50_us\":%" PRIu64 ",\"p95_us\":%" PRIu64
+           ",\"p99_us\":%" PRIu64 ",\"max_us\":%" PRIu64 ",\"buckets\":[",
+           count, Percentile(50), Percentile(95), Percentile(99), maximum);
+    for (unsigned i = 0; i < kBuckets; ++i)
+      printf("%s%" PRIu64, i ? "," : "", buckets[i]);
+    printf("]}");
+  }
+};
+struct MetaBypassNodeOperations {
+  MetaBypassNodeHistogram service[3], response[3];
+  uint64_t late_ops = 0;
+  uint64_t Count() const {
+    return service[0].count + service[1].count + service[2].count;
+  }
+  void Add(unsigned type, uint64_t start, uint64_t due, uint64_t end,
+           uint64_t rate) {
+    service[type].Add(end - start);
+    response[type].Add(end - due);
+    if (rate != 0 && start - due > (1000000 + rate - 1) / rate) ++late_ops;
+  }
+  void Print() const {
+    const char* names[] = {"get", "put", "delete"};
+    printf(",\"ops\":%" PRIu64, Count());
+    for (unsigned i = 0; i < 3; ++i) {
+      printf(",\"%s\":{\"count\":%" PRIu64 ",\"service\":", names[i],
+             service[i].count);
+      service[i].Print();
+      printf(",\"response\":");
+      response[i].Print();
+      printf("}");
+    }
+  }
+};
+
+static int RunMetaBypassNodeSst(Options options,
+                                const MetaBypassOptions& bypass) {
+  const std::string action = FLAGS_metabypass_sst_action;
+  if ((action != "seed" && action != "run" && action != "rpo_write" &&
+       action != "rpo_restore") ||
+      FLAGS_key_size != 16 || FLAGS_metabypass_sst_flush_interval_ms == 0 ||
+      FLAGS_metabypass_sst_flush_interval_ms > 86400000 ||
+      FLAGS_metabypass_sst_warmup_seconds > 86400 ||
+      FLAGS_metabypass_sst_measure_seconds > 86400 ||
+      FLAGS_metabypass_sst_saturated_seconds > 86400 ||
+      FLAGS_metabypass_sst_target_ops_per_sec == 0 ||
+      FLAGS_metabypass_sst_target_ops_per_sec > 1000000000 ||
+      (action == "run" && FLAGS_metabypass_sst_workload == "scan")) {
+    fprintf(stderr,
+            "Invalid node SST action/settings (16-byte keys required)\n");
+    return 1;
+  }
+  // Bound table-reader memory and L0 fanout under the dedicated small cgroup.
+  options.level0_file_num_compaction_trigger = 4;
+  options.max_open_files = 64;
+  options.statistics = CreateDBStatistics();
+  options.create_if_missing = action == "seed";
+  options.error_if_exists = action == "seed";
+  const uint64_t key_count = lossless_cast<uint64_t>(FLAGS_num);
+  const std::string marker = "!mb_rpo_marker!!";
+  printf(
+      "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"histogram_schema\","
+      "\"quantiles\":\"bucket_upper_bound\",\"upper_bounds_us\":[");
+  for (unsigned i = 0; i < MetaBypassNodeHistogram::kBuckets; ++i)
+    printf("%s%" PRIu64, i ? "," : "", MetaBypassNodeHistogram::Upper(i));
+  printf("]}\n");
+  fflush(stdout);
+  const uint64_t open_start = MetaBypassNodeNow();
+  Status s;
+  if (action == "rpo_restore")
+    s = MetaBypassDB::Restore(options, bypass, FLAGS_db);
+  std::unique_ptr<MetaBypassDB> db;
+  if (s.ok()) s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);
+  if (!s.ok()) {
+    fprintf(stderr, "Node SST open/restore: %s\n", s.ToString().c_str());
+    return 1;
+  }
+  WriteOptions write;
+  write.sync = FLAGS_sync;
+  FlushOptions flush;
+  flush.wait = true;
+  auto stats = [&]() {
+    MetaBypassStats b = db->GetBackupStats();
+    const auto& t = b.sst_tiering;
+    if (!b.error.ok()) s.UpdateIfOk(b.error);
+    if (!t.error.empty() || t.migration_errors != 0)
+      s.UpdateIfOk(Status::IOError("SST migration failure", t.error));
+    printf(",\"stats\":{");
+    bool first = true;
+    auto field = [&](const char* name, uint64_t value) {
+      printf("%s\"%s\":%" PRIu64, first ? "" : ",", name, value);
+      first = false;
+    };
+#define MB_NODE_FIELD(object, name) field(#name, object.name)
+    MB_NODE_FIELD(t, ssd_bytes);
+    MB_NODE_FIELD(t, peak_ssd_bytes);
+    MB_NODE_FIELD(t, hdd_bytes);
+    MB_NODE_FIELD(t, protected_bytes);
+    MB_NODE_FIELD(t, unprotected_bytes);
+    MB_NODE_FIELD(t, reserved_bytes);
+    MB_NODE_FIELD(t, pending_delete_bytes);
+    MB_NODE_FIELD(t, sampled_reads);
+    MB_NODE_FIELD(t, dropped_samples);
+    MB_NODE_FIELD(t, scan_reads);
+    MB_NODE_FIELD(t, promotions);
+    MB_NODE_FIELD(t, demotions);
+    MB_NODE_FIELD(t, promoted_bytes);
+    MB_NODE_FIELD(t, demoted_bytes);
+    MB_NODE_FIELD(t, migration_errors);
+    MB_NODE_FIELD(t, queued_migrations);
+    MB_NODE_FIELD(t, oversized_files);
+    MB_NODE_FIELD(t, observed_promotions);
+    MB_NODE_FIELD(t, observed_demotions);
+    MB_NODE_FIELD(t, copied_bytes);
+    MB_NODE_FIELD(t, reused_links);
+    MB_NODE_FIELD(t, over_budget_micros);
+    MB_NODE_FIELD(b, staging_bytes);
+    MB_NODE_FIELD(b, peak_staging_bytes);
+    MB_NODE_FIELD(b, pending_blob_bytes);
+    MB_NODE_FIELD(b, migrated_blob_bytes);
+    MB_NODE_FIELD(b, staging_backpressure_micros);
+    MB_NODE_FIELD(b, sync_write_micros);
+    MB_NODE_FIELD(b, queued_bytes);
+    MB_NODE_FIELD(b, peak_queued_bytes);
+    MB_NODE_FIELD(b, backpressure_micros);
+    MB_NODE_FIELD(b, mirrored_bytes);
+    MB_NODE_FIELD(b, recovery_points);
+    MB_NODE_FIELD(b, validated_blob_bytes);
+    MB_NODE_FIELD(b, reused_tables);
+    MB_NODE_FIELD(b, last_publish_micros);
+    MB_NODE_FIELD(b, last_build_micros);
+    MB_NODE_FIELD(b, last_point_lag_micros);
+    MB_NODE_FIELD(b, retained_index_bytes);
+    MB_NODE_FIELD(b, pending_gc_points);
+    MB_NODE_FIELD(b, pending_gc_bytes);
+    MB_NODE_FIELD(b, gc_micros);
+    MB_NODE_FIELD(b, candidate_copied_bytes);
+#undef MB_NODE_FIELD
+    field("queue_capacity", bypass.queue_capacity);
+    field("batch_bytes", bypass.batch_bytes);
+    field("interval_ms", bypass.interval_ms);
+    field("ssd_capacity_bytes", bypass.sst_tiering.ssd_capacity_bytes);
+    field("compact_read_bytes",
+          options.statistics->getTickerCount(COMPACT_READ_BYTES));
+    field("compact_write_bytes",
+          options.statistics->getTickerCount(COMPACT_WRITE_BYTES));
+    printf(",\"cutoff_score\":%.9g}",
+           std::isfinite(t.cutoff_score) ? t.cutoff_score : 0.0);
+  };
+  uint64_t sequence = 0;
+  if (action == "seed") {
+    for (uint64_t i = 0; s.ok() && i < key_count; ++i)
+      s = db->Put(write, MetaBypassBenchKey(i),
+                  MetaBypassBenchValue(i, 1, FLAGS_value_size));
+    if (s.ok()) s = db->Put(write, marker, "0");
+    if (s.ok()) s = db->Flush(flush);
+    if (s.ok()) s = db->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+    if (s.ok()) s = db->SyncBackup();
+  } else {
+    std::string value;
+    s = db->Get(ReadOptions(), marker, &value);
+    if (s.ok()) {
+      char* end = nullptr;
+      sequence = std::strtoull(value.c_str(), &end, 10);
+      if (value.empty() || end != value.c_str() + value.size() ||
+          value != std::to_string(sequence) || sequence >= 1000000000000000ULL)
+        s = Status::Corruption("invalid RPO marker");
+    }
+    if (s.ok() && action == "rpo_restore" && sequence != 0) {
+      std::string key = MetaBypassBenchKey(sequence);
+      key[0] = 'r';
+      s = db->Get(ReadOptions(), key, &value);
+      if (s.ok() &&
+          value != MetaBypassBenchValue(sequence, 1, FLAGS_value_size))
+        s = Status::Corruption("recovered RPO marker/business mismatch");
+    }
+    if (s.ok() && action == "rpo_restore") {
+      printf(
+          "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"recovered\","
+          "\"recovered_marker\":%" PRIu64 ",\"rto_us\":%" PRIu64
+          ",\"steady_time_us\":%" PRIu64 "}\n",
+          sequence, MetaBypassNodeNow() - open_start, MetaBypassNodeNow());
+      fflush(stdout);
+    }
+  }
+  std::unordered_map<uint64_t, uint64_t> versions;
+  uint64_t random = FLAGS_metabypass_sst_seed;
+  auto verify = [&](uint64_t index) {
+    auto found = versions.find(index);
+    const uint64_t version = found == versions.end() ? 1 : found->second;
+    std::string actual;
+    Status read = db->Get(ReadOptions(), MetaBypassBenchKey(index), &actual);
+    if (version == 0) {
+      if (read.IsNotFound()) return Status::OK();
+      if (read.ok()) return Status::Corruption("deleted node key returned");
+    } else if (read.ok() && actual != MetaBypassBenchValue(index, version,
+                                                           FLAGS_value_size)) {
+      return Status::Corruption("node SST value mismatch");
+    }
+    return read;
+  };
+  if (s.ok() && action != "seed") {
+    printf(
+        "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"ready\","
+        "\"action\":\"%s\",\"steady_time_us\":%" PRIu64 "}\n",
+        action.c_str(), MetaBypassNodeNow());
+    fflush(stdout);
+  }
+  auto phase = [&](const char* name, uint64_t seconds, uint64_t rate) {
+    const uint64_t begin = MetaBypassNodeNow();
+    const uint64_t deadline = begin + seconds * 1000000;
+    uint64_t window_start = begin,
+             next_flush = begin + FLAGS_metabypass_sst_flush_interval_ms * 1000;
+    uint64_t op = 0, window_index = 0;
+    bool switched = false;
+    MetaBypassNodeOperations window, total;
+    auto emit = [&](const char* event,
+                    const MetaBypassNodeOperations& operations, uint64_t start,
+                    uint64_t now) {
+      printf(
+          "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"%s\","
+          "\"phase\":\"%s\",\"window\":%" PRIu64 ",\"elapsed_us\":%" PRIu64
+          ",\"phase_elapsed_us\":%" PRIu64 ",\"steady_time_us\":%" PRIu64
+          ",\"target_ops_per_sec\":%" PRIu64,
+          event, name, window_index, now - start, now - begin, now, rate);
+      operations.Print();
+      if (rate != 0 && operations.Count() != 0) {
+        printf(",\"late_ops\":%" PRIu64 ",\"late_fraction\":%.9g",
+               operations.late_ops,
+               double(operations.late_ops) / double(operations.Count()));
+      } else {
+        printf(",\"late_ops\":null,\"late_fraction\":null");
+      }
+      if (std::string(event) == "phase_end") {
+        const uint64_t scheduled = rate == 0 ? total.Count() : seconds * rate;
+        printf(",\"scheduled_ops\":%" PRIu64 ",\"unfinished_ops\":%" PRIu64,
+               scheduled,
+               scheduled > total.Count() ? scheduled - total.Count() : 0);
+      }
+      stats();
+      printf(",\"ok\":%s}\n", s.ok() ? "true" : "false");
+      fflush(stdout);
+    };
+    while (s.ok() && MetaBypassNodeNow() < deadline) {
+      uint64_t due =
+          rate == 0 ? MetaBypassNodeNow() : begin + op * 1000000 / rate;
+      if (due >= deadline) {
+        const uint64_t now = MetaBypassNodeNow();
+        if (deadline > now)
+          std::this_thread::sleep_for(
+              std::chrono::microseconds(deadline - now));
+        break;
+      }
+      uint64_t now = MetaBypassNodeNow();
+      if (due > now)
+        std::this_thread::sleep_for(std::chrono::microseconds(due - now));
+      now = MetaBypassNodeNow();
+      if (now >= deadline) break;
+      if (!switched && FLAGS_metabypass_sst_workload == "switch" &&
+          std::string(name) == "measured" && now - begin >= seconds * 500000) {
+        switched = true;
+        printf(
+            "MB_SST_JSON "
+            "{\"protocol\":\"node_v1\",\"event\":\"hotspot_switch\","
+            "\"elapsed_us\":%" PRIu64 "}\n",
+            now - begin);
+        fflush(stdout);
+      }
+      const uint64_t selector = MetaBypassBenchRandom(&random);
+      const uint64_t key_random = MetaBypassBenchRandom(&random);
+      const uint64_t quarter = key_count / 4;
+      const uint64_t hot_base =
+          FLAGS_metabypass_sst_workload == "switch" &&
+                  (switched || std::string(name) == "saturated")
+              ? quarter
+              : 0;
+      uint64_t index = key_random % key_count;
+      if (FLAGS_metabypass_sst_workload != "uniform" &&
+          action != "rpo_restore") {
+        if (selector % 10 < 8)
+          index = hot_base + key_random % quarter;
+        else {
+          const uint64_t cold = key_random % (key_count - quarter);
+          index = cold < hot_base ? cold : cold + quarter;
+        }
+      }
+      unsigned type = 0;
+      const uint64_t start = MetaBypassNodeNow();
+      if (action == "rpo_write") {
+        // RPO business keys use a disjoint, fixed-width keyspace. Recovery
+        // first-read sampling can therefore verify the immutable seed keys.
+        std::string key = MetaBypassBenchKey(sequence + 1);
+        key[0] = 'r';
+        WriteBatch batch;
+        s = batch.Put(key,
+                      MetaBypassBenchValue(sequence + 1, 1, FLAGS_value_size));
+        if (s.ok()) s = batch.Put(marker, std::to_string(sequence + 1));
+        if (s.ok()) s = db->Write(write, &batch);
+        type = 1;
+        if (s.ok()) {
+          ++sequence;
+          printf(
+              "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"ack\","
+              "\"seq\":%" PRIu64 ",\"steady_time_us\":%" PRIu64
+              ",\"business_bytes\":%" PRIu64 "}\n",
+              sequence, MetaBypassNodeNow(), uint64_t{16} + FLAGS_value_size);
+          fflush(stdout);
+        }
+      } else if (action == "run" && FLAGS_metabypass_sst_workload == "mixed" &&
+                 op % 10 == 0) {
+        type = op % 20 == 0 ? 1 : 2;
+        auto found = versions.find(index);
+        uint64_t version = found == versions.end() ? 1 : found->second;
+        version = type == 1 ? std::max(uint64_t{2}, version + 1) : 0;
+        s = type == 1 ? db->Put(write, MetaBypassBenchKey(index),
+                                MetaBypassBenchValue(index, version,
+                                                     FLAGS_value_size))
+                      : db->Delete(write, MetaBypassBenchKey(index));
+        if (s.ok()) versions[index] = version;
+      } else {
+        s = verify(index);
+      }
+      const uint64_t end = MetaBypassNodeNow();
+      window.Add(type, start, due, end, rate);
+      total.Add(type, start, due, end, rate);
+      ++op;
+      if (s.ok() &&
+          (action == "rpo_write" ||
+           (action == "run" && FLAGS_metabypass_sst_workload == "mixed")) &&
+          end >= next_flush) {
+        s = db->Flush(flush);
+        next_flush =
+            MetaBypassNodeNow() + FLAGS_metabypass_sst_flush_interval_ms * 1000;
+      }
+      now = MetaBypassNodeNow();
+      if (now - window_start >= FLAGS_metabypass_sst_window_ms * 1000) {
+        emit("window", window, window_start, now);
+        window = MetaBypassNodeOperations();
+        window_start = now;
+        ++window_index;
+      }
+    }
+    const uint64_t end = MetaBypassNodeNow();
+    if (window.Count() != 0) emit("window", window, window_start, end);
+    emit("phase_end", total, begin, end);
+  };
+  if (s.ok() && action == "run") {
+    phase("warmup", FLAGS_metabypass_sst_warmup_seconds,
+          FLAGS_metabypass_sst_target_ops_per_sec);
+    if (s.ok())
+      phase("measured", FLAGS_metabypass_sst_measure_seconds,
+            FLAGS_metabypass_sst_target_ops_per_sec);
+    if (s.ok()) phase("saturated", FLAGS_metabypass_sst_saturated_seconds, 0);
+  } else if (s.ok() && action == "rpo_write") {
+    phase("rpo_write", FLAGS_metabypass_sst_measure_seconds,
+          FLAGS_metabypass_sst_target_ops_per_sec);
+  } else if (s.ok() && action == "rpo_restore") {
+    phase("first60s_read", FLAGS_metabypass_sst_warmup_seconds,
+          FLAGS_metabypass_sst_target_ops_per_sec);
+  }
+  if (action != "rpo_write" && action != "seed") {
+    for (uint64_t i = 0;
+         s.ok() && i < std::min(key_count, FLAGS_metabypass_sst_verify_keys);
+         ++i)
+      s = verify(i * key_count /
+                 std::min(key_count, FLAGS_metabypass_sst_verify_keys));
+  }
+  Status close = db->Close();
+  s.UpdateIfOk(close);
+  printf(
+      "MB_SST_JSON "
+      "{\"protocol\":\"node_v1\",\"event\":\"summary\",\"action\":\"%s\"",
+      action.c_str());
+  stats();
+  printf(",\"ok\":%s}\n", s.ok() ? "true" : "false");
+  fflush(stdout);
+  if (!s.ok()) fprintf(stderr, "Node SST: %s\n", s.ToString().c_str());
+  return s.ok() ? 0 : 1;
+}
+
 // An isolated, single-threaded, fixed-operation workload. The Python runner
 // records process CPU/RSS and physical allocation outside this entry point.
 static int RunMetaBypassSstBenchmark(const Options& base_options,
@@ -11179,14 +11611,18 @@ static int RunMetaBypassSstBenchmark(const Options& base_options,
     return 1;
   }
   bypass.sst_tiering.ssd_capacity_bytes = FLAGS_metabypass_sst_capacity_bytes;
-  bypass.sst_tiering.sample_one_in = FLAGS_metabypass_sst_sample_one_in;
-  bypass.sst_tiering.reserve_percent = FLAGS_metabypass_sst_reserve_percent;
+  bypass.sst_tiering.sample_one_in =
+      static_cast<uint32_t>(FLAGS_metabypass_sst_sample_one_in);
+  bypass.sst_tiering.reserve_percent =
+      static_cast<uint32_t>(FLAGS_metabypass_sst_reserve_percent);
   bypass.sst_tiering.sample_buffer_capacity =
       FLAGS_metabypass_sst_sample_buffer_capacity;
   bypass.sst_tiering.interval_ms = FLAGS_metabypass_sst_interval_ms;
   bypass.sst_tiering.heat_half_life_ms = FLAGS_metabypass_sst_half_life_ms;
-  bypass.sst_tiering.promote_rounds = FLAGS_metabypass_sst_promote_rounds;
-  bypass.sst_tiering.demote_rounds = FLAGS_metabypass_sst_demote_rounds;
+  bypass.sst_tiering.promote_rounds =
+      static_cast<uint32_t>(FLAGS_metabypass_sst_promote_rounds);
+  bypass.sst_tiering.demote_rounds =
+      static_cast<uint32_t>(FLAGS_metabypass_sst_demote_rounds);
   bypass.sst_tiering.min_residency_ms = FLAGS_metabypass_sst_residency_ms;
   bypass.sst_tiering.replacement_margin =
       FLAGS_metabypass_sst_replacement_margin;
@@ -11203,6 +11639,8 @@ static int RunMetaBypassSstBenchmark(const Options& base_options,
   BlockBasedTableOptions table;
   table.block_cache = NewLRUCache(FLAGS_metabypass_sst_cache_bytes, 0);
   options.table_factory.reset(NewBlockBasedTableFactory(table));
+  if (FLAGS_metabypass_sst_action != "legacy")
+    return RunMetaBypassNodeSst(options, bypass);
   options.error_if_exists = true;
   std::unique_ptr<MetaBypassDB> db;
   Status s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);

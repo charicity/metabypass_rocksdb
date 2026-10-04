@@ -37,7 +37,7 @@ if [ "$?" != "1" ]; then
   BAD=1
 fi
 
-LC_ALL=C git grep -n $'[\x80-\xff]' -- ':!docs' ':!*.md' ':!.github'
+LC_ALL=C git grep -I -n $'[\x80-\xff]' -- ':!docs' ':!*.md' ':!.github'
 if [ "$?" != "1" ]; then
   echo '^^^^ Use only ASCII characters in source files'
   BAD=1

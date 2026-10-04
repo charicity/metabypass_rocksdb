@@ -1,5 +1,8 @@
 # Strong tiered blob storage
 
+See the shared [migration lifecycle contract and scenario matrix](migration-lifecycle.md)
+for persistence, route switching, physical I/O draining and reclamation.
+
 Metabypass can stage Blob Direct Write payloads on a fast filesystem and migrate
 native blob bytes to a separate slow filesystem. This is an opt-in, experimental,
 single-column-family configuration. Non-tiered databases retain their direct payload placement. Both modes now
@@ -137,3 +140,18 @@ outside the storage budget and is used in all comparison configurations.
 
 See [the implementation test report](tiered-storage-report.zh-CN.md) for measured
 results, commands and environmental limitations.
+
+### Read and migration lifetime
+
+A closed staging blob can be copied while local reads are in flight. After its
+complete remote descriptor is committed, new reads use remote extents; physical
+staging deletion and space reclamation wait for existing local reads to finish.
+The worker sleeps while those readers drain instead of repeatedly retrying eviction.
+
+Remote reads pin an immutable descriptor snapshot. An in-memory cumulative extent
+index locates the starting extent by binary search; reads traverse only the extents
+covering the requested range. Descriptor publication builds this index outside the
+read-path mutex. The on-disk `MBT1` and checkpoint formats are unchanged.
+
+Both direct and staging modes reject batches with a WAL termination point before
+mutation: a successful write must retain the entire batch in WAL for recovery.

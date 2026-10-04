@@ -280,10 +280,16 @@ For the fresh four-version comparison including backup disabled, see
 See [identity retry and option validation fixes](review-fixes.md) for the
 review findings, regression coverage and verification results.
 
+See [recovery and tiering review fixes](recovery-tiering-review-fixes-2026-09-30.md)
+for the WAL, blob migration/read and SST restore changes and their test record.
+
 ## Strong tiered blob storage
 
 See [strong tiered storage](tiered-storage.md) for the optional fast staging
 layer, remote synchronous-write contract, capacity policy and recovery protocol.
+
+See the shared [migration lifecycle contract and regression matrix](migration-lifecycle.md)
+for the SST and blob stage boundaries and their distinct read lifetimes.
 
 ## Whole-SST tiering
 

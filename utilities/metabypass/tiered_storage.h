@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -60,6 +61,7 @@ class TieredStorage : public FileSystemWrapper {
                     bool, IODebugContext*) override;
 
  private:
+  friend class TieredStorageTest;
   friend class TierWriter;
   friend class TierReader;
   struct Extent {
@@ -70,18 +72,38 @@ class TieredStorage : public FileSystemWrapper {
     uint64_t size = 0;
     bool sealed = false;
     std::vector<Extent> extents;
+    // Exclusive logical end of each extent, built before publication.
+    std::vector<uint64_t> ends;
   };
   struct Local {
     uint64_t size = 0;
     bool closed = false;
+    // Physical local I/O pins, not the lifetime of logical TierReaders.
     uint64_t readers = 0;
     bool evicting = false;
+  };
+  // Stack-owned per-I/O pin. Open requires mutex_; destruction must not hold
+  // it.
+  class LocalReadPin {
+   public:
+    LocalReadPin() = default;
+    ~LocalReadPin();
+    LocalReadPin(const LocalReadPin&) = delete;
+    LocalReadPin& operator=(const LocalReadPin&) = delete;
+    IOStatus Open(TieredStorage*, uint64_t, IODebugContext*);
+    FSRandomAccessFile* file() const { return file_.get(); }
+
+   private:
+    TieredStorage* storage_ = nullptr;
+    uint64_t number_ = 0;
+    std::unique_ptr<FSRandomAccessFile> file_;
   };
   static std::string Encode(const Version&);
   static Status Decode(const std::string&, Version*);
   std::string LocalPath(uint64_t) const;
   std::string Descriptor(uint64_t) const;
-  Status Commit(uint64_t, const Version&);
+  static std::shared_ptr<const Version> Snapshot(Version);
+  Status Commit(uint64_t, Version);
   Status Migrate(uint64_t, uint64_t, bool background);
   Status AppendExtent(uint64_t, const Slice&, Version*);
   void Run();
@@ -91,12 +113,15 @@ class TieredStorage : public FileSystemWrapper {
   IOStatus ReadVersion(const Version&, uint64_t, size_t, const IOOptions&,
                        Slice*, char*, IODebugContext*);
   void Closed(uint64_t);
-  Status Evict(uint64_t);
+  // Single migration worker, or exclusive offline recovery, only. Both stages
+  // acquire mutex_ internally; callers must release it first.
+  Status SwitchReadsToRemote(uint64_t);
+  Status ReclaimLocalAfterReads(uint64_t);
   const MetaBypassOptions options_;
   mutable std::mutex mutex_;
   std::condition_variable work_, progress_;
   std::map<uint64_t, Local> local_;
-  std::map<uint64_t, Version> versions_;
+  std::map<uint64_t, std::shared_ptr<const Version>> versions_;
   std::map<uint64_t, uint64_t> requests_;
   uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0, wait_us_ = 0;
   uint64_t extent_id_ = 0;

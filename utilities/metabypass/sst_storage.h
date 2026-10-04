@@ -27,8 +27,14 @@ class SstStorage : public FileSystemWrapper {
   // Called with exclusive data and backup directory locks, before recovery.
   Status Initialize(const std::string& identity, bool restore);
   Status Protect(const std::string& point, const NativeState& state);
-  Status RestoreTable(const std::string& source, uint64_t number,
-                      uint64_t size);
+  struct RestoreFile {
+    std::string source;
+    uint64_t number;
+    uint64_t size;
+  };
+  // Prepare all objects before publishing one placement map. Restore runs
+  // offline with the RESTORING marker and both directory locks held.
+  Status RestoreTables(const std::vector<RestoreFile>& files);
   void SetFailureHandler(std::function<void(const Status&)> handler);
   void Start();
   void Stop();
@@ -69,9 +75,12 @@ class SstStorage : public FileSystemWrapper {
     uint32_t crc = 0, in_rounds = 0, out_rounds = 0;
     bool hot = true, live = true;
     std::string object;
+    // Logical SstLogicalReaders, not in-flight physical I/O. Each Read pins
+    // handle separately; Retired/Reap use those shared pins to delay unlink.
     size_t readers = 0;
     std::shared_ptr<Handle> handle;
   };
+  // Own the old physical handle until its per-I/O shared pins have drained.
   struct Retired {
     std::shared_ptr<Handle> handle;
     std::string path;
@@ -81,7 +90,8 @@ class SstStorage : public FileSystemWrapper {
   Status Discover();
   Status SavePlacement(uint64_t changed_number = 0, int hot = -1);
   Status LoadPlacement();
-  Status MakeObject(const std::string& source, const std::shared_ptr<Entry>& e);
+  Status MakeObject(const std::string& source, uint64_t number, uint64_t size,
+                    std::string* object, uint32_t* crc);
   Status OpenHandle(const std::shared_ptr<Entry>& entry, bool hot,
                     std::shared_ptr<Handle>* handle);
   Status Migrate(const SstMigrationIntent& intent);

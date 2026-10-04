@@ -418,6 +418,9 @@ Status MetaBypassDB::Write(const WriteOptions& o, WriteBatch* b) {
   if (!impl_->db) return Status::ShutdownInProgress();
   if (o.disableWAL) return Status::NotSupported("Metabypass requires WAL");
   if (!b) return Status::InvalidArgument("null WriteBatch");
+  if (!b->GetWalTerminationPoint().is_cleared())
+    return Status::NotSupported(
+        "Metabypass requires the complete batch in WAL");
   SupportedBatch check;
   Status s = b->Iterate(&check);
   if (s.ok() && !check.supported)

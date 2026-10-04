@@ -126,6 +126,8 @@ class MetaBypassDB {
   // A failed remote barrier can follow a successful primary mutation.
   Status Put(const WriteOptions&, const Slice& key, const Slice& value);
   Status Delete(const WriteOptions&, const Slice& key);
+  // Requires WAL for the complete batch; rejects disableWAL and batches with
+  // a WAL termination point before any mutation.
   Status Write(const WriteOptions&, WriteBatch*);
   Status Get(const ReadOptions&, const Slice& key, std::string* value);
   Iterator* NewIterator(const ReadOptions&);

@@ -1,0 +1,1 @@
+Metabypass rejects partial-WAL batches and permits blob migration during local reads so staging capacity can be reclaimed under sustained reads.

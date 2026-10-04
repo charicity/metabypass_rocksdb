@@ -8,12 +8,14 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
 #include <sstream>
 #include <thread>
 
+#include "db/blob/blob_log_format.h"
 #include "file/filename.h"
 #include "rocksdb/sst_file_reader.h"
 #include "rocksdb/write_batch.h"
@@ -22,6 +24,7 @@
 #include "util/cast_util.h"
 #include "util/random.h"
 #include "utilities/metabypass/backup.h"
+#include "utilities/metabypass/tiered_storage.h"
 
 #ifndef OS_WIN
 #include <signal.h>
@@ -465,6 +468,49 @@ TEST_F(MetaBypassTest, DirectSyncWritesWaitForPublicationAndReportFailure) {
   Check("key1", "old");
   Check("pair0", "v");
   Check("pair1", "v");
+}
+
+TEST_F(MetaBypassTest, RejectWalTerminationBeforeMutation) {
+  for (bool tiered : {false, true}) {
+    SCOPED_TRACE(tiered);
+    if (tiered) EnableTier();
+    Open();
+    WriteOptions sync;
+    sync.sync = true;
+    ASSERT_OK(db_->Put(sync, "a", "first"));
+    ASSERT_OK(db_->Put(sync, "b", "second"));
+    for (bool with_put : {false, true}) {
+      WriteBatch rejected;
+      ASSERT_OK(rejected.Delete("a"));
+      rejected.MarkWalTerminationPoint();
+      ASSERT_OK(rejected.Delete("b"));
+      if (with_put) {
+        ASSERT_OK(rejected.Put("new", "value"));
+      }
+      ASSERT_TRUE(db_->Write(sync, &rejected).IsNotSupported());
+      Check("a", "first");
+      Check("b", "second");
+      std::string value;
+      ASSERT_TRUE(db_->Get(ReadOptions(), "new", &value).IsNotFound());
+    }
+    WriteBatch accepted;
+    ASSERT_OK(accepted.Delete("a"));
+    ASSERT_OK(accepted.Put("b", "updated"));
+    ASSERT_OK(db_->Write(sync, &accepted));
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(index_);
+    if (tiered) Clean(m_.staging_dir);
+    ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+    Open();
+    Check("b", "updated");
+    std::string value;
+    ASSERT_TRUE(db_->Get(ReadOptions(), "a", &value).IsNotFound());
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(root_);
+    ASSERT_OK(fs_->CreateDirIfMissing(root_, IOOptions(), nullptr));
+  }
 }
 
 TEST_F(MetaBypassTest, TieredSyncSurvivesCompleteFastStorageLoss) {
@@ -2278,6 +2324,327 @@ TEST_F(MetaBypassTest, SigkillUnflushedBatchRecovery) {
 }
 #endif
 }  // namespace
+namespace metabypass {
+class TieredStorageTest : public MetaBypassTest {
+ public:
+  class LocalReadFailureFileSystem : public FileSystemWrapper {
+   public:
+    explicit LocalReadFailureFileSystem(std::shared_ptr<FileSystem> fs)
+        : FileSystemWrapper(std::move(fs)) {}
+    const char* Name() const override { return "LocalReadFailureFileSystem"; }
+    std::string local_path;
+    std::atomic<bool> fail_read{true};
+    std::atomic<int> closed_handles{0};
+    std::function<void()> on_close;
+    IOStatus NewRandomAccessFile(const std::string& path, const FileOptions& o,
+                                 std::unique_ptr<FSRandomAccessFile>* out,
+                                 IODebugContext* d) override {
+      IOStatus s = target()->NewRandomAccessFile(path, o, out, d);
+      if (s.ok() && path == local_path)
+        out->reset(new Reader(std::move(*out), this));
+      return s;
+    }
+
+   private:
+    class Reader : public FSRandomAccessFileWrapper {
+     public:
+      Reader(std::unique_ptr<FSRandomAccessFile> file,
+             LocalReadFailureFileSystem* fs)
+          : FSRandomAccessFileWrapper(file.get()),
+            file_(std::move(file)),
+            fs_(fs) {}
+      ~Reader() override {
+        // Destroy the backend before reporting a closed physical handle.
+        file_.reset();
+        if (fs_->on_close) fs_->on_close();
+        ++fs_->closed_handles;
+      }
+      IOStatus Read(uint64_t offset, size_t n, const IOOptions& o, Slice* out,
+                    char* scratch, IODebugContext* d) const override {
+        if (fs_->fail_read.exchange(false))
+          return IOStatus::IOError("injected local read failure");
+        return target()->Read(offset, n, o, out, scratch, d);
+      }
+
+     private:
+      std::unique_ptr<FSRandomAccessFile> file_;
+      LocalReadFailureFileSystem* fs_;
+    };
+  };
+  static std::string EmptyBlob() {
+    std::string blob;
+    BlobLogHeader header(0, kNoCompression, false, {0, 0});
+    header.EncodeTo(&blob);
+    EXPECT_EQ(blob.size(), BlobLogHeader::kSize);
+    BlobLogFooter footer;
+    std::string footer_bytes;
+    // Both encoders clear their destination, so assemble separate encodings.
+    footer.EncodeTo(&footer_bytes);
+    EXPECT_EQ(footer_bytes.size(), BlobLogFooter::kSize);
+    blob += footer_bytes;
+    EXPECT_EQ(blob.size(), BlobLogHeader::kSize + BlobLogFooter::kSize);
+    return blob;
+  }
+  Status CreateLocalBlob(const std::string& blob,
+                         std::unique_ptr<FSWritableFile>* writer) {
+    Status s = storage_->NewWritableFile(BlobFileName(m_.data_dir, 1),
+                                         FileOptions(), writer, nullptr);
+    if (s.ok()) s = (*writer)->Append(blob, IOOptions(), nullptr);
+    return s;
+  }
+  Status Migrate(uint64_t length) {
+    return storage_->TieredStorage::Migrate(1, length, false);
+  }
+  uint64_t LocalPins() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    const auto it = storage_->local_.find(1);
+    return it == storage_->local_.end() ? 0 : it->second.readers;
+  }
+  bool RemoteRoute() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    const auto it = storage_->local_.find(1);
+    return it == storage_->local_.end() || it->second.evicting;
+  }
+  bool RemoteSealed() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->versions_.at(1)->sealed;
+  }
+  uint64_t RemoteSize() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->versions_.at(1)->size;
+  }
+  Status LocalExists() {
+    return fs_->FileExists(BlobFileName(m_.staging_dir, 1), IOOptions(),
+                           nullptr);
+  }
+  void Initialize(uint64_t capacity = 1024 * 1024) {
+    EnableTier(capacity);
+    ASSERT_OK(EnsureDir(fs_.get(), m_.data_dir));
+    storage_.reset(new TieredStorage(fs_, m_));
+    ASSERT_OK(storage_->Initialize(false));
+  }
+  Status Append(const std::string& bytes) {
+    TieredStorage::Version v;
+    auto previous = storage_->versions_.find(1);
+    if (previous != storage_->versions_.end()) v = *previous->second;
+    Status s = storage_->TieredStorage::AppendExtent(1, bytes, &v);
+    v.sealed = true;
+    return s.ok() ? storage_->TieredStorage::Commit(1, std::move(v)) : s;
+  }
+  Status ReadBytes(uint64_t offset, size_t length, std::string* bytes) {
+    bytes->resize(length);
+    Slice result;
+    Status s = storage_->TieredStorage::ReadBlob(
+        1, offset, length, IOOptions(), &result, bytes->data(), nullptr);
+    if (s.ok()) {
+      if (result.empty())
+        bytes->clear();
+      else
+        bytes->assign(result.data(), result.size());
+    }
+    return s;
+  }
+  std::unique_ptr<TieredStorage> storage_;
+};
+
+TEST_F(TieredStorageTest, ExtentBoundariesCheckpointAndPinnedVersion) {
+  Initialize();
+  std::string expected;
+  for (int i = 0; i < 64; ++i) {
+    const std::string part(i % 7 + 1, 'a' + i % 26);
+    ASSERT_OK(Append(part));
+    expected += part;
+  }
+  // An in-flight read must retain the old size and mapping after publication.
+  TestGate pinned;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierRemoteReadPinned",
+                                        [&](void*) { pinned.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::string old;
+  Status read;
+  std::thread reader([&] { read = ReadBytes(0, expected.size() + 32, &old); });
+  pinned.WaitUntilBlocked();
+  Status append = Append("new-tail");
+  pinned.Release();
+  reader.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(append);
+  ASSERT_OK(read);
+  ASSERT_EQ(old, expected);
+  expected += "new-tail";
+  // Every boundary plus zero-length, EOF, short and cross-extent reads.
+  for (size_t offset = 0; offset <= expected.size() + 1; ++offset) {
+    for (size_t length : {size_t{0}, size_t{1}, size_t{11}, expected.size()}) {
+      std::string bytes;
+      ASSERT_OK(ReadBytes(offset, length, &bytes));
+      ASSERT_EQ(bytes,
+                expected.substr(std::min(offset, expected.size()), length));
+    }
+  }
+  const uint32_t seed = Env::Default()->NowMicros() & 0xffffffffU;
+  SCOPED_TRACE("seed=" + std::to_string(seed));
+  Random random(seed);
+  for (int i = 0; i < 100; ++i) {
+    const size_t offset = random.Uniform(expected.size() + 1);
+    const size_t length = random.Uniform(expected.size() + 1);
+    std::string bytes;
+    ASSERT_OK(ReadBytes(offset, length, &bytes));
+    ASSERT_EQ(bytes, expected.substr(offset, length));
+  }
+  const size_t prefix = expected.size() - 3;
+  ASSERT_OK(storage_->SaveCheckpoint(root_ + "/checkpoint", {{1, prefix}}));
+  ASSERT_OK(storage_->LoadCheckpoint(root_ + "/checkpoint"));
+  std::string bytes;
+  ASSERT_OK(ReadBytes(0, expected.size(), &bytes));
+  ASSERT_EQ(bytes, expected.substr(0, prefix));
+}
+
+TEST_F(TieredStorageTest, ActiveAndPartialMigrationRetainLocalSource) {
+  Initialize(128);
+  const std::string blob = EmptyBlob();
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob(blob, &writer));
+  const uint64_t prefix = BlobLogHeader::kSize;
+  ASSERT_OK(Migrate(prefix));
+  ASSERT_EQ(RemoteSize(), prefix);
+  ASSERT_FALSE(RemoteSealed());
+  ASSERT_FALSE(RemoteRoute());
+  ASSERT_OK(LocalExists());
+  // Even a fully copied active file has no sealed remote route yet.
+  ASSERT_OK(Migrate(blob.size()));
+  ASSERT_EQ(RemoteSize(), blob.size());
+  ASSERT_FALSE(RemoteSealed());
+  ASSERT_FALSE(RemoteRoute());
+  ASSERT_OK(LocalExists());
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  // A closed source and a prefix request still cannot authorize deletion.
+  ASSERT_OK(Migrate(prefix));
+  ASSERT_FALSE(RemoteRoute());
+  ASSERT_OK(LocalExists());
+  std::string bytes;
+  ASSERT_OK(ReadBytes(0, blob.size(), &bytes));
+  ASSERT_EQ(bytes, blob);
+  ASSERT_OK(Migrate(blob.size()));
+  ASSERT_TRUE(RemoteSealed());
+  ASSERT_TRUE(RemoteRoute());
+  ASSERT_TRUE(LocalExists().IsNotFound());
+}
+
+TEST_F(TieredStorageTest, LocalReadErrorReleasesPinBeforeMigration) {
+  auto failing = std::make_shared<LocalReadFailureFileSystem>(fs_);
+  fs_ = failing;
+  Initialize(128);
+  failing->local_path = BlobFileName(m_.staging_dir, 1);
+  const std::string blob = EmptyBlob();
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob(blob, &writer));
+  uint64_t pins_at_close = 0;
+  failing->on_close = [&] { pins_at_close = LocalPins(); };
+  std::string bytes;
+  ASSERT_TRUE(ReadBytes(0, blob.size(), &bytes).IsIOError());
+  failing->on_close = {};
+  ASSERT_EQ(pins_at_close, 1);
+  ASSERT_EQ(failing->closed_handles.load(), 1);
+  ASSERT_EQ(LocalPins(), 0);
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  ASSERT_OK(Migrate(blob.size()));
+  ASSERT_TRUE(LocalExists().IsNotFound());
+  ASSERT_OK(ReadBytes(0, blob.size(), &bytes));
+  ASSERT_EQ(bytes, blob);
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.staging_bytes, 0);
+}
+
+TEST_F(TieredStorageTest, DescriptorCommitFailureRetainsValidLocalSource) {
+  Initialize(128);
+  const std::string blob = EmptyBlob();
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob(blob, &writer));
+  ASSERT_OK(Migrate(BlobLogHeader::kSize));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierDescriptorSynced", [](void* arg) {
+        *static_cast<Status*>(arg) =
+            Status::IOError("descriptor commit failure");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status migrate = Migrate(blob.size());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_TRUE(migrate.IsIOError());
+  ASSERT_EQ(RemoteSize(), BlobLogHeader::kSize);
+  ASSERT_FALSE(RemoteSealed());
+  ASSERT_FALSE(RemoteRoute());
+  ASSERT_OK(LocalExists());
+  std::string bytes;
+  ASSERT_OK(ReadBytes(0, blob.size(), &bytes));
+  ASSERT_EQ(bytes, blob);
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.staging_bytes, blob.size());
+  ASSERT_OK(Migrate(blob.size()));
+  ASSERT_TRUE(LocalExists().IsNotFound());
+}
+
+TEST_F(TieredStorageTest, MigratePinnedLocalReadBeforeReclaimingSpace) {
+  Initialize(128);
+  const std::string blob = EmptyBlob();
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob(blob, &writer));
+  TestGate local_read, migrated;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierLocalReadPinned",
+                                        [&](void*) { local_read.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationComplete",
+                                        [&](void*) { migrated.Block(); });
+  std::atomic<int> remote_reads{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierRemoteReadPinned",
+                                        [&](void*) { ++remote_reads; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status read;
+  std::string old;
+  std::thread reader([&] { read = ReadBytes(0, blob.size(), &old); });
+  local_read.WaitUntilBlocked();
+  Status close = writer->Close(IOOptions(), nullptr);
+  storage_->Start();
+  migrated.WaitUntilBlocked();
+  std::string remote;
+  Status remote_status = ReadBytes(0, blob.size(), &remote);
+  MetaBypassStats before;
+  storage_->AddStats(&before);
+  Status exists = LocalExists();
+  const bool switched = RemoteRoute();
+  const uint64_t pins = LocalPins();
+  local_read.Release();
+  reader.join();
+  migrated.Release();
+  Status reserve = storage_->Reserve(100, [] { return Status::OK(); });
+  storage_->ReleaseReservation();
+  Status stop = storage_->Stop();
+  ASSERT_OK(reserve);
+  ASSERT_OK(stop);
+  ASSERT_OK(read);
+  ASSERT_OK(close);
+  ASSERT_OK(remote_status);
+  ASSERT_OK(exists);
+  ASSERT_TRUE(switched);
+  ASSERT_EQ(pins, 1);
+  ASSERT_EQ(LocalPins(), 0);
+  ASSERT_EQ(remote_reads.load(), 1);
+  ASSERT_OK(before.error);
+  ASSERT_EQ(before.staging_bytes, blob.size());
+  ASSERT_EQ(old, blob);
+  ASSERT_EQ(remote, blob);
+  ASSERT_TRUE(
+      fs_->FileExists(BlobFileName(m_.staging_dir, 1), IOOptions(), nullptr)
+          .IsNotFound());
+  MetaBypassStats after;
+  storage_->AddStats(&after);
+  ASSERT_OK(after.error);
+  ASSERT_EQ(after.staging_bytes, 0);
+}
+}  // namespace metabypass
 }  // namespace ROCKSDB_NAMESPACE
 int main(int argc, char** argv) {
   using ROCKSDB_NAMESPACE::MetaBypassDB;

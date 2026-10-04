@@ -308,20 +308,16 @@ Status SstStorage::LoadPlacement() {
   }
   return in.eof() ? Status::OK() : Status::Corruption("SST placement parse");
 }
-Status SstStorage::MakeObject(const std::string& source,
-                              const std::shared_ptr<Entry>& e) {
-  uint64_t size;
-  {
-    std::lock_guard<std::mutex> lock(e->mutex);
-    size = e->size;
-  }
-  uint32_t crc;
-  Status s = Digest(target(), source, size, &crc);
+Status SstStorage::MakeObject(const std::string& source, uint64_t number,
+                              uint64_t size, std::string* object,
+                              uint32_t* crc) {
+  uint32_t digest;
+  Status s = Digest(target(), source, size, &digest);
   if (!s.ok()) return s;
-  const std::string object = std::to_string(epoch_) + "-" +
-                             std::to_string(e->number) + "-" +
-                             std::to_string(crc) + ".sst";
-  const std::string dest = store_ + "/" + object;
+  const std::string name = std::to_string(epoch_) + "-" +
+                           std::to_string(number) + "-" +
+                           std::to_string(digest) + ".sst";
+  const std::string dest = store_ + "/" + name;
   s = target()->FileExists(dest, IOOptions(), nullptr);
   if (s.ok()) {
     uint64_t actual_size;
@@ -330,7 +326,7 @@ Status SstStorage::MakeObject(const std::string& source,
     uint32_t actual;
     s = Digest(target(), dest, actual_size, &actual);
     if (!s.ok()) return s;
-    if (actual_size != size || actual != crc)
+    if (actual_size != size || actual != digest)
       return Status::Corruption("SST immutable object identity conflict");
   } else if (s.IsNotFound()) {
     s = target()->LinkFile(source, dest, IOOptions(), nullptr);
@@ -338,7 +334,7 @@ Status SstStorage::MakeObject(const std::string& source,
       std::lock_guard<std::mutex> lock(mutex_);
       ++stats_.reused_links;
     } else {
-      s = CopyLimited(source, dest + ".tmp", size, crc);
+      s = CopyLimited(source, dest + ".tmp", size, digest);
       if (s.ok())
         s = target()->RenameFile(dest + ".tmp", dest, IOOptions(), nullptr);
       if (!s.ok()) {
@@ -353,17 +349,8 @@ Status SstStorage::MakeObject(const std::string& source,
   if (s.ok()) s = SyncDir(target(), store_);
   TEST_SYNC_POINT_CALLBACK("MetaBypassSst::ObjectSynced", &s);
   if (s.ok()) {
-    std::lock_guard<std::mutex> mutation(mutation_);
-    {
-      std::lock_guard<std::mutex> lock(e->mutex);
-      if (!e->live) {
-        target()->DeleteFile(dest, IOOptions(), nullptr).PermitUncheckedError();
-        return Status::OK();
-      }
-      e->object = object;
-      e->crc = crc;
-    }
-    s = SavePlacement();
+    *object = name;
+    *crc = digest;
   }
   return s;
 }
@@ -382,26 +369,54 @@ Status SstStorage::Protect(const std::string& point, const NativeState& state) {
       if (!entry->object.empty()) continue;
       if (entry->size != table.second) continue;
     }  // An output is still growing.
-    s = MakeObject(MakeTableFileName(point, table.first), entry);
+    std::string object;
+    uint32_t crc;
+    s = MakeObject(MakeTableFileName(point, table.first), table.first,
+                   table.second, &object, &crc);
+    if (!s.ok()) return s;
+    std::lock_guard<std::mutex> mutation(mutation_);
+    {
+      std::lock_guard<std::mutex> lock(entry->mutex);
+      if (!entry->live) {
+        target()
+            ->DeleteFile(store_ + "/" + object, IOOptions(), nullptr)
+            .PermitUncheckedError();
+        continue;
+      }
+      if (!entry->object.empty()) continue;
+      entry->object = std::move(object);
+      entry->crc = crc;
+    }
+    s = SavePlacement();
     if (!s.ok()) return s;
   }
   return Status::OK();
 }
-Status SstStorage::RestoreTable(const std::string& source, uint64_t number,
-                                uint64_t size) {
-  auto entry = std::make_shared<Entry>();
-  entry->number = number;
-  entry->size = size;
-  entry->hot = false;
-  entry->changed = clock_();
-  Status s = MakeObject(source, entry);
-  if (!s.ok()) return s;
+Status SstStorage::RestoreTables(const std::vector<RestoreFile>& files) {
+  std::map<uint64_t, std::shared_ptr<Entry>> prepared;
+  for (const auto& file : files) {
+    auto entry = std::make_shared<Entry>();
+    entry->number = file.number;
+    entry->size = file.size;
+    entry->hot = false;
+    entry->changed = clock_();
+    if (!prepared.emplace(file.number, entry).second)
+      return Status::Corruption("duplicate SST restore number");
+    Status s = MakeObject(file.source, file.number, file.size, &entry->object,
+                          &entry->crc);
+    if (!s.ok()) return s;
+  }
   std::lock_guard<std::mutex> mutation(mutation_);
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_[number] = entry;
+    entries_.swap(prepared);
   }
-  return SavePlacement();
+  Status s = SavePlacement();
+  if (!s.ok()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    entries_.swap(prepared);
+  }
+  return s;
 }
 Status SstStorage::OpenHandle(const std::shared_ptr<Entry>& e, bool hot,
                               std::shared_ptr<Handle>* result) {
@@ -677,6 +692,8 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
     else
       orphaned_[e->number] = e->size;
   };
+  // Prepare and validate the immutable destination. Promotion also fsyncs the
+  // copied file and installs its directory entry before placement publication.
   if (intent.hot) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -747,8 +764,9 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
       if (desired_.count(e->number)) return s;
     }
   }
-  // Open the replacement before committing the map; a route is never switched
-  // to a missing or inaccessible object.
+  // Persist the placement dependency after preparing any replacement handle.
+  // A route is never switched to a missing or inaccessible object. Logical
+  // readers need a replacement; physical old I/O is pinned independently.
   bool readers;
   {
     std::lock_guard<std::mutex> lock(e->mutex);
@@ -760,6 +778,9 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
     if (intent.hot) abandon();
     return s;
   }
+  // Switch every logical reader's next I/O only after placement succeeds.
+  // A failed persistence call can still have changed disk metadata; the failure
+  // paths above and Reap retain the existing recovery/accounting behavior.
   std::shared_ptr<Handle> old;
   {
     std::lock_guard<std::mutex> lock(e->mutex);
@@ -780,6 +801,8 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
       ++stats_.demotions;
       stats_.demoted_bytes += e->size;
       stats_.pending_delete_bytes += e->size;
+      // Keep the source charged until Reap observes that old physical I/O has
+      // drained and successfully removes it. Remote protection stays intact.
       retired_.push_back({std::move(old), local, e->size});
     }
   }
@@ -818,6 +841,8 @@ void SstStorage::Reap() {
       }
     }
   }
+  // Drain and reclaim: logical readers can survive route switches and deletes.
+  // Only shared ownership of the retired physical handle delays this unlink.
   std::vector<Retired> ready;
   {
     std::lock_guard<std::mutex> lock(mutex_);

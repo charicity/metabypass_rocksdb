@@ -1,5 +1,8 @@
 # Whole-SST SSD/HDD tiering
 
+See the shared [migration lifecycle contract and scenario matrix](migration-lifecycle.md)
+for persistence, route switching, physical I/O draining and reclamation.
+
 Metabypass can place complete immutable index SST files in a fast index
 directory or in the backup directory's `sst-store`. The cold store holds the
 same protected SST content used for online reads and published recovery points.
@@ -57,6 +60,14 @@ deletion tests do not establish power-failure durability of a real device.
 An existing tiered library with placement metadata cannot be silently reopened
 in disabled mode. Observe mode can still read cold files left by an earlier
 adaptive run.
+
+During offline SSD-loss restore, the wrapper verifies the published point,
+prepares every referenced cold SST object, then writes one placement map before
+native RocksDB recovery reads the logical SST files. An empty SST set writes an
+empty map. If preparation or the map commit fails, the `METABYPASS-RESTORING`
+marker keeps the destination closed to normal opens; retrying restore from the
+same published point rebuilds the map. Unreferenced objects from an interrupted
+attempt are removed by the normal placement load after a successful restore.
 
 ## Validation status
 

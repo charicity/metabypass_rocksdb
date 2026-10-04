@@ -1058,15 +1058,20 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
   NativeState state;
   s = Inspect(fs, point, &state);
   if (!s.ok()) return s;
+  std::vector<SstStorage::RestoreFile> ssts;
   for (const auto& e : entries) {
     uint64_t number;
     FileType type;
     if (storage.sst() && ParseFileName(e.file, &number, &type) &&
         type == kTableFile) {
-      s = storage.sst()->RestoreTable(point + "/" + e.file, number, e.length);
+      ssts.push_back({point + "/" + e.file, number, e.length});
     } else {
       s = Copy(fs, point + "/" + e.file, destination + "/" + e.file, e.length);
+      if (!s.ok()) return s;
     }
+  }
+  if (storage.sst()) {
+    s = storage.sst()->RestoreTables(ssts);
     if (!s.ok()) return s;
   }
   s = Write(fs, destination + "/CURRENT", state.manifest + "\n");

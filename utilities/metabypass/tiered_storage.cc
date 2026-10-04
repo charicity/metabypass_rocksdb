@@ -218,7 +218,7 @@ Status TieredStorage::Initialize(bool restore) {
       Version v;
       s = Decode(bytes, &v);
       if (!s.ok()) return s;
-      versions_[n] = std::move(v);
+      versions_[n] = Snapshot(std::move(v));
     } else if (name.compare(0, 8, "segment-") == 0) {
       std::istringstream parse(name.substr(8));
       uint64_t number, id;
@@ -381,9 +381,9 @@ IOStatus TieredStorage::GetFileSize(const std::string& p, const IOOptions& o,
   }
   const auto remote = versions_.find(n);
   if (remote == versions_.end()) return IOStatus::NotFound(p);
-  if (!restoring_ && !remote->second.sealed)
+  if (!restoring_ && !remote->second->sealed)
     return IOStatus::Corruption("active staging blob missing; use Restore");
-  *size = remote->second.size;
+  *size = remote->second->size;
   return IOStatus::OK();
 }
 IOStatus TieredStorage::FileExists(const std::string& p, const IOOptions& o,
@@ -431,12 +431,11 @@ IOStatus TieredStorage::ReadVersion(const Version& v, uint64_t offset, size_t n,
   if (offset >= v.size) return IOStatus::OK();
   n = std::min<uint64_t>(n, v.size - offset);
   size_t done = 0;
-  uint64_t start = 0;
-  for (const auto& e : v.extents) {
-    if (offset >= start + e.length) {
-      start += e.length;
-      continue;
-    }
+  auto first = std::upper_bound(v.ends.begin(), v.ends.end(), offset);
+  size_t index = first - v.ends.begin();
+  uint64_t start = index == 0 ? 0 : v.ends[index - 1];
+  for (; index < v.extents.size() && done < n; ++index) {
+    const auto& e = v.extents[index];
     const size_t take = std::min<uint64_t>(n - done, start + e.length - offset);
     std::unique_ptr<FSRandomAccessFile> file;
     IOStatus s = target()->NewRandomAccessFile(options_.data_dir + "/" + e.name,
@@ -455,49 +454,83 @@ IOStatus TieredStorage::ReadVersion(const Version& v, uint64_t offset, size_t n,
   *out = Slice(scratch, done);
   return IOStatus::OK();
 }
-IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
-                                 const IOOptions& o, Slice* out, char* scratch,
-                                 IODebugContext* d) {
-  Version v;
-  std::unique_ptr<FSRandomAccessFile> local;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (local_.count(n) && !local_.at(n).evicting) {
-      // Opening is serialized with eviction; the handle pins this read only.
-      IOStatus s =
-          target()->NewRandomAccessFile(LocalPath(n), FileOptions(), &local, d);
-      if (!s.ok()) return s;
-      ++local_[n].readers;
-    } else {
-      auto it = versions_.find(n);
-      if (it == versions_.end()) return IOStatus::NotFound("tiered blob");
-      v = it->second;
-    }
-  }
-  if (!local) return ReadVersion(v, offset, size, o, out, scratch, d);
-  IOStatus s = local->Read(offset, size, o, out, scratch, d);
-  // Ensure the read result survives closing files that return owned buffers.
-  if (s.ok() && out->data() != scratch) {
-    std::memcpy(scratch, out->data(), out->size());
-    *out = Slice(scratch, out->size());
-  }
-  local.reset();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    --local_[n].readers;
-    work_.notify_one();
+IOStatus TieredStorage::LocalReadPin::Open(TieredStorage* storage, uint64_t n,
+                                           IODebugContext* d) {
+  // Serialized with route publication and deletion by the caller's mutex_.
+  IOStatus s = storage->target()->NewRandomAccessFile(storage->LocalPath(n),
+                                                      FileOptions(), &file_, d);
+  if (s.ok()) {
+    storage_ = storage;
+    number_ = n;
+    ++storage_->local_.at(n).readers;
   }
   return s;
 }
-Status TieredStorage::Commit(uint64_t n, const Version& v) {
+TieredStorage::LocalReadPin::~LocalReadPin() {
+  // Some backends retain buffers or access the path until handle destruction.
+  // Close the physical handle before releasing the I/O pin and waking reclaim.
+  file_.reset();
+  if (storage_) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    --storage_->local_.at(number_).readers;
+    storage_->work_.notify_one();
+  }
+}
+IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
+                                 const IOOptions& o, Slice* out, char* scratch,
+                                 IODebugContext* d) {
+  std::shared_ptr<const Version> v;
+  // This scope outlives the lock scope, including every error return.
+  LocalReadPin local;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = local_.find(n);
+    if (it != local_.end() && !it->second.evicting) {
+      IOStatus s = local.Open(this, n, d);
+      if (!s.ok()) return s;
+    } else {
+      auto remote = versions_.find(n);
+      if (remote == versions_.end()) return IOStatus::NotFound("tiered blob");
+      v = remote->second;
+    }
+  }
+  if (!local.file()) {
+    TEST_SYNC_POINT("MetaBypass::TierRemoteReadPinned");
+    return ReadVersion(*v, offset, size, o, out, scratch, d);
+  }
+  TEST_SYNC_POINT("MetaBypass::TierLocalReadPinned");
+  IOStatus s = local.file()->Read(offset, size, o, out, scratch, d);
+  // Ensure the read result survives closing files that return owned buffers.
+  if (s.ok() && out->data() != scratch && !out->empty()) {
+    std::memcpy(scratch, out->data(), out->size());
+    *out = Slice(scratch, out->size());
+  }
+  return s;
+}
+std::shared_ptr<const TieredStorage::Version> TieredStorage::Snapshot(
+    Version v) {
+  v.ends.clear();
+  v.ends.reserve(v.extents.size());
+  uint64_t end = 0;
+  for (const auto& e : v.extents) {
+    end += e.length;
+    v.ends.push_back(end);
+  }
+  return std::make_shared<const Version>(std::move(v));
+}
+Status TieredStorage::Commit(uint64_t n, Version v) {
   const std::string p = Descriptor(n);
   Status s = Write(target(), p + ".tmp", Encode(v));
   TEST_SYNC_POINT_CALLBACK("MetaBypass::TierDescriptorSynced", &s);
   if (s.ok()) s = target()->RenameFile(p + ".tmp", p, IOOptions(), nullptr);
   if (s.ok()) s = SyncDir(target(), options_.data_dir);
   if (s.ok()) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    versions_[n] = v;
+    auto snapshot = Snapshot(std::move(v));
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      versions_[n].swap(snapshot);
+    }
+    // Retire the old mapping after releasing the read-path mutex.
   }
   return s;
 }
@@ -523,18 +556,24 @@ Status TieredStorage::AppendExtent(uint64_t n, const Slice& bytes, Version* v) {
 Status TieredStorage::Migrate(uint64_t n, uint64_t required, bool background) {
   TEST_SYNC_POINT("MetaBypass::TierMigration");
   Version v;
+  std::shared_ptr<const Version> previous;
   bool closed = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = versions_.find(n);
-    if (it != versions_.end()) v = it->second;
+    if (it != versions_.end()) previous = it->second;
     auto l = local_.find(n);
     if (l == local_.end())
-      return v.size >= required ? Status::OK()
-                                : Status::Corruption("missing staging source");
+      return previous && previous->size >= required
+                 ? Status::OK()
+                 : Status::Corruption("missing staging source");
     closed = l->second.closed && required == l->second.size;
   }
-  if (closed && v.sealed && v.size >= required) return Evict(n);
+  if (closed && previous && previous->sealed && previous->size >= required) {
+    Status s = SwitchReadsToRemote(n);
+    return s.ok() ? ReclaimLocalAfterReads(n) : s;
+  }
+  if (previous) v = *previous;
   if (required < v.size) return Status::OK();
   std::string recovery_footer;
   if (closed) {
@@ -581,7 +620,7 @@ Status TieredStorage::Migrate(uint64_t n, uint64_t required, bool background) {
       // and let a newly requested recovery dependency run before this file.
       v.sealed = false;
       TEST_SYNC_POINT("MetaBypass::TierMigrationYield");
-      return Commit(n, v);
+      return Commit(n, std::move(v));
     }
   }
   if (!recovery_footer.empty()) {
@@ -589,12 +628,14 @@ Status TieredStorage::Migrate(uint64_t n, uint64_t required, bool background) {
     if (!s.ok()) return s;
   }
   v.sealed = closed;
-  s = Commit(n, v);
+  // Commit publishes only after all extent and descriptor dependencies persist.
+  s = Commit(n, std::move(v));
   source.reset();
-  if (s.ok() && closed) s = Evict(n);
+  if (s.ok() && closed) s = SwitchReadsToRemote(n);
+  if (s.ok() && closed) s = ReclaimLocalAfterReads(n);
   return s;
 }
-Status TieredStorage::Evict(uint64_t n) {
+Status TieredStorage::SwitchReadsToRemote(uint64_t n) {
   Status s;
   TEST_SYNC_POINT_CALLBACK("MetaBypass::TierBeforeEvict", &s);
   if (!s.ok()) return s;
@@ -603,16 +644,24 @@ Status TieredStorage::Evict(uint64_t n) {
   if (it == local_.end()) return Status::OK();
   auto remote = versions_.find(n);
   if (!it->second.closed || remote == versions_.end() ||
-      !remote->second.sealed ||
-      (remote->second.size != it->second.size &&
-       remote->second.size - std::min(remote->second.size, it->second.size) !=
+      !remote->second->sealed ||
+      (remote->second->size != it->second.size &&
+       remote->second->size - std::min(remote->second->size, it->second.size) !=
            BlobLogFooter::kSize))
     return Status::Corruption("unsafe staging eviction");
   // Route new reads remotely while existing local handles drain. Otherwise
   // continuous readers could indefinitely prevent capacity reclamation.
   it->second.evicting = true;
-  if (it->second.readers != 0) return Status::OK();
-  s = target()->DeleteFile(LocalPath(n), IOOptions(), nullptr);
+  return Status::OK();
+}
+Status TieredStorage::ReclaimLocalAfterReads(uint64_t n) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = local_.find(n);
+  if (it == local_.end()) return Status::OK();
+  // A prefix commit alone never authorizes whole-file deletion. New local I/O
+  // must be disabled, and every previously opened local handle must be closed.
+  if (!it->second.evicting || it->second.readers != 0) return Status::OK();
+  Status s = target()->DeleteFile(LocalPath(n), IOOptions(), nullptr);
   if (!s.ok()) return s;
   usage_ -= it->second.size;
   local_.erase(it);
@@ -629,7 +678,7 @@ Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
     if (!error_.ok() || stopping_) return true;
     for (const auto& b : lengths) {
       auto v = versions_.find(b.first);
-      if (v == versions_.end() || v->second.size < b.second) return false;
+      if (v == versions_.end() || v->second->size < b.second) return false;
     }
     return true;
   });
@@ -643,11 +692,13 @@ void TieredStorage::Run() {
     work_.wait(lock, [&] {
       if (stopping_ || !error_.ok() || !requests_.empty()) return true;
       for (const auto& l : local_)
-        if (l.second.closed && l.second.readers == 0) return true;
+        if (l.second.closed && (!l.second.evicting || l.second.readers == 0))
+          return true;
       return false;
     });
     if (stopping_ || !error_.ok()) break;
     uint64_t n = 0, length = 0;
+    bool reclaim = false;
     const bool background = requests_.empty();
     if (!requests_.empty()) {
       auto it = requests_.begin();
@@ -656,14 +707,17 @@ void TieredStorage::Run() {
       requests_.erase(it);
     } else
       for (const auto& l : local_)
-        if (l.second.closed && l.second.readers == 0) {
+        if (l.second.closed && (!l.second.evicting || l.second.readers == 0)) {
           n = l.first;
           length = l.second.size;
+          reclaim = l.second.evicting;
           break;
         }
     lock.unlock();
-    Status s = Migrate(n, length, background);
+    Status s =
+        reclaim ? ReclaimLocalAfterReads(n) : Migrate(n, length, background);
     if (!s.ok()) Fail(s);
+    TEST_SYNC_POINT("MetaBypass::TierMigrationComplete");
     lock.lock();
     progress_.notify_all();
   }
@@ -672,28 +726,31 @@ Status TieredStorage::SaveCheckpoint(
     const std::string& path, const std::map<uint64_t, uint64_t>& lengths) {
   std::ostringstream out;
   out << "MBTC1\n";
+  std::map<uint64_t, std::shared_ptr<const Version>> snapshots;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& b : lengths) {
       auto it = versions_.find(b.first);
-      if (it == versions_.end() || it->second.size < b.second)
+      if (it == versions_.end() || it->second->size < b.second)
         return Status::Corruption("unmigrated checkpoint blob");
-      Version v = it->second;
-      // Bind exactly the validated prefix, never an unvalidated newer tail.
-      uint64_t remain = b.second;
-      std::vector<Extent> extents;
-      for (const auto& e : v.extents) {
-        if (!remain) break;
-        const auto take = std::min(remain, e.length);
-        extents.push_back({take, e.name});
-        remain -= take;
-      }
-      v.extents = std::move(extents);
-      v.sealed = v.sealed && v.size == b.second;
-      v.size = b.second;
-      const auto bytes = Encode(v);
-      out << b.first << ' ' << bytes.size() << '\n' << bytes;
+      snapshots.emplace(b.first, it->second);
     }
+  }
+  for (const auto& b : lengths) {
+    const auto& source = *snapshots.at(b.first);
+    Version v;
+    // Bind exactly the validated prefix, never an unvalidated newer tail.
+    uint64_t remain = b.second;
+    for (const auto& e : source.extents) {
+      if (!remain) break;
+      const auto take = std::min(remain, e.length);
+      v.extents.push_back({take, e.name});
+      remain -= take;
+    }
+    v.sealed = source.sealed && source.size == b.second;
+    v.size = b.second;
+    const auto bytes = Encode(v);
+    out << b.first << ' ' << bytes.size() << '\n' << bytes;
   }
   return Write(target(), path, out.str());
 }
@@ -705,7 +762,7 @@ Status TieredStorage::LoadCheckpoint(const std::string& path) {
   std::string magic;
   if (!std::getline(in, magic) || magic != "MBTC1")
     return Status::Corruption("tier checkpoint version");
-  std::map<uint64_t, Version> versions;
+  std::map<uint64_t, std::shared_ptr<const Version>> versions;
   while (in >> std::ws && !in.eof()) {
     uint64_t n, length;
     if (!(in >> n >> length) || in.get() != '\n' || length > bytes.size())
@@ -716,7 +773,7 @@ Status TieredStorage::LoadCheckpoint(const std::string& path) {
     Version v;
     s = Decode(encoded, &v);
     if (!s.ok()) return s;
-    if (!versions.emplace(n, std::move(v)).second)
+    if (!versions.emplace(n, Snapshot(std::move(v))).second)
       return Status::Corruption("duplicate tier blob");
   }
   versions_ = std::move(versions);
@@ -730,16 +787,16 @@ Status TieredStorage::SealRecovery(uint64_t n, uint64_t end,
   auto existing = versions_.find(n);
   if (existing != versions_.end()) {
     uint64_t remain = end;
-    for (const auto& e : existing->second.extents) {
+    for (const auto& e : existing->second->extents) {
       if (!remain) break;
       const uint64_t take = std::min(remain, e.length);
       v.extents.push_back({take, e.name});
       v.size += take;
       remain -= take;
     }
-    if (existing->second.sealed &&
-        existing->second.size == end + footer.size()) {
-      Status s = Commit(n, existing->second);
+    if (existing->second->sealed &&
+        existing->second->size == end + footer.size()) {
+      Status s = Commit(n, *existing->second);
       if (!s.ok()) return s;
       std::lock_guard<std::mutex> lock(mutex_);
       auto local = local_.find(n);
@@ -766,7 +823,7 @@ Status TieredStorage::SealRecovery(uint64_t n, uint64_t end,
   }
   Status s = AppendExtent(n, footer, &v);
   v.sealed = true;
-  if (s.ok()) s = Commit(n, v);
+  if (s.ok()) s = Commit(n, std::move(v));
   if (s.ok()) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -813,11 +870,12 @@ Status TieredStorage::ArchiveUnreferenced(
       if (!s.ok()) return s;
     }
     v.sealed = true;
-    s = Commit(number, v);
+    s = Commit(number, std::move(v));
     if (!s.ok()) return s;
     source.reset();
     it->second.closed = true;
-    s = Evict(number);
+    s = SwitchReadsToRemote(number);
+    if (s.ok()) s = ReclaimLocalAfterReads(number);
     if (!s.ok()) return s;
   }
 }
@@ -832,7 +890,7 @@ void TieredStorage::AddStats(MetaBypassStats* stats) const {
     auto v = versions_.find(l.first);
     stats->pending_blob_bytes +=
         l.second.size -
-        std::min(l.second.size, v == versions_.end() ? 0 : v->second.size);
+        std::min(l.second.size, v == versions_.end() ? 0 : v->second->size);
   }
 }
 }  // namespace metabypass

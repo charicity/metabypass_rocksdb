@@ -28,6 +28,8 @@ class SstFaultFileSystem : public FileSystemWrapper {
       : FileSystemWrapper(std::move(fs)) {}
   const char* Name() const override { return "SstFaultFileSystem"; }
   bool no_links = false, no_space = false;
+  std::atomic<uint64_t> placement_writes{0};
+  std::atomic<uint64_t> placement_renames{0};
   IOStatus LinkFile(const std::string& a, const std::string& b,
                     const IOOptions& o, IODebugContext* d) override {
     if (no_links) return IOStatus::NotSupported("injected no hardlinks");
@@ -38,7 +40,17 @@ class SstFaultFileSystem : public FileSystemWrapper {
                            IODebugContext* d) override {
     if (no_space && path.find("sst-tier-tmp") != std::string::npos)
       return IOStatus::NoSpace("injected SSD full");
-    return target()->NewWritableFile(path, o, result, d);
+    IOStatus s = target()->NewWritableFile(path, o, result, d);
+    if (s.ok() && path.find("/SST-PLACEMENT.tmp") != std::string::npos)
+      ++placement_writes;
+    return s;
+  }
+  IOStatus RenameFile(const std::string& from, const std::string& to,
+                      const IOOptions& o, IODebugContext* d) override {
+    IOStatus s = target()->RenameFile(from, to, o, d);
+    if (s.ok() && to.find("/SST-PLACEMENT") != std::string::npos)
+      ++placement_renames;
+    return s;
   }
 };
 class SstStorageTest : public testing::Test {
@@ -114,6 +126,9 @@ class SstStorageTest : public testing::Test {
   std::string Object(uint64_t number) {
     return options_.backup_dir + "/sst-store/" +
            storage_->SstStorage::Find(number)->object;
+  }
+  bool HasEntry(uint64_t number) {
+    return storage_->SstStorage::Find(number) != nullptr;
   }
   void Reap() { storage_->SstStorage::Reap(); }
   Status TryPromote(uint64_t number) {
@@ -199,6 +214,91 @@ TEST_F(SstStorageTest, ColdMapReopensAndUsesLogicalEnumeration) {
   std::string data;
   ASSERT_OK(Read(fs_.get(), point_ + "/linked", &data));
   ASSERT_EQ(data, std::string(300, 's'));
+}
+TEST_F(SstStorageTest, RestoreManyColdTablesCommitsPlacementOnce) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  storage_ = std::make_unique<SstStorage>(fs_, index_, options_);
+  ASSERT_OK(storage_->Initialize("test-identity", true));
+  std::vector<SstStorage::RestoreFile> files;
+  for (uint64_t number = 1; number <= 16; ++number) {
+    const std::string data = "restored table " + std::to_string(number);
+    const std::string source = MakeTableFileName(point_, number);
+    ASSERT_OK(Write(fs_.get(), source, data));
+    files.push_back({source, number, data.size()});
+  }
+  ASSERT_OK(storage_->RestoreTables(files));
+  ASSERT_EQ(fault->placement_writes.load(), 1U);
+  ASSERT_EQ(fault->placement_renames.load(), 1U);
+  storage_.reset();
+  Open();
+  for (uint64_t number = 1; number <= 16; ++number) {
+    const std::string data = "restored table " + std::to_string(number);
+    ASSERT_TRUE(
+        fs_->FileExists(MakeTableFileName(index_, number), IOOptions(), nullptr)
+            .IsNotFound());
+    auto reader = Reader(number);
+    ASSERT_NE(reader, nullptr);
+    Check(reader.get(), data);
+  }
+}
+TEST_F(SstStorageTest, RestoreEmptyTableSetClearsOldPlacement) {
+  Open();
+  Add(1, "stale table");
+  storage_.reset();
+  storage_ = std::make_unique<SstStorage>(fs_, index_, options_);
+  ASSERT_OK(storage_->Initialize("test-identity", true));
+  ASSERT_OK(storage_->RestoreTables({}));
+  std::string placement;
+  ASSERT_OK(Read(fs_.get(), index_ + "/SST-PLACEMENT", &placement));
+  ASSERT_EQ(placement.find("\n1 "), std::string::npos);
+}
+TEST_F(SstStorageTest, RestorePrepareAndPlacementFailuresCanRetry) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  const std::string first = MakeTableFileName(point_, 1);
+  const std::string second = MakeTableFileName(point_, 2);
+  ASSERT_OK(Write(fs_.get(), first, "first"));
+  const std::vector<SstStorage::RestoreFile> files = {{first, 1, 5},
+                                                      {second, 2, 6}};
+  storage_ = std::make_unique<SstStorage>(fs_, index_, options_);
+  ASSERT_OK(storage_->Initialize("test-identity", true));
+  Status missing = storage_->RestoreTables(files);
+  ASSERT_TRUE(missing.IsNotFound() || missing.IsPathNotFound())
+      << missing.ToString();
+  ASSERT_EQ(fault->placement_writes.load(), 0U);
+  ASSERT_FALSE(HasEntry(1));
+  ASSERT_OK(Write(fs_.get(), second, "second"));
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypassSst::PlacementRenamed", [](void* arg) {
+        *static_cast<Status*>(arg) = Status::IOError("restore placement fault");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_TRUE(storage_->RestoreTables(files).IsIOError());
+  ASSERT_EQ(fault->placement_writes.load(), 1U);
+  ASSERT_EQ(fault->placement_renames.load(), 1U);
+  ASSERT_FALSE(HasEntry(1));
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+  storage_.reset();
+  storage_ = std::make_unique<SstStorage>(fs_, index_, options_);
+  ASSERT_OK(storage_->Initialize("test-identity", true));
+  ASSERT_OK(storage_->RestoreTables(files));
+  storage_.reset();
+  Open();
+  auto first_reader = Reader(1);
+  auto second_reader = Reader(2);
+  ASSERT_NE(first_reader, nullptr);
+  ASSERT_NE(second_reader, nullptr);
+  Check(first_reader.get(), "first");
+  Check(second_reader.get(), "second");
+  std::vector<std::string> objects;
+  ASSERT_OK(fs_->GetChildren(options_.backup_dir + "/sst-store", IOOptions(),
+                             &objects, nullptr));
+  size_t object_count = 0;
+  for (const auto& object : objects)
+    if (object != "." && object != "..") ++object_count;
+  ASSERT_EQ(object_count, 2U);
 }
 TEST_F(SstStorageTest, UnprotectedCannotEvictAndOversizedCannotPromote) {
   options_.sst_tiering.ssd_capacity_bytes = 64;

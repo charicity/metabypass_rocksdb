@@ -31,15 +31,41 @@ These reads may hit the operating system page cache, so they are not physical
 device-read counts. Scans have a separate count and do not promote files;
 background I/O does not train the point-read heat score. The policy scores
 sampled reads relative to SST size and uses two rounds for promotion, three
-for demotion, 10 s minimum residence and a 25% replacement advantage. One
+for demotion, 10 s minimum residence and a 0.25 replacement sorting bias. One
 migration worker copies at a default 32 MiB/s limit.
 
+The project's current recommended profile when enabling SST tiering is
+`default80`: set the nominal SSD SST budget to 80% of a fixed baseline's
+full-SSD logical SST bytes. The 10% reserve leaves an effective policy budget
+of approximately 72% of that baseline, subject to integer rounding and whole-SST
+placement. This is not 80% of the SSD device capacity or of the hot data, and
+the library does not recalculate it as the database grows. The caller measures
+and fixes the baseline, explicitly enables `kAdaptive`, and supplies the
+absolute `ssd_capacity_bytes`; the library default remains `kDisabled`.
+
+The [two-device tradeoff report](../../../reports/sst-tradeoff-20261004/README.md)
+records the choice and its limits. In those read trials, `default80` saved
+28.05% of allocated SSD SST space with 3.85-6.63% saturated throughput loss;
+the second uniform repeat's fixed-rate response P99 reached 131.072 ms.
+This recommendation does not establish a stable latency sweet spot.
+
 ```cpp
+// Fixed full-SSD logical SST baseline: 1 GiB, measured before tiering.
+constexpr uint64_t baseline_sst_bytes = 1ULL << 30;
 rocksdb::MetaBypassOptions bypass;
 bypass.data_dir = "/experiment/hdd/data";
 bypass.backup_dir = "/experiment/hdd/backup";
 bypass.sst_tiering.mode = rocksdb::SstTieringMode::kAdaptive;
-bypass.sst_tiering.ssd_capacity_bytes = 512ULL * 1024 * 1024;
+// floor(baseline * 80 / 100), without overflowing baseline * 80.
+bypass.sst_tiering.ssd_capacity_bytes =
+    baseline_sst_bytes / 100 * 80 + baseline_sst_bytes % 100 * 80 / 100;
+bypass.sst_tiering.reserve_percent = 10;
+bypass.sst_tiering.promote_rounds = 2;
+bypass.sst_tiering.demote_rounds = 3;
+bypass.sst_tiering.min_residency_ms = 10000;
+bypass.sst_tiering.replacement_margin = 0.25;
+// Nominal: 858993459 bytes; effective: 773094114 bytes (about 72%).
+// Other sampling, heat, evaluation and migration parameters keep their defaults.
 // Pass an SSD path as MetaBypassDB::Open's index_dir argument.
 ```
 

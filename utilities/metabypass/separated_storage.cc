@@ -12,6 +12,7 @@
 #include "db/blob/blob_log_format.h"
 #include "db/write_batch_internal.h"
 #include "file/filename.h"
+#include "rocksdb/env.h"
 #include "rocksdb/sst_file_reader.h"
 #include "test_util/sync_point.h"
 #include "util/crc32c.h"
@@ -271,7 +272,7 @@ Status SeparatedStorage::Dependencies(const std::string& index,
                                            BlobLogHeader::kSize -
                                            BlobLogFooter::kSize)
       return Status::Corruption("blob length overflow");
-    // All additions are retained, including obsolete historical additions.
+    // Inspect has resolved historical additions using native Version rules.
     (*lengths)[b.first] = BlobLogHeader::kSize + b.second.GetTotalBlobBytes() +
                           BlobLogFooter::kSize;
   }
@@ -448,13 +449,39 @@ Status SeparatedStorage::PersistIncremental(
   if (s.ok() && tier_) s = tier_->Persist(lengths);
   return s;
 }
-Status SeparatedStorage::PrepareRecovery(const std::string& index) {
+Status SeparatedStorage::ReclaimBlob(uint64_t number, uint64_t* bytes) {
+  if (tier_) return tier_->ReclaimBlob(number, bytes);
+  *bytes = 0;
+  Status s =
+      target()->GetFileSize(BlobPath(number), IOOptions(), bytes, nullptr);
+  if (s.IsNotFound() || s.IsPathNotFound()) return SyncDir(target(), data_);
+  if (!s.ok()) return s;
+  TEST_SYNC_POINT("MetaBypass::BeforeBlobDelete");
+  s = target()->DeleteFile(BlobPath(number), IOOptions(), nullptr);
+  if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
+  if (s.ok()) s = SyncDir(target(), data_);
+  return s;
+}
+Status SeparatedStorage::PrepareRecovery(
+    const std::string& index, const Options& options,
+    std::vector<BlobFileAddition>* sealed_blobs) {
+  if (sealed_blobs) sealed_blobs->clear();
   NativeState state;
   Status s = Inspect(target(), index, &state);
   if (!s.ok()) return s;
   std::map<uint64_t, uint64_t> lengths;
   s = Dependencies(index, state, &lengths);
   if (!s.ok()) return s;
+  // Recovery can replay direct-write indexes after native Version metadata
+  // was dropped. Validate actual SST references before sealing or archiving.
+  auto env = NewCompositeEnv(target_);
+  Options table_options = options;
+  table_options.env = env.get();
+  for (const auto& table : state.tables) {
+    s = ValidateTable(MakeTableFileName(index, table.first), table_options,
+                      &lengths);
+    if (!s.ok()) return s;
+  }
   // Validate every required file before the first mutation. Retried recovery
   // recognizes already sealed files and atomically replaces the MANIFEST.
   for (const auto& b : lengths) {
@@ -465,6 +492,32 @@ Status SeparatedStorage::PrepareRecovery(const std::string& index) {
   }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryValidated", &s);
   if (!s.ok()) return s;
+  // Move required registrations before SST replay. Legacy snapshots can have
+  // an SST before its blob addition (or no addition), which leaves it unlinked.
+  // Preserve historical totals/checksums and every other field/atomic marker.
+  VersionEdit registrations;
+  std::set<uint64_t> registered;
+  for (auto& record : state.edits) {
+    VersionEdit edit;
+    s = edit.DecodeFrom(record);
+    if (!s.ok()) return s;
+    VersionEdit::BlobFileAdditions remaining;
+    bool changed = false;
+    for (const auto& blob : edit.ExtractBlobFileAdditions()) {
+      if (lengths.count(blob.GetBlobFileNumber())) {
+        registrations.AddBlobFile(blob);
+        registered.insert(blob.GetBlobFileNumber());
+        changed = true;
+      } else {
+        remaining.push_back(blob);
+      }
+    }
+    if (changed) {
+      edit.SetBlobFileAdditions(std::move(remaining));
+      record.clear();
+      if (!edit.EncodeTo(&record, 0)) return Status::Corruption("VersionEdit");
+    }
+  }
   VersionEdit extra;
   uint64_t next = state.next_file;
   std::vector<std::string> files;
@@ -510,12 +563,20 @@ Status SeparatedStorage::PrepareRecovery(const std::string& index) {
     }
     TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryBlobSealed", &s);
     if (!s.ok()) return s;
-    if (state.blobs.count(b.first) == 0)
-      extra.AddBlobFile(b.first, count, end - BlobLogHeader::kSize, "", "");
+    BlobFileAddition addition(b.first, count, end - BlobLogHeader::kSize, "",
+                              "");
+    if (sealed_blobs) sealed_blobs->push_back(addition);
+    if (!registered.count(b.first)) registrations.AddBlobFile(addition);
   }
   if (tier_) s = tier_->ArchiveUnreferenced(lengths);
   if (s.ok()) s = SyncDir(target(), data_);
   extra.SetNextFile(next);
+  if (s.ok() && !registrations.GetBlobFileAdditions().empty()) {
+    std::string record;
+    if (!registrations.EncodeTo(&record, 0))
+      return Status::Corruption("VersionEdit");
+    state.edits.insert(state.edits.begin(), std::move(record));
+  }
   if (s.ok()) s = RewriteManifest(target(), index, state, extra);
   return s;
 }

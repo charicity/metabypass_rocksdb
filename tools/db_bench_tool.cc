@@ -1135,6 +1135,7 @@ DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
               "Pending event bytes");
 DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
 DEFINE_uint64(metabypass_interval_ms, 1000, "Background trigger interval");
+DEFINE_bool(metabypass_blob_file_gc, true, "Reclaim obsolete whole blob files");
 DEFINE_string(metabypass_sst_action, "legacy",
               "SST protocol: legacy, seed, run, rpo_write, rpo_restore");
 DEFINE_uint64(metabypass_sst_warmup_seconds, 60,
@@ -11320,6 +11321,11 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, pending_gc_points);
     MB_NODE_FIELD(b, pending_gc_bytes);
     MB_NODE_FIELD(b, gc_micros);
+    MB_NODE_FIELD(b, pending_blob_gc_files);
+    MB_NODE_FIELD(b, pending_blob_gc_bytes);
+    MB_NODE_FIELD(b, reclaimed_blob_files);
+    MB_NODE_FIELD(b, reclaimed_blob_bytes);
+    MB_NODE_FIELD(b, blob_gc_micros);
     MB_NODE_FIELD(b, candidate_copied_bytes);
 #undef MB_NODE_FIELD
     field("queue_capacity", bypass.queue_capacity);
@@ -11987,6 +11993,7 @@ static int RunMetaBypassBenchmark() {
   bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
+  bypass.enable_blob_file_gc = FLAGS_metabypass_blob_file_gc;
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();
@@ -12075,14 +12082,20 @@ static int RunMetaBypassBenchmark() {
          " retained_index_bytes=%" PRIu64 " validated_blob_bytes=%" PRIu64
          " reused_tables=%" PRIu64 " pending_gc_points=%" PRIu64
          " pending_gc_bytes=%" PRIu64 " gc_micros=%" PRIu64
-         " candidate_copied_bytes=%" PRIu64 " status=%s\n",
+         " pending_blob_gc_files=%" PRIu64 " pending_blob_gc_bytes=%" PRIu64
+         " reclaimed_blob_files=%" PRIu64 " reclaimed_blob_bytes=%" PRIu64
+         " blob_gc_micros=%" PRIu64 " candidate_copied_bytes=%" PRIu64
+         " status=%s\n",
          FLAGS_metabypass_mode.c_str(), FLAGS_num, foreground, sync_us,
          close_us, stats.backpressure_micros, stats.last_build_micros,
          stats.last_point_lag_micros, stats.peak_queued_bytes,
          stats.mirrored_bytes, stats.retained_index_bytes,
          stats.validated_blob_bytes, stats.reused_tables,
          stats.pending_gc_points, stats.pending_gc_bytes, stats.gc_micros,
-         stats.candidate_copied_bytes, s.ToString().c_str());
+         stats.pending_blob_gc_files, stats.pending_blob_gc_bytes,
+         stats.reclaimed_blob_files, stats.reclaimed_blob_bytes,
+         stats.blob_gc_micros, stats.candidate_copied_bytes,
+         s.ToString().c_str());
   printf("metabypass tiered=%d p99_us=%" PRIu64 " staging_bytes=%" PRIu64
          " staging_peak=%" PRIu64 " migrated_blob_bytes=%" PRIu64
          " pending_blob_bytes=%" PRIu64 " staging_wait_us=%" PRIu64

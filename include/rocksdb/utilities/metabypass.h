@@ -48,7 +48,7 @@ struct SstTieringStats {
   double cutoff_score = 0;
 };
 struct MetaBypassOptions {
-  // Absolute, normalized, disjoint directories. Values are retained forever.
+  // Absolute, normalized, disjoint directories.
   std::string data_dir;
   std::string backup_dir;
   // Charged pending event memory, including the event being applied. A single
@@ -63,6 +63,9 @@ struct MetaBypassOptions {
   // Required when staging_dir is set. Logical bytes, excluding filesystem
   // allocation overhead. Oversized batches are rejected before DB writes.
   uint64_t staging_capacity = 0;
+  // Reclaim native obsolete whole blobs after all recovery roots release them.
+  // Set before Open. Disabling retains remaining files, not deleted history.
+  bool enable_blob_file_gc = true;
   SstTieringOptions sst_tiering;
 };
 struct MetaBypassStats {
@@ -96,6 +99,11 @@ struct MetaBypassStats {
   uint64_t pending_gc_points = 0;
   uint64_t pending_gc_bytes = 0;
   uint64_t gc_micros = 0;
+  // File lengths, not allocated blocks. Reclaimed bytes count only completed
+  // deletion and directory sync; pending bytes include only known lengths.
+  uint64_t pending_blob_gc_files = 0, pending_blob_gc_bytes = 0;
+  uint64_t reclaimed_blob_files = 0, reclaimed_blob_bytes = 0;
+  uint64_t blob_gc_micros = 0;
   // Cumulative successful candidate file copies; hardlinks do not count.
   uint64_t candidate_copied_bytes = 0;
   SstTieringStats sst_tiering;

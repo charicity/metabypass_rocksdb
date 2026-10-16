@@ -380,7 +380,7 @@ IOStatus TieredStorage::GetFileSize(const std::string& p, const IOOptions& o,
     return IOStatus::OK();
   }
   const auto remote = versions_.find(n);
-  if (remote == versions_.end()) return IOStatus::NotFound(p);
+  if (remote == versions_.end()) return IOStatus::PathNotFound(p);
   if (!restoring_ && !remote->second->sealed)
     return IOStatus::Corruption("active staging blob missing; use Restore");
   *size = remote->second->size;
@@ -390,7 +390,8 @@ IOStatus TieredStorage::FileExists(const std::string& p, const IOOptions& o,
                                    IODebugContext* d) {
   if (!IsBlob(p)) return target()->FileExists(p, o, d);
   uint64_t size;
-  return GetFileSize(p, o, &size, d);
+  IOStatus s = GetFileSize(p, o, &size, d);
+  return s.IsPathNotFound() ? IOStatus::NotFound(p) : s;
 }
 IOStatus TieredStorage::GetChildren(const std::string& p, const IOOptions& o,
                                     std::vector<std::string>* out,
@@ -398,13 +399,25 @@ IOStatus TieredStorage::GetChildren(const std::string& p, const IOOptions& o,
   IOStatus s = target()->GetChildren(p, o, out, d);
   if (!s.ok() || p != options_.data_dir) return s;
   std::set<std::string> names(out->begin(), out->end());
-  // Orphan extents also protect allocated blob numbers after a crash.
-  for (const auto& name : *out)
+  // Debris is projected as an obsolete logical blob, never as readable data.
+  // Include descriptor temporaries even when every segment was already deleted.
+  for (const auto& name : *out) {
     if (name.compare(0, 8, "segment-") == 0) {
-      uint64_t n;
+      uint64_t n, id;
+      char dash;
       std::istringstream in(name.substr(8));
-      if (in >> n) names.insert(BlobFileName("", n).substr(1));
+      if (!(in >> n >> dash >> id) || dash != '-' || !in.eof())
+        return IOStatus::Corruption("tiered segment name");
+      names.insert(BlobFileName("", n).substr(1));
+    } else if (name.size() > 4 && name.substr(name.size() - 4) == ".tmp") {
+      const std::string base = name.substr(0, name.size() - 4);
+      uint64_t n;
+      FileType type;
+      if (ParseFileName(base, &n, &type) && type == kBlobFile &&
+          base == BlobFileName("", n).substr(1))
+        names.insert(base);
     }
+  }
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& l : local_)
@@ -476,14 +489,29 @@ TieredStorage::LocalReadPin::~LocalReadPin() {
     storage_->work_.notify_one();
   }
 }
+void TieredStorage::RemoteReadPin::Pin(TieredStorage* storage, uint64_t n) {
+  storage_ = storage;
+  number_ = n;
+  ++storage_->remote_readers_[n];
+}
+TieredStorage::RemoteReadPin::~RemoteReadPin() {
+  if (storage_) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    auto it = storage_->remote_readers_.find(number_);
+    if (--it->second == 0) storage_->remote_readers_.erase(it);
+    storage_->work_.notify_one();
+  }
+}
 IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
                                  const IOOptions& o, Slice* out, char* scratch,
                                  IODebugContext* d) {
   std::shared_ptr<const Version> v;
   // This scope outlives the lock scope, including every error return.
   LocalReadPin local;
+  RemoteReadPin remote_pin;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (retiring_.count(n)) return IOStatus::NotFound("retiring blob");
     auto it = local_.find(n);
     if (it != local_.end() && !it->second.evicting) {
       IOStatus s = local.Open(this, n, d);
@@ -492,6 +520,7 @@ IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
       auto remote = versions_.find(n);
       if (remote == versions_.end()) return IOStatus::NotFound("tiered blob");
       v = remote->second;
+      remote_pin.Pin(this, n);
     }
   }
   if (!local.file()) {
@@ -686,19 +715,133 @@ Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
          : stopping_  ? Status::ShutdownInProgress()
                       : Status::OK();
 }
+Status TieredStorage::ReclaimBlob(uint64_t n, uint64_t* bytes) {
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (!error_.ok()) return error_;
+  if (stopping_) return Status::ShutdownInProgress();
+  auto request = std::make_shared<ReclaimRequest>();
+  if (!reclaim_.emplace(n, request).second)
+    return Status::Corruption("duplicate blob reclamation");
+  retiring_.insert(n);
+  requests_.erase(n);
+  work_.notify_one();
+  TEST_SYNC_POINT("MetaBypass::TierBlobRetiring");
+  progress_.wait(lock, [&] {
+    if (request->done) return true;
+    if (request->started) {
+      // Cancellation cannot release the owner's capture/read gate while the
+      // sole worker is still performing physical deletion or directory sync.
+      if (!error_.ok() || stopping_) {
+        TEST_SYNC_POINT("MetaBypass::TierReclaimAwaitingCompletion");
+      }
+      return false;
+    }
+    return !error_.ok() || stopping_;
+  });
+  if (!error_.ok()) return error_;
+  if (!request->done) return Status::ShutdownInProgress();
+  *bytes = request->bytes;
+  return Status::OK();
+}
+Status TieredStorage::DeleteRetiredBlob(uint64_t n, uint64_t* bytes) {
+  // The sole worker excludes migration; retiring_ excludes new physical I/O.
+  // Snapshot every historical/orphan extent before unlinking the descriptor.
+  std::vector<std::string> names, payloads;
+  Status s =
+      target()->GetChildren(options_.data_dir, IOOptions(), &names, nullptr);
+  if (!s.ok()) return s;
+  const std::string prefix = "segment-" + std::to_string(n) + "-";
+  for (const auto& name : names)
+    if (name.compare(0, prefix.size(), prefix) == 0)
+      payloads.push_back(options_.data_dir + "/" + name);
+  payloads.push_back(LocalPath(n));
+  payloads.push_back(Descriptor(n) + ".tmp");
+  *bytes = 0;
+  for (const auto& path : payloads) {
+    uint64_t size = 0;
+    s = target()->GetFileSize(path, IOOptions(), &size, nullptr);
+    if (s.IsNotFound() || s.IsPathNotFound()) continue;
+    if (!s.ok()) return s;
+    *bytes += size;
+  }
+  uint64_t size = 0;
+  s = target()->GetFileSize(Descriptor(n), IOOptions(), &size, nullptr);
+  if (!s.ok() && !s.IsNotFound() && !s.IsPathNotFound()) return s;
+  if (s.ok()) *bytes += size;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    versions_.erase(n);
+  }
+  TEST_SYNC_POINT("MetaBypass::BeforeBlobDelete");
+  s = target()->DeleteFile(Descriptor(n), IOOptions(), nullptr);
+  if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::BlobDescriptorRemoved", &s);
+  if (s.ok()) s = SyncDir(target(), options_.data_dir);
+  TEST_SYNC_POINT("MetaBypass::BlobDescriptorSynced");
+  if (!s.ok()) return s;
+  for (const auto& path : payloads) {
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::BlobPayloadDeleteStatus", &s);
+    if (s.ok()) s = target()->DeleteFile(path, IOOptions(), nullptr);
+    if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
+    if (!s.ok()) return s;
+    TEST_SYNC_POINT("MetaBypass::BlobPayloadRemoved");
+  }
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::BlobFinalDirSyncStatus", &s);
+  if (s.ok()) s = SyncDir(target(), options_.data_dir);
+  if (s.ok()) s = SyncDir(target(), options_.staging_dir);
+  if (s.ok()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto local = local_.find(n);
+    if (local != local_.end()) {
+      usage_ -= local->second.size;
+      local_.erase(local);
+    }
+  }
+  return s;
+}
 void TieredStorage::Run() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (error_.ok()) {
     work_.wait(lock, [&] {
       if (stopping_ || !error_.ok() || !requests_.empty()) return true;
+      for (const auto& item : reclaim_) {
+        auto local = local_.find(item.first);
+        if (!remote_readers_.count(item.first) &&
+            (local == local_.end() || local->second.readers == 0))
+          return true;
+      }
       for (const auto& l : local_)
-        if (l.second.closed && (!l.second.evicting || l.second.readers == 0))
+        if (!retiring_.count(l.first) && l.second.closed &&
+            (!l.second.evicting || l.second.readers == 0))
           return true;
       return false;
     });
     if (stopping_ || !error_.ok()) break;
+    auto reclaim = reclaim_.begin();
+    for (; reclaim != reclaim_.end(); ++reclaim) {
+      auto local = local_.find(reclaim->first);
+      if (!remote_readers_.count(reclaim->first) &&
+          (local == local_.end() || local->second.readers == 0))
+        break;
+    }
+    if (reclaim != reclaim_.end()) {
+      const uint64_t number = reclaim->first;
+      auto request = reclaim->second;
+      request->started = true;
+      lock.unlock();
+      Status s = DeleteRetiredBlob(number, &request->bytes);
+      if (!s.ok()) Fail(s);
+      lock.lock();
+      request->done = true;
+      if (s.ok()) {
+        reclaim_.erase(number);
+        retiring_.erase(number);
+      }
+      progress_.notify_all();
+      continue;
+    }
     uint64_t n = 0, length = 0;
-    bool reclaim = false;
+    bool evict = false;
     const bool background = requests_.empty();
     if (!requests_.empty()) {
       auto it = requests_.begin();
@@ -707,15 +850,16 @@ void TieredStorage::Run() {
       requests_.erase(it);
     } else
       for (const auto& l : local_)
-        if (l.second.closed && (!l.second.evicting || l.second.readers == 0)) {
+        if (!retiring_.count(l.first) && l.second.closed &&
+            (!l.second.evicting || l.second.readers == 0)) {
           n = l.first;
           length = l.second.size;
-          reclaim = l.second.evicting;
+          evict = l.second.evicting;
           break;
         }
     lock.unlock();
     Status s =
-        reclaim ? ReclaimLocalAfterReads(n) : Migrate(n, length, background);
+        evict ? ReclaimLocalAfterReads(n) : Migrate(n, length, background);
     if (!s.ok()) Fail(s);
     TEST_SYNC_POINT("MetaBypass::TierMigrationComplete");
     lock.lock();

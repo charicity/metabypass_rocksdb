@@ -81,8 +81,10 @@ for these reads, publishes the remote view first, and then removes the local
 file. Cached logical readers subsequently resolve the remote view. An active
 local blob cannot silently fall back to a shorter remote prefix.
 
-The remote store retains all blob payloads, including historical extents. This
-version does not implement blob GC or remote extent consolidation. Small
+The remote store retains historical extents until their logical blob is native
+obsolete and all recovery roots release it. [Whole-file GC](blob-gc.md) then
+removes the descriptor before its extents, after draining physical reads. Remote
+extent consolidation and live value relocation remain disabled. Small
 synchronous writes can create many extents and descriptors; complete-point
 publication is intentionally more expensive than simply synchronizing a WAL.
 

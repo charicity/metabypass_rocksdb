@@ -885,6 +885,18 @@ class VersionEdit {
     return blob_file_additions_;
   }
 
+  BlobFileAdditions ExtractBlobFileAdditions() {
+    BlobFileAdditions result;
+    result.swap(blob_file_additions_);
+    for (const auto& blob : result) {
+      const auto end =
+          std::remove(files_to_quarantine_.begin(), files_to_quarantine_.end(),
+                      blob.GetBlobFileNumber());
+      files_to_quarantine_.resize(end - files_to_quarantine_.begin());
+    }
+    return result;
+  }
+
   void SetBlobFileAdditions(BlobFileAdditions blob_file_additions) {
     assert(blob_file_additions_.empty());
     blob_file_additions_ = std::move(blob_file_additions);

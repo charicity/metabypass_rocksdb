@@ -11,6 +11,8 @@
 
 #include "db/blob/blob_file_partition_manager.h"
 #include "db/column_family.h"
+#include "db/db_impl/db_impl.h"
+#include "monitoring/thread_status_util.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/write_batch.h"
@@ -209,6 +211,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
       if (!s.ok()) return s;
     }
   }
+  std::vector<BlobFileAddition> sealed_blobs;
   if (existing) {
     std::string marker, identity;
     s = metabypass::Read(fs.get(), index + "/METABYPASS", &marker);
@@ -238,7 +241,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
       s = impl->sst->Initialize(identity, false);
       if (!s.ok()) return s;
     }
-    s = impl->storage->PrepareRecovery(index);
+    s = impl->storage->PrepareRecovery(index, options, &sealed_blobs);
     if (!s.ok()) return s;
   }
   if (impl->sst) {
@@ -264,7 +267,25 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   configured.min_blob_size = 0;
   configured.enable_blob_garbage_collection = false;
   configured.wal_recovery_mode = WALRecoveryMode::kAbsoluteConsistency;
-  s = DB::Open(configured, index, &impl->db);
+  // WAL-only recovery must publish blob metadata together with its SSTs.
+  // A fresh MANIFEST omits historical additions already filtered from Version.
+  configured.avoid_flush_during_recovery = false;
+  configured.reuse_manifest_on_open = false;
+  std::vector<ColumnFamilyDescriptor> column_families;
+  column_families.emplace_back(kDefaultColumnFamilyName, configured);
+  std::vector<ColumnFamilyHandle*> handles;
+  ThreadStatusUtil::SetEnableTracking(configured.enable_thread_tracking);
+  ThreadStatusUtil::SetThreadOperation(ThreadStatus::OperationType::OP_DBOPEN);
+  bool can_retry = false;
+  do {
+    s = DBImpl::Open(configured, index, column_families, &handles, &impl->db,
+                     false, true, can_retry, &can_retry, sealed_blobs);
+  } while (!s.ok() && can_retry);
+  ThreadStatusUtil::ResetThreadStatus();
+  if (s.ok()) {
+    assert(handles.size() == 1);
+    delete handles.front();
+  }
   if (s.ok()) {
     std::string identity;
     s = metabypass::Read(fs.get(), index + "/IDENTITY", &identity);
@@ -382,7 +403,7 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
   if (s.ok())
     s = metabypass::Backup::RestoreFiles(storage.target(), m.backup_dir, index,
                                          storage);
-  if (s.ok()) s = storage.PrepareRecovery(index);
+  if (s.ok()) s = storage.PrepareRecovery(index, options);
   if (s.ok() && tier && !staging_identity_exists) {
     const std::string marker = m.staging_dir + "/METABYPASS-IDENTITY";
     s = metabypass::Write(fs.get(), marker + ".tmp", backup_owner);
@@ -478,6 +499,8 @@ Status MetaBypassDB::Flush(const FlushOptions& o) {
 }
 Status MetaBypassDB::CompactRange(const CompactRangeOptions& o, const Slice* a,
                                   const Slice* b) {
+  if (o.blob_garbage_collection_policy == BlobGarbageCollectionPolicy::kForce)
+    return Status::NotSupported("Metabypass does not relocate blob values");
   Status s = impl_->backup->Error();
   if (s.ok())
     s = impl_->db ? impl_->db->CompactRange(o, a, b)

@@ -48,7 +48,10 @@ class SeparatedStorage : public FileSystemWrapper {
   // Verify/hash only new complete records; synchronize the required files.
   Status PersistIncremental(const std::map<uint64_t, uint64_t>& lengths,
                             BlobValidationCache* cache, uint64_t* scanned);
-  Status PrepareRecovery(const std::string& index);
+  // Called only after the backup owner has excluded all recovery roots.
+  Status ReclaimBlob(uint64_t number, uint64_t* bytes);
+  Status PrepareRecovery(const std::string& index, const Options& options,
+                         std::vector<BlobFileAddition>* sealed_blobs = nullptr);
   std::string BlobPath(uint64_t number) const;
   std::string Map(const std::string& path) const;
   bool IsBlob(const std::string& path) const;

@@ -1151,12 +1151,13 @@ class DBImpl : public DB {
   Status NewDB(std::vector<std::string>* new_filenames);
 
   // This is to be used only by internal rocksdb classes.
-  static Status Open(const DBOptions& db_options, const std::string& name,
-                     const std::vector<ColumnFamilyDescriptor>& column_families,
-                     std::vector<ColumnFamilyHandle*>* handles,
-                     std::unique_ptr<DB>* dbptr, const bool seq_per_batch,
-                     const bool batch_per_txn, const bool is_retry,
-                     bool* can_retry);
+  static Status Open(
+      const DBOptions& db_options, const std::string& name,
+      const std::vector<ColumnFamilyDescriptor>& column_families,
+      std::vector<ColumnFamilyHandle*>* handles, std::unique_ptr<DB>* dbptr,
+      const bool seq_per_batch, const bool batch_per_txn, const bool is_retry,
+      bool* can_retry,
+      const std::vector<BlobFileAddition>& sealed_recovery_blobs = {});
 
   static IOStatus CreateAndNewDirectory(
       FileSystem* fs, const std::string& dirname,
@@ -2329,6 +2330,9 @@ class DBImpl : public DB {
   Status AtomicFlushMemTablesToOutputFiles(
       const autovector<BGFlushArg>& bg_flush_args, bool* made_progress,
       JobContext* job_context, LogBuffer* log_buffer, Env::Priority thread_pri);
+
+  // Verified, sealed external blob files available during this Open only.
+  std::vector<BlobFileAddition> sealed_recovery_blobs_;
 
   // REQUIRES: log_numbers are sorted in ascending order
   // corrupted_wal_found is set to true if we recover from a corrupted log file.

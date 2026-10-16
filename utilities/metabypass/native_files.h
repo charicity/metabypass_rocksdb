@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,8 @@ struct NativeState {
   uint64_t next_file = 0;
   std::map<uint64_t, uint64_t> tables;
   std::map<uint64_t, BlobFileAddition> blobs;
+  // Historical registration is distinct from current Version dependencies.
+  std::set<uint64_t> registered_blobs;
   std::vector<std::string> edits;
 };
 Status Inspect(FileSystem* fs, const std::string& dir, NativeState* state);

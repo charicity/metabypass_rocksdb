@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "rocksdb/utilities/metabypass.h"
@@ -31,6 +32,8 @@ class TieredStorage : public FileSystemWrapper {
   void SetFailureHandler(std::function<void(const Status&)>);
   Status Reserve(uint64_t bytes, const std::function<Status()>& rotate);
   void ReleaseReservation();
+  // Submit an already-qualified whole-object retirement to the sole worker.
+  Status ReclaimBlob(uint64_t number, uint64_t* bytes);
   Status Persist(const std::map<uint64_t, uint64_t>&);
   Status SaveCheckpoint(const std::string&,
                         const std::map<uint64_t, uint64_t>&);
@@ -98,6 +101,19 @@ class TieredStorage : public FileSystemWrapper {
     uint64_t number_ = 0;
     std::unique_ptr<FSRandomAccessFile> file_;
   };
+  class RemoteReadPin {
+   public:
+    RemoteReadPin() = default;
+    ~RemoteReadPin();
+    RemoteReadPin(const RemoteReadPin&) = delete;
+    RemoteReadPin& operator=(const RemoteReadPin&) = delete;
+    void Pin(TieredStorage* storage, uint64_t number);
+
+   private:
+    TieredStorage* storage_ = nullptr;
+    uint64_t number_ = 0;
+  };
+  Status DeleteRetiredBlob(uint64_t number, uint64_t* bytes);
   static std::string Encode(const Version&);
   static Status Decode(const std::string&, Version*);
   std::string LocalPath(uint64_t) const;
@@ -123,6 +139,14 @@ class TieredStorage : public FileSystemWrapper {
   std::map<uint64_t, Local> local_;
   std::map<uint64_t, std::shared_ptr<const Version>> versions_;
   std::map<uint64_t, uint64_t> requests_;
+  struct ReclaimRequest {
+    uint64_t bytes = 0;
+    bool started = false;
+    bool done = false;
+  };
+  std::map<uint64_t, std::shared_ptr<ReclaimRequest>> reclaim_;
+  std::set<uint64_t> retiring_;
+  std::map<uint64_t, uint64_t> remote_readers_;
   uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0, wait_us_ = 0;
   uint64_t extent_id_ = 0;
   bool stopping_ = false, restoring_ = false;

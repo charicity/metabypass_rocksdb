@@ -8,6 +8,7 @@
 #include <array>
 #include <filesystem>
 #include <limits>
+#include <set>
 
 #include "db/log_reader.h"
 #include "db/log_writer.h"
@@ -156,6 +157,8 @@ Status Inspect(FileSystem* fs, const std::string& dir, NativeState* state) {
   if (state->manifest.find('/') != std::string::npos ||
       state->manifest.compare(0, 9, "MANIFEST-") != 0)
     return Status::Corruption("invalid CURRENT");
+  std::map<uint64_t, uint64_t> oldest_blobs, garbage, garbage_bytes;
+  std::set<uint64_t> unlinked_tables;
   uint32_t remaining = 0;
   bool group = false;
   s = ReadLog(
@@ -175,17 +178,67 @@ Status Inspect(FileSystem* fs, const std::string& dir, NativeState* state) {
         state->edits.emplace_back(record.data(), record.size());
         if (edit.HasLogNumber()) state->log_number = edit.GetLogNumber();
         if (edit.HasNextFile()) state->next_file = edit.GetNextFile();
-        for (const auto& f : edit.GetDeletedFiles())
+        for (const auto& blob : edit.GetBlobFileAdditions()) {
+          state->registered_blobs.insert(blob.GetBlobFileNumber());
+          if (!state->blobs.emplace(blob.GetBlobFileNumber(), blob).second)
+            return Status::Corruption("duplicate blob addition");
+        }
+        for (const auto& blob : edit.GetBlobFileGarbages()) {
+          const uint64_t number = blob.GetBlobFileNumber();
+          const auto added = state->blobs.find(number);
+          if (added == state->blobs.end())
+            return Status::Corruption("garbage for unknown blob");
+          auto& count = garbage[number];
+          auto& bytes = garbage_bytes[number];
+          if (count > added->second.GetTotalBlobCount() ||
+              blob.GetGarbageBlobCount() >
+                  added->second.GetTotalBlobCount() - count ||
+              bytes > added->second.GetTotalBlobBytes() ||
+              blob.GetGarbageBlobBytes() >
+                  added->second.GetTotalBlobBytes() - bytes)
+            return Status::Corruption("excess blob garbage");
+          count += blob.GetGarbageBlobCount();
+          bytes += blob.GetGarbageBlobBytes();
+        }
+        for (const auto& f : edit.GetDeletedFiles()) {
           state->tables.erase(f.second);
-        for (const auto& f : edit.GetNewFiles())
-          state->tables[f.second.fd.GetNumber()] = f.second.fd.GetFileSize();
-        for (const auto& b : edit.GetBlobFileAdditions())
-          state->blobs.emplace(b.GetBlobFileNumber(), b);
+          unlinked_tables.erase(f.second);
+          oldest_blobs.erase(f.second);
+        }
+        for (const auto& f : edit.GetNewFiles()) {
+          const uint64_t number = f.second.fd.GetNumber();
+          state->tables[number] = f.second.fd.GetFileSize();
+          unlinked_tables.erase(number);
+          if (f.second.oldest_blob_file_number != kInvalidBlobFileNumber &&
+              !state->blobs.count(f.second.oldest_blob_file_number))
+            unlinked_tables.insert(number);
+          oldest_blobs[f.second.fd.GetNumber()] =
+              f.second.oldest_blob_file_number;
+        }
         return Status::OK();
       },
       &state->manifest_end);
   if (s.ok() && group)
     return Status::Incomplete("MANIFEST atomic group pending");
+  if (!s.ok()) return s;
+  // Match VersionBuilder::SaveBlobFilesTo: SSTs link their oldest blob;
+  // newer files can be referenced without an explicit link. Unregistered
+  // oldest blobs are legal after WAL-only recovery. Actual WAL/SST reference
+  // validation adds their dependencies independently of native metadata.
+  std::set<uint64_t> linked;
+  for (const auto& table : oldest_blobs)
+    if (!unlinked_tables.count(table.first) &&
+        table.second != kInvalidBlobFileNumber &&
+        state->blobs.count(table.second))
+      linked.insert(table.second);
+  for (auto it = state->blobs.begin(); it != state->blobs.end();) {
+    if (linked.empty() || it->first < *linked.begin() ||
+        (!linked.count(it->first) &&
+         garbage[it->first] >= it->second.GetTotalBlobCount()))
+      it = state->blobs.erase(it);
+    else
+      ++it;
+  }
   return s;
 }
 Status RewriteManifest(FileSystem* fs, const std::string& dir,

@@ -110,3 +110,14 @@ Preserved runner logs and result JSON are under that directory's
 `strict-round1/`, `strict-round2/` and `coerce-round1/` subdirectories.
 These checks did not measure performance or use real separate SSD/HDD devices,
 and did not test physical power loss.
+
+## Whole-blob retirement
+
+Migration continues to preserve logical readers. Whole-object retirement is a
+separate operation, permitted only after native obsolete-file classification
+and the backup owner's recovery-root checks. Both local and remote physical
+I/O own per-operation pins. Retirement marks the blob before accepting new
+reads, and the migration worker drains existing pins and serializes deletion
+with extent/descriptor publication. The backup GC caller waits for that worker
+without holding the backup mutex. See [Blob GC](blob-gc.md) for the complete
+persistence and shutdown protocol.

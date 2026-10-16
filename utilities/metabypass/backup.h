@@ -52,7 +52,15 @@ class Backup : public FileSystemWrapper {
 
  private:
   friend class MirrorWriter;
-  enum class Kind { kCreate, kAppend, kTruncate, kClose, kDelete, kRename };
+  enum class Kind {
+    kCreate,
+    kAppend,
+    kTruncate,
+    kClose,
+    kDelete,
+    kRename,
+    kRetireBlob
+  };
   struct Event {
     Kind kind;
     std::string name, other, bytes;
@@ -94,9 +102,12 @@ class Backup : public FileSystemWrapper {
   void Run();
   void ValidateLoop();
   void GarbageCollectLoop();
+  bool BlobEligible(uint64_t number, uint64_t seq) const;
+  bool NeedsBlobCheckpoint() const;
   struct Point {
     std::string reference;
     uint64_t bytes = 0;
+    std::set<uint64_t> blobs;
     std::string Name() const {
       return reference.substr(0, reference.find(' '));
     }
@@ -145,6 +156,15 @@ class Backup : public FileSystemWrapper {
   std::map<std::string, std::unique_ptr<FSWritableFile>> writers_;
   std::deque<Point> points_;
   Point retired_;
+  struct RetiredBlob {
+    uint64_t seq = 0, bytes = 0;
+  };
+  // All recovery roots, pending retirements and the capture/delete gate use
+  // mutex_. Membership includes queued and in-flight retirement requests.
+  std::set<uint64_t> retiring_blobs_;
+  std::map<uint64_t, RetiredBlob> pending_blobs_;
+  bool blob_gc_busy_ = false;
+  uint64_t last_capture_micros_ = 0;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

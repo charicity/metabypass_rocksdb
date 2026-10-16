@@ -178,7 +178,29 @@ Status Backup::Start(bool existing) {
     while (in >> p >> inventory_crc) {
       if (!SafeName(p) || p.compare(0, 6, "point-") != 0)
         return Status::Corruption("invalid recovery point pointer");
-      points_.push_back({p + " " + std::to_string(inventory_crc), 0});
+      Point point{p + " " + std::to_string(inventory_crc), 0, {}};
+      std::string inventory;
+      s = Read(disk_, options_.backup_dir + "/" + p + "/INVENTORY", &inventory);
+      if (!s.ok()) return s;
+      if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
+        return Status::Corruption("published inventory checksum");
+      std::istringstream entries(inventory);
+      std::string kind, file;
+      uint64_t length;
+      uint32_t crc;
+      while (entries >> kind >> file >> length >> crc) {
+        if (kind == "B") {
+          uint64_t number;
+          std::istringstream id(file);
+          if (!(id >> number) || !id.eof())
+            return Status::Corruption("invalid blob inventory entry");
+          point.blobs.insert(number);
+        } else if (kind != "I" && kind != "D") {
+          return Status::Corruption("invalid inventory entry");
+        }
+      }
+      if (!entries.eof()) return Status::Corruption("invalid inventory");
+      points_.push_back(std::move(point));
     }
     if (points_.empty() || points_.size() > 2)
       return Status::Corruption("invalid recovery point pointer");
@@ -348,6 +370,26 @@ IOStatus Backup::ReuseWritableFile(const std::string&, const std::string&,
 }
 IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
                             IODebugContext* d) {
+  if (storage_->IsBlob(p)) {
+    if (!options_.enable_blob_file_gc) return IOStatus::OK();
+    Channel& channel = metadata_channel_;
+    std::lock_guard<std::mutex> serial(channel.operations);
+    uint64_t number;
+    FileType type;
+    if (!ParseFileName(Base(p), &number, &type))
+      return IOStatus::Corruption("invalid retiring blob name");
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!retiring_blobs_.insert(number).second) return IOStatus::OK();
+    }
+    Event e{Kind::kRetireBlob, Base(p), {}, {}};
+    e.size = number;
+    e.charge = sizeof(e) + e.name.size();
+    Status s = Reserve(channel, e.charge);
+    if (!s.ok()) return AsIO(s);
+    Finish(channel, std::move(e), Status::OK());
+    return IOStatus::OK();
+  }
   if (!Tracked(p)) return target()->DeleteFile(p, o, d);
   Channel& channel = ChannelFor(Base(p));
   std::lock_guard<std::mutex> serial(channel.operations);
@@ -399,6 +441,20 @@ Status Backup::Apply(const Event& e) {
   Status injected;
   TEST_SYNC_POINT_CALLBACK("MetaBypass::ApplyStatus", &injected);
   if (!injected.ok()) return injected;
+  if (e.kind == Kind::kRetireBlob) {
+    uint64_t size = 0;
+    Status s = storage_->GetFileSize(index_ + "/" + e.name, IOOptions(), &size,
+                                     nullptr);
+    // An obsolete orphan may consist only of tiered extent debris. Its bytes
+    // are determined from the qualified physical inventory by the tier worker.
+    if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
+    if (!s.ok()) return s;
+    std::lock_guard<std::mutex> lock(mutex_);
+    pending_blobs_.emplace(e.size, RetiredBlob{e.seq, size});
+    ++stats_.pending_blob_gc_files;
+    stats_.pending_blob_gc_bytes += size;
+    return Status::OK();
+  }
   const std::string path = work_ + "/" + e.name;
   auto close = [&]() -> Status {
     auto it = writers_.find(e.name);
@@ -687,7 +743,10 @@ Status Backup::Publish(const Candidate& candidate) {
   if (!s.ok()) return s;
   const std::string reference = name + " " + std::to_string(inventory_crc);
   std::string pointer = reference + "\n";
-  if (!points_.empty()) pointer += points_.front().reference + "\n";
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!points_.empty()) pointer += points_.front().reference + "\n";
+  }
   if (s.ok()) s = Write(disk_, options_.backup_dir + "/LATEST.tmp", pointer);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforePointerReplace", &s);
   if (!s.ok()) return s;
@@ -710,14 +769,17 @@ Status Backup::Publish(const Candidate& candidate) {
                           nullptr);
     if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
     if (!s.ok()) return s;
-    Point retired;
-    if (points_.size() == 2) retired = points_.back();
-    points_.push_front({reference, total});
-    if (points_.size() > 2) points_.pop_back();
-    uint64_t retained = candidate.work_bytes;
-    for (const auto& retained_point : points_) retained += retained_point.bytes;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      Point retired;
+      if (points_.size() == 2) retired = points_.back();
+      Point published{reference, total, {}};
+      for (const auto& blob : blobs) published.blobs.insert(blob.first);
+      points_.push_front(std::move(published));
+      if (points_.size() > 2) points_.pop_back();
+      uint64_t retained = candidate.work_bytes;
+      for (const auto& retained_point : points_)
+        retained += retained_point.bytes;
       if (!retired.reference.empty()) {
         assert(!retired_pending_);
         retired_ = std::move(retired);
@@ -749,7 +811,8 @@ bool Backup::MirrorReady() const {
           (wal_channel_.waiting_charge != 0 ||
            metadata_channel_.waiting_charge != 0 || requested_ > published_ ||
            stats_.queued_bytes >= options_.batch_bytes)) ||
-         (active_ && !candidate_busy_ && applied_ > captured_);
+         (active_ && !candidate_busy_ && !blob_gc_busy_ &&
+          applied_ > captured_);
 }
 void Backup::WakeMirror() {
   if (mirror_waiting_ && MirrorReady()) {
@@ -815,10 +878,16 @@ void Backup::Run() {
       if (!stats_.error.ok()) break;
     }
     if (!stats_.error.ok()) break;
-    if (active_ && !candidate_busy_ && applied_ > captured_) {
+    const bool advance_blob_point =
+        !stopping_ && NeedsBlobCheckpoint() &&
+        Now() - last_capture_micros_ >= options_.interval_ms * 1000;
+    if (active_ && !candidate_busy_ && !blob_gc_busy_ &&
+        (applied_ > captured_ || advance_blob_point)) {
+      last_capture_micros_ = Now();
       auto candidate = std::make_unique<Candidate>();
       candidate->seq = applied_;
-      candidate->oldest = oldest_unpublished_micros_;
+      candidate->oldest =
+          oldest_unpublished_micros_ ? oldest_unpublished_micros_ : Now();
       oldest_unpublished_micros_ = 0;
       captured_ = applied_;
       candidate_busy_ = true;
@@ -849,11 +918,16 @@ void Backup::Run() {
       validator_cv_.notify_one();
     }
     if (stopping_ && QueuesEmpty()) {
-      if (candidate_busy_) {
-        TEST_SYNC_POINT("MetaBypass::CloseWaitingForValidation");
+      if (candidate_busy_ || blob_gc_busy_) {
+        if (blob_gc_busy_) {
+          TEST_SYNC_POINT("MetaBypass::CloseWaitingForBlobGC");
+        } else {
+          TEST_SYNC_POINT("MetaBypass::CloseWaitingForValidation");
+        }
         mirror_waiting_ = true;
-        mirror_cv_.wait(lock,
-                        [&] { return !candidate_busy_ || !stats_.error.ok(); });
+        mirror_cv_.wait(lock, [&] {
+          return (!candidate_busy_ && !blob_gc_busy_) || !stats_.error.ok();
+        });
         mirror_waiting_ = false;
       } else if (!active_ || published_ >= applied_) {
         break;
@@ -901,6 +975,7 @@ void Backup::ValidateLoop() {
               ? std::min(oldest_unpublished_micros_, candidate->oldest)
               : candidate->oldest;
     candidate_busy_ = false;
+    gc_cv_.notify_all();
     WakeMirror();
   }
   candidate_busy_ = false;
@@ -908,34 +983,98 @@ void Backup::ValidateLoop() {
   gc_cv_.notify_all();
   WakeMirror();
 }
+bool Backup::BlobEligible(uint64_t number, uint64_t seq) const {
+  if (candidate_busy_ || points_.empty() || published_ < seq) return false;
+  for (const auto& point : points_)
+    if (point.blobs.count(number)) return false;
+  if (retired_pending_ && retired_.blobs.count(number)) return false;
+  return true;
+}
+bool Backup::NeedsBlobCheckpoint() const {
+  if (points_.empty() || pending_blobs_.empty()) return false;
+  for (const auto& blob : pending_blobs_) {
+    if (published_ < blob.second.seq) return applied_ > captured_;
+    if (!points_.front().blobs.count(blob.first) && points_.size() == 2 &&
+        points_.back().blobs.count(blob.first))
+      return true;
+  }
+  return false;
+}
 void Backup::GarbageCollectLoop() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
     gc_cv_.wait(lock, [&] {
-      return retired_pending_ || validator_done_ || !stats_.error.ok();
+      if (retired_pending_ || validator_done_ || !stats_.error.ok())
+        return true;
+      if (!stopping_)
+        for (const auto& blob : pending_blobs_)
+          if (BlobEligible(blob.first, blob.second.seq)) return true;
+      return false;
     });
-    if (!stats_.error.ok() || (validator_done_ && !retired_pending_)) break;
-    const Point retired = retired_;
-    lock.unlock();
-    const uint64_t started = Now();
-    TEST_SYNC_POINT("MetaBypass::GCStarted");
-    Status s;
-    TEST_SYNC_POINT_CALLBACK("MetaBypass::GCStatus", &s);
-    if (s.ok())
-      s = RemoveRetiredPoint(disk_, options_.backup_dir + "/" + retired.Name());
-    const uint64_t elapsed = Now() - started;
-    if (!s.ok()) {
-      Fail(s);
-      TEST_SYNC_POINT("MetaBypass::GCFailureRecorded");
+    if (!stats_.error.ok()) break;
+    // Retirement cleanup must run even during candidate validation: Publish
+    // waits for this slot. Never couple it to the blob capture/delete gate.
+    if (retired_pending_) {
+      const Point retired = retired_;
+      lock.unlock();
+      const uint64_t started = Now();
+      TEST_SYNC_POINT("MetaBypass::GCStarted");
+      Status s;
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::GCStatus", &s);
+      if (s.ok())
+        s = RemoveRetiredPoint(disk_,
+                               options_.backup_dir + "/" + retired.Name());
+      if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+      if (!s.ok()) {
+        Fail(s);
+        TEST_SYNC_POINT("MetaBypass::GCFailureRecorded");
+      }
+      lock.lock();
+      stats_.gc_micros += Now() - started;
+      if (!s.ok()) break;
+      retired_ = Point();
+      retired_pending_ = false;
+      stats_.pending_gc_points = 0;
+      stats_.pending_gc_bytes = 0;
+      gc_cv_.notify_all();
+      continue;
     }
+    if (validator_done_) break;
+    std::vector<uint64_t> batch;
+    for (const auto& blob : pending_blobs_) {
+      if (batch.size() == 16) break;
+      if (BlobEligible(blob.first, blob.second.seq))
+        batch.push_back(blob.first);
+    }
+    if (batch.empty()) continue;
+    blob_gc_busy_ = true;
+    lock.unlock();
+    TEST_SYNC_POINT("MetaBypass::BlobGCClaimed");
+    const uint64_t started = Now();
+    Status s;
+    for (uint64_t number : batch) {
+      uint64_t bytes = 0;
+      s = storage_->ReclaimBlob(number, &bytes);
+      if (!s.ok()) break;
+      // The capture gate also excludes the validator cache owner.
+      blob_cache_.erase(number);
+      lock.lock();
+      stats_.pending_blob_gc_bytes -= pending_blobs_.at(number).bytes;
+      --stats_.pending_blob_gc_files;
+      pending_blobs_.erase(number);
+      retiring_blobs_.erase(number);
+      ++stats_.reclaimed_blob_files;
+      stats_.reclaimed_blob_bytes += bytes;
+      lock.unlock();
+      TEST_SYNC_POINT("MetaBypass::BlobReclaimed");
+    }
+    if (!s.ok()) Fail(s);
     lock.lock();
-    stats_.gc_micros += elapsed;
-    if (!s.ok()) break;
-    retired_ = Point();
-    retired_pending_ = false;
-    stats_.pending_gc_points = 0;
-    stats_.pending_gc_bytes = 0;
+    stats_.blob_gc_micros += Now() - started;
+    blob_gc_busy_ = false;
+    WakeMirror();
     gc_cv_.notify_all();
+    if (!s.ok()) break;
   }
   gc_cv_.notify_all();
 }
@@ -960,6 +1099,7 @@ Status Backup::Stop() {
   }
   if (thread_.joinable()) thread_.join();
   if (validator_.joinable()) validator_.join();
+  TEST_SYNC_POINT("MetaBypass::BeforeGCJoin");
   if (garbage_collector_.joinable()) garbage_collector_.join();
   return Error();
 }

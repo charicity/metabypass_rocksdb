@@ -7,7 +7,7 @@ The public C++ entry point is `rocksdb/utilities/metabypass.h`.
 
 ## Ownership and API
 
-`SeparatedStorage` routes `.blob` files to `data_dir`, retains every blob,
+`SeparatedStorage` routes `.blob` files to `data_dir`, reclaims qualified obsolete blobs,
 validates referenced records and owns exclusive recovery/sealing. Named-file
 sync and directory sync establish blob dependencies without taking a DB mutex.
 `Backup` intercepts successful index file mutations and mirrors them through
@@ -35,8 +35,8 @@ if (db) {
 db.reset();  // releases data and backup directory locks
 ```
 
-The utility enables Blob Direct Write, sets `min_blob_size=0` and disables blob
-GC. Put, Get, Delete, WriteBatch, iterators, Flush and CompactRange are supported.
+The utility enables Blob Direct Write, sets `min_blob_size=0` and disables value
+relocation. Whole-file Blob GC is enabled by default; see [Blob GC](blob-gc.md). Put, Get, Delete, WriteBatch, iterators, Flush and CompactRange are supported.
 WAL cannot be disabled. Transactions, Merge, wide columns, range deletion,
 SingleDelete, timestamps, multiple CFs, ingestion, dynamic options and C/Java
 bindings are not exposed. Ordered writes are required: concurrent memtable
@@ -306,3 +306,7 @@ in a separate task; no new measurements have been collected for this change.
 See the [revised test plan and failure analysis](direct-storage-test-plan-v2.zh-CN.md)
 for follow-up after the first execution: TSAN diagnosis, resource-aware admission,
 fixed-work comparisons, and separately qualified sustained-write experiments.
+
+Whole-file reclamation, including its recovery roots, concurrency protocol and
+metrics, is documented in [Blob GC](blob-gc.md). Historical experiment reports
+describe the retention behavior of the revisions measured in those reports.

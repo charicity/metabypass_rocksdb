@@ -5,6 +5,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -30,8 +31,6 @@ class TieredStorage : public FileSystemWrapper {
   Status Error() const;
   void Cancel(const Status&);
   void SetFailureHandler(std::function<void(const Status&)>);
-  Status Reserve(uint64_t bytes, const std::function<Status()>& rotate);
-  void ReleaseReservation();
   // Submit an already-qualified whole-object retirement to the sole worker.
   Status ReclaimBlob(uint64_t number, uint64_t* bytes);
   Status Persist(const std::map<uint64_t, uint64_t>&);
@@ -39,7 +38,6 @@ class TieredStorage : public FileSystemWrapper {
                         const std::map<uint64_t, uint64_t>&);
   Status LoadCheckpoint(const std::string&);
   Status ArchiveUnreferenced(const std::map<uint64_t, uint64_t>&);
-  Status SealRecovery(uint64_t number, uint64_t end, const Slice& footer);
   void AddStats(MetaBypassStats*) const;
   bool IsBlob(const std::string&, uint64_t* = nullptr) const;
   IOStatus NewWritableFile(const std::string&, const FileOptions&,
@@ -84,6 +82,8 @@ class TieredStorage : public FileSystemWrapper {
     // Physical local I/O pins, not the lifetime of logical TierReaders.
     uint64_t readers = 0;
     bool evicting = false;
+    // The physical prefix is closed while the logical writer continues on HDD.
+    bool switching = false;
   };
   // Stack-owned per-I/O pin. Open requires mutex_; destruction must not hold
   // it.
@@ -122,6 +122,32 @@ class TieredStorage : public FileSystemWrapper {
   Status Commit(uint64_t, Version);
   Status Migrate(uint64_t, uint64_t, bool background);
   Status AppendExtent(uint64_t, const Slice&, Version*);
+  enum class TaskKind { kAppend, kBarrier, kClose, kSwitch };
+  struct Task {
+    uint64_t number;
+    TaskKind kind;
+    std::string bytes;
+    bool done = false;
+  };
+  Status Submit(uint64_t, TaskKind, const Slice& = Slice());
+  Status Execute(const Task&);
+  Status AppendRemote(uint64_t, const Slice&);
+  Status Barrier(uint64_t, bool close);
+  struct ActiveExtent {
+    std::unique_ptr<FSWritableFile> file;
+    std::string name;
+    uint64_t size = 0;
+    uint32_t crc = 0;
+  };
+  Status SealExtent(ActiveExtent*);
+  // Worker-owned physical writers. Runtime versions may include unsynced tails.
+  std::map<uint64_t, ActiveExtent> active_;
+  std::map<uint64_t, std::shared_ptr<const Version>> durable_;
+  std::deque<std::shared_ptr<Task>> tasks_;
+  uint64_t queued_bytes_ = 0, peak_queued_bytes_ = 0;
+  uint64_t spill_files_ = 0, spill_bytes_ = 0;
+  static constexpr uint64_t kExtentSize = 4 * 1024 * 1024;
+  static constexpr uint64_t kQueueLimit = 16 * 1024 * 1024;
   void Run();
   void Fail(const Status&);
   IOStatus ReadBlob(uint64_t, uint64_t, size_t, const IOOptions&, Slice*, char*,

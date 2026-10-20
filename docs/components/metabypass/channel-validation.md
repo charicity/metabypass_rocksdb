@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # WAL and metadata channels
 
 The production backup now owns two `Channel` objects: WAL, and metadata (SST,

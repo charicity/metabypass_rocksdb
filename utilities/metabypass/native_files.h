@@ -10,15 +10,10 @@
 #include <string>
 #include <vector>
 
-#include "db/version_edit.h"
 #include "rocksdb/file_system.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
-// Validates records and identifies an optional valid footer. Recovery may
-// discard bytes only after the required prefix.
-Status ScanBlob(FileSystem*, const std::string&, uint64_t required,
-                uint64_t* end, uint64_t* count, bool* sealed);
 Status Read(FileSystem* fs, const std::string& path, std::string* data);
 Status Write(FileSystem* fs, const std::string& path, const Slice& data);
 Status EnsureDir(FileSystem* fs, const std::string& path);
@@ -31,21 +26,9 @@ Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
 Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
                     uint64_t end, uint32_t* crc);
 Status RemoveDir(FileSystem* fs, const std::string& path);
-Status ReadLog(FileSystem* fs, const std::string& path, uint64_t number,
-               const std::function<Status(const Slice&)>& visit, uint64_t* end);
+// Immutable SST inventory obtained from the engine checkpoint API.
 struct NativeState {
-  std::string manifest;
-  uint64_t manifest_end = 0;
-  uint64_t log_number = 0;
-  uint64_t next_file = 0;
   std::map<uint64_t, uint64_t> tables;
-  std::map<uint64_t, BlobFileAddition> blobs;
-  // Historical registration is distinct from current Version dependencies.
-  std::set<uint64_t> registered_blobs;
-  std::vector<std::string> edits;
 };
-Status Inspect(FileSystem* fs, const std::string& dir, NativeState* state);
-Status RewriteManifest(FileSystem* fs, const std::string& dir,
-                       const NativeState& state, const VersionEdit& extra);
 }  // namespace metabypass
 }  // namespace ROCKSDB_NAMESPACE

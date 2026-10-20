@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # WAL/SST admission and scheduling experiments
 
 The tested changes are isolated research variants of the notification-optimized

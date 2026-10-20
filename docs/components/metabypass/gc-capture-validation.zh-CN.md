@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # 索引恢复点清理与候选筛选：实现及验证
 
 本轮实现两项索引优化：恢复点发布后异步清理旧点，以及依据候选目录中已复制的 MANIFEST 提前筛选文件。备份格式、两代已发布恢复点和 `SyncBackup` 接口未改变。

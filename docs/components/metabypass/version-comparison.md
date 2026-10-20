@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Performance across Metabypass versions
 
 All four versions use separated Blob Direct Write with 1 KiB values, decimal

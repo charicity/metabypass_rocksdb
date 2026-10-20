@@ -1,1 +1,1 @@
-* Metabypass now reclaims native obsolete whole blob files after all recovery points release them, including staging extents; `enable_blob_file_gc=false` preserves remaining files. Live value relocation remains unsupported.
+* Metabypass uses ordinary Integrated BlobDB and native no-flush checkpoints, supports bounded blob staging with active-file HDD spill, and retains whole-file blob GC; older experimental database and backup formats are rejected without migration.

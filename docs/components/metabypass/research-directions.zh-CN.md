@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Metabypass：相关论文、设计补强与创新定位
 
 分析日期：2026-09-26。代码基线：`758fbd140`。本文是论文与源码的静态分析，没有重新运行测试或性能实验；建议中的机制不表示已经实现。

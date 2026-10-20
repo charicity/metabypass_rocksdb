@@ -10,6 +10,7 @@
 #include <set>
 #include <thread>
 
+#include "rocksdb/metadata.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "utilities/metabypass/native_files.h"
 #include "utilities/metabypass/separated_storage.h"
@@ -24,12 +25,16 @@ class Backup : public FileSystemWrapper {
   const char* Name() const override { return "MetaBypassBackup"; }
   Status Lock();
   Status Start(bool existing);
-  Status Activate(const std::string& identity);
+  Status Activate(const std::string& identity, DB* db);
+  void WriteCompleted();
+  void DetachDB();
   Status Sync();
   Status Stop();
   MetaBypassStats Stats() const;
   Status Error() const;
   void StorageFailed(const Status& s) { Fail(s); }
+  // Read-only protocol validation before Restore creates any directories.
+  static Status CheckRestoreFormat(FileSystem*, const std::string& backup);
   static Status RestoreFiles(FileSystem*, const std::string& backup,
                              const std::string& destination,
                              const SeparatedStorage& storage);
@@ -86,6 +91,9 @@ class Backup : public FileSystemWrapper {
   Status Apply(const Event& event);
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
+    uint64_t writes = 0, request = 0;
+    std::vector<LiveFileStorageInfo> files;
+    std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
     NativeState state;
     std::set<std::string> closed;
@@ -112,20 +120,13 @@ class Backup : public FileSystemWrapper {
       return reference.substr(0, reference.find(' '));
     }
   };
-  struct TableValidation {
-    uint64_t epoch = 0, size = 0;
-    std::map<uint64_t, uint64_t> blobs;
-  };
   struct FileDigest {
     uint64_t epoch = 0, length = 0;
     uint32_t crc = 0;
   };
-  // Accessed only by the validator; never persisted or shared with recovery.
-  std::map<std::string, TableValidation> table_cache_;
+  // Byte digests are private to the coordinator, except GC under its gate.
   std::map<std::string, FileDigest> digest_cache_;
-  std::map<std::string, uint64_t> validation_epochs_;
-  WalValidationCache wal_cache_;
-  BlobValidationCache blob_cache_;
+  std::map<uint64_t, FileDigest> blob_cache_;
   std::shared_ptr<SeparatedStorage> storage_;
   FileSystem* disk_;
   const std::string index_;
@@ -142,6 +143,12 @@ class Backup : public FileSystemWrapper {
   MetaBypassStats stats_;
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
   uint64_t generation_ = 0;
+  DB* db_ = nullptr;
+  std::string identity_;
+  uint64_t completed_writes_ = 0, published_writes_ = 0;
+  uint64_t requested_point_ = 0, published_request_ = 0;
+  bool capture_done_ = false;
+  Status capture_status_;
   uint64_t oldest_unpublished_micros_ = 0;
   bool stopping_ = false;
   bool active_ = false;

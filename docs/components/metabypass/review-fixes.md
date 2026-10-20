@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Identity retry and option validation fixes
 
 The review of `7247edbf..dd0991c84` identified three lifecycle/configuration

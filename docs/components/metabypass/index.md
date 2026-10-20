@@ -1,25 +1,15 @@
-# Metabypass research prototype
+# Metabypass native checkpoints
 
-Metabypass separates values from a RocksDB native index and asynchronously
-backs up the native index files. It is a single-column-family research utility,
-not a production backup service or a compatible reader for Ceph backup folders.
-The public C++ entry point is `rocksdb/utilities/metabypass.h`.
-
-## Ownership and API
-
-`SeparatedStorage` routes `.blob` files to `data_dir`, reclaims qualified obsolete blobs,
-validates referenced records and owns exclusive recovery/sealing. Named-file
-sync and directory sync establish blob dependencies without taking a DB mutex.
-`Backup` intercepts successful index file mutations and mirrors them through
-in-memory WAL and metadata queues with one shared capacity budget. It publishes
-independent recovery points and never writes blob payloads. `MetaBypassDB` owns the two wrappers, their composite Env and the DB;
-it exposes only the supported operations. No DB public virtual API or existing
-DB write/recovery implementation is changed.
+Metabypass is an experimental single-column-family RocksDB wrapper. It uses
+ordinary Integrated BlobDB (`enable_blob_files=true`, `min_blob_size=0`) and
+rejects `enable_blob_direct_write=true`. Values enter the native WAL and
+memtable in full; native flush creates blob files and SST blob references.
+Default concurrent memtable writes are supported. Value relocation is disabled;
+whole-file blob reclamation is supported.
 
 ```cpp
 rocksdb::Options options;
 options.create_if_missing = true;
-options.allow_concurrent_memtable_write = false;
 rocksdb::MetaBypassOptions backup;
 backup.data_dir = "/experiment/data";
 backup.backup_dir = "/experiment/backup";
@@ -27,286 +17,117 @@ std::unique_ptr<rocksdb::MetaBypassDB> db;
 auto s = rocksdb::MetaBypassDB::Open(options, backup, "/experiment/index", &db);
 if (s.ok()) s = db->Put(rocksdb::WriteOptions(), "key", "value");
 if (s.ok()) s = db->SyncBackup();
-// Check every returned Status. Destroy iterators before Close.
 if (db) {
   auto close = db->Close();
   if (s.ok()) s = close;
 }
-db.reset();  // releases data and backup directory locks
+db.reset();
 ```
 
-The utility enables Blob Direct Write, sets `min_blob_size=0` and disables value
-relocation. Whole-file Blob GC is enabled by default; see [Blob GC](blob-gc.md). Put, Get, Delete, WriteBatch, iterators, Flush and CompactRange are supported.
-WAL cannot be disabled. Transactions, Merge, wide columns, range deletion,
-SingleDelete, timestamps, multiple CFs, ingestion, dynamic options and C/Java
-bindings are not exposed. Ordered writes are required: concurrent memtable
-writes, pipelined writes, unordered writes and two write queues are rejected.
-Separate WAL/CF paths, WAL recycling/archival, WAL filters and WAL tracking,
-manual WAL flush, direct/mmap
-writes, custom comparators, compaction filters, persistent statistics and an
-external SST file manager and remote compaction services are not supported.
-`write_identity_file` must remain enabled. Open and Restore reject these
-unsupported configurations before modifying directories. The DB's own Blob Direct Write
-validation also applies.
+Check every Status. The supplied Env must outlive the wrapper. Destroy iterators
+before Close. Write, Get, SyncBackup, Flush, and CompactRange may run
+concurrently; Open, Restore, and Close require exclusive application ownership.
+All mutations must pass through the wrapper. Transactions, Merge, multiple
+column families, dynamic configuration, and mutable access to the underlying DB
+are outside this API.
 
-Use absolute normalized, disjoint directories without filesystem aliases.
-A new instance requires empty data/backup directories. A normal existing DB
-cannot be attached. Existing Metabypass instances require matching native
-IDENTITY markers in all three directories. Keep the configured Env alive until
-the wrapper is destroyed. Only the wrapper may mutate these directories.
+Use absolute normalized disjoint index, data, backup, and optional staging
+directories with exclusive ownership. The current database/backup format marker
+is `MBN2`, inventory version is `MBI2`, and tier mapping version is `MBT2`.
+Open and Restore reject older or unmarked nonempty directories before modifying
+them. There is no automatic migration or old-format recovery path.
 
-## Mirror and recovery points
+## Capturing a recovery point
 
-The backup contains `work/`, `point-N/` directories, and an atomically replaced
-`LATEST` pointer. `work/` is never an authorized restore input. No durable file
-operation journal exists. `INVENTORY` contains lengths and CRC32C checksums of
-native files and blob prefixes (including the footer for MANIFEST-registered
-blobs); it is dependency metadata, not an operation log.
-The pointer includes the inventory checksum. IDENTITY binds the directories.
+The backup mirror drains bounded WAL and metadata event queues independently of
+the checkpoint coordinator. Queue memory includes in-flight events; a single
+file operation larger than `queue_capacity` fails before primary file I/O.
+The mirror preserves accepted event order across both channels.
 
-The mirror worker processes a finite prefix of events and flushes its handles.
-It copies CURRENT and its selected MANIFEST into a candidate directory, parses
-that candidate MANIFEST once, then captures only live SSTs, required WALs, and
-closed IDENTITY/OPTIONS files. Closed SSTs are hardlinked, with a copy fallback;
-mutable files are copied at the captured lengths. It then continues consuming
-events while a second worker validates the candidate using the captured native
-state. There is at most one candidate in capture/validation. While validation
-is busy, later events accumulate in the working mirror.
+The coordinator calls native `DisableFileDeletions` and
+`GetLiveFilesStorageInfo` with the no-flush threshold. RocksDB supplies the
+consistent live file set, captured lengths, and replacement CURRENT contents.
+The coordinator waits for the corresponding mirror fence, copies mutable
+prefixes and hardlinks or copies immutable files into a candidate, then releases
+the native deletion pin. Publication does not flush the memtable. Ordinary
+WAL-only points are valid, including when no blob or SST exists yet.
 
-The validator finds complete WAL record boundaries and checks referenced SST
-sizes and content dependencies. It truncates its private WAL/MANIFEST copies
-to these boundaries, generates CURRENT and synchronizes blob dependencies
-before publication. Incomplete CURRENT, MANIFEST atomic groups, and unfinished
-SSTs defer publication until a later event boundary; they do not replace the
-preceding point.
+The candidate persists its required blob bytes, native file inventory and
+checksums before replacing LATEST durably. Backup does not parse business WAL
+records, scan SST blob references, seal blob files, or repair MANIFEST records.
+The native RocksDB recovery path interprets the copied index.
 
-After LATEST is durable, the published sequence and waiting sync calls advance
-immediately. A separate worker removes the retired point. The one retired-point
-slot includes a directory while deletion is in progress; if it is occupied,
-the next validated candidate waits before replacing LATEST. The mirror still
-drains events. Normal close waits for the final publication and retired-point
-cleanup. Healthy operation can temporarily hold two published points, one
-retired point and one candidate. A cleanup error enters the same sticky backup
-error path as other background failures. Startup removes directories not named
-by LATEST, including interrupted cleanup leftovers.
+At most one candidate is being prepared. Candidate, latest, previous, and
+retired-point roots protect their blob dependencies until released. A separate
+GC worker deletes retired point directories; physical blob deletion also waits
+for native obsolescence and all recovery roots. A blocked coordinator permits
+the mirror to drain. A backup failure is sticky, wakes waiters and rejects
+subsequent mutations while reads remain available.
 
-Validation is incremental within one process. Unchanged immutable SSTs reuse
-validated references and checksums. WALs still undergo native record parsing,
-but previously checked records do not repeat blob reference validation. Blob
-persistence validation and inventory CRC computation advance over new complete records and the final
-footer, without rereading previously validated prefixes in that pass. Newly created
-SSTs still validate their references, even when those values previously
-appeared in a WAL. Index inventory CRCs
-also extend over appended bytes. Creation, truncation and rename change a
-file's cache identity; vanished index files are pruned from the caches. A
-shorter required prefix is recomputed rather than using a longer prefix's CRC.
+`SyncBackup` and `WriteOptions::sync=true` wait for a durable HDD recovery point
+covering completed writes. A remote failure can be reported after the primary
+mutation succeeded. Close completes its final backup barrier while the DB is
+still alive, then closes the DB and joins the workers. Writes newer than the
+latest published point may be lost after a crash; there is no fixed RPO.
 
-Caches are volatile and assume exclusive ownership of append-only blobs and
-immutable SSTs. They are not a continuous media scrub: latent corruption of
-previously validated bytes may be detected at restore rather than at the next
-publication. Cached checksums retain the original expected content; they do not
-bless changed old bytes. Restart discards all caches, and offline restore checks
-all published native files and required blob prefixes from disk. The backup
-format and restore compatibility are unchanged.
+## Restoring
 
-Candidate files, the candidate directory, and then the replacement pointer and
-its parent directory are synced in that order. The latest and preceding point
-remain retained. Old points are deleted only after publication. Orphan
-candidates are reclaimed on the next open. The normal RocksDB checkpoint flow
-is not invoked and publication does not request a memtable flush.
+After releasing the original wrapper, call Restore with an empty destination
+index and then Open it. Restore verifies the selected inventory and copies its
+native files. Native Open replays full-value WAL records and rebuilds memtables
+or SSTs according to ordinary RocksDB options. No blob sealing or destination
+MANIFEST repair occurs. Restore preserves its published source, supports a
+marked interrupted destination, and reports corruption without silently choosing
+an older point.
 
-All event payloads, including events in flight, are charged before the primary
-operation. The defaults are 64 MiB of charged pending events, a 256 KiB trigger
-or a 1000 ms timer. Charges include event structures, names and payload bytes;
-allocator bookkeeping, RocksDB buffers and validation scratch memory are
-additional. An individual file operation larger than the configured queue is
-rejected before execution. Two channels encapsulate their own operation mutex,
-event queue and capacity wait: WAL, and metadata (SST, MANIFEST, CURRENT,
-OPTIONS, IDENTITY and temporary files). Each operation mutex serializes primary
-operations through enqueue within its channel; neither worker acquires it or DB
-locks. Cross-channel rename acquires both operation mutexes and enqueues one
-metadata control event. One short coordination mutex protects both queues,
-global sequence numbers and the shared capacity budget; it never spans backup
-I/O. The single mirror worker merges queue heads by accepted sequence, with no
-WAL priority or reserved capacity. Each capture follows a complete applied
-sequence prefix. A slow primary SST operation therefore does not hold the WAL
-operation mutex, but shared capacity and mirror I/O can still block WAL.
-On failure, queued events release their charges while outstanding primary
-operations retain theirs until completion. Pointer publication and sticky
-failure recording share a separate mutex. A blocked validator permits the
-mirror to drain; blocked mirror/candidate-copy I/O can still fill the queue. A backup error is sticky, wakes
-waiters, stops publication and rejects subsequent writes while reads remain
-available. Explicit SyncBackup and Close report it.
+With staging enabled, both index and staging can be lost together. Published
+blob mappings and payload extents on HDD supply values without full SSD
+rehydration. The data and backup directories must survive that loss.
 
-The backup uses separate wait channels for mirror work, candidate validation,
-per-channel queue capacity, and published progress. An enqueue notifies an idle mirror only
-when its work predicate is satisfied.
-A blocked capacity reservation requests immediate draining, even below the
-batch threshold. Below-threshold traffic otherwise uses the interval timer.
-Publication and errors wake every SyncBackup waiter; error and shutdown paths
-also release the relevant worker and capacity waits. Per-event consumption
-only notifies a producer actually waiting for enough capacity.
+## Storage and metrics
 
-SyncBackup waits for a point covering writes completed before its call. It
-should be called after the writes whose backup is required. Normal Close first
-closes/destroys the primary DB, then drains the mirror and publishes the final
-point, then joins the mirror, validator and GC workers. SyncBackup waits for validation and publication,
-not just mirror application. Concurrent Close is not supported. There is no fixed RPO: writes after
-the last published point may be lost.
+[Blob staging](tiered-storage.md) describes its hard quota and active-file spill.
+[Whole-file GC](blob-gc.md) describes root protection.
+[Whole-SST tiering](sst-tiering.md) describes disabled, observe-only and adaptive
+modes. [Migration lifecycle](migration-lifecycle.md) records read pin boundaries.
 
-## Offline recovery
+`checkpoint_wait_micros` records native checkpoint coordination wait time.
+`mirrored_bytes` counts all mirrored append payloads, including metadata and SSTs;
+`mirrored_wal_bytes` isolates full-value WAL append payloads. `staging_spill_files` and
+`staging_spill_bytes` describe files switched to HDD and their spilled bytes;
+`tier_queued_bytes` / `peak_tier_queued_bytes` describe pending HDD worker payload;
+`hdd_extents` counts HDD extents. Staging peak includes reserved local append
+bytes and must remain within `staging_capacity`. Queue, sync, migration, point
+lag, candidate copy and GC metrics remain separately observable.
+`retained_index_bytes` counts logical paths, including hardlink sharing, rather
+than allocated disk blocks. Physical capacity should be measured externally.
 
-After destroying the original wrapper and removing or losing the main index:
-
-```cpp
-auto s = rocksdb::MetaBypassDB::Restore(options, backup, "/experiment/new-index");
-if (s.ok()) {
-  s = rocksdb::MetaBypassDB::Open(options, backup, "/experiment/new-index", &db);
-}
-```
-
-Restore takes exclusive data and backup locks, verifies the published inventory
-and all referenced prefixes, copies native files to the empty destination, and
-prepares the blob state before RocksDB replays any WAL or generates recovery
-SSTs. It validates every required blob before the first mutation. Valid extra
-records beyond the checkpoint are preserved. Unreferenced incomplete tails
-can be discarded; required corruption is an error. Sealing copies a valid
-prefix to a synced temporary file, adds a native footer, then replaces the blob
-atomically. The original backup index files remain unchanged.
-
-Recovery rewrites only the destination's native MANIFEST to register previously
-unflushed blob files and advance the next file number beyond every retained
-blob, including orphan files. Interrupted preparation is retryable: an identity
-marker distinguishes an in-progress restore from an arbitrary nonempty target.
-Reopen and restore retries preserve their already validated identity/progress
-markers instead of truncating and rewriting them.
-Call Restore again on that target before Open. It verifies/copies from the
-published point again; already sealed blobs are recognized. Restore never falls
-back silently from corruption in the selected published point.
-
-Blob retention causes unbounded data-directory growth. Candidate capture still copies mutable files and validation still parses native
-WAL/MANIFEST metadata; those costs remain despite content-cache reuse. Scratch buffers for blob validation/copy are
-bounded, while native WAL record decoding and MANIFEST state require memory
-proportional to their content. `retained_index_bytes` reports logical file sizes
-for the working mirror at capture plus the two retained points, counting
-hardlinks at each path, not physical allocated storage. Later concurrent mirror
-progress is not included. `validated_blob_bytes` counts cumulative bytes read
-by incremental blob persistence validation (reference checks are additional);
-`reused_tables` counts successful SST validation-cache reuse. `pending_gc_points`
-and `pending_gc_bytes` describe the retired directory until deletion succeeds;
-the latter is its original logical size, not remaining physical usage.
-`gc_micros` accumulates cleanup time, and `candidate_copied_bytes` accumulates
-successful candidate file copies without charging hardlinks.
-
-## Validation and benchmarks
-
-For routine development comparisons, use the
-[30-60 minute quick test plan](experiments/quick/README.zh-CN.md). Its standalone
-release driver compares the current wrapper, backup disabled, and pinned
-upstream v11.8.1 with common timing and latency injection. Historical results
-remain separate; the smoke profile only checks experiment feasibility.
-
-See [pipeline validation](pipeline-validation.md) for the two-thread and
-incremental-validation tests and performance comparison.
-
-See [index GC and capture validation](gc-capture-validation.zh-CN.md) for the
-asynchronous cleanup, early file filtering and current A/B results.
-
-See the [validation record](validation.md) for measured results and known
-repository test failures.
-The [content-scan ablation experiment](experiments/README.md) measures recovery
-point costs with content validation removed in a separate experimental binary.
-
-`metabypass_test` exercises close/reopen, complete index loss, unflushed WAL blob
-references, overwrites/deletes/WriteBatch, compaction and rotations, bounded queue
-ordering/backpressure, foreground progress with blocked backup, sticky failure,
-corruption rejection, publication-stage SIGKILL and retry after interrupted
-sealing. Each test process is capped at 60 seconds. The child-process tests
-execute a fresh binary, avoiding fork of a live RocksDB worker pool. Expected
-values exist only in the test process and are never recovery input.
-
-`db_bench` has a narrow standalone mode so unsupported DB methods cannot bypass
-the C++ wrapper. The following modes use `--db`, `--num`, `--value_size`, `--sync`,
-and the `--metabypass_*` flags. Other workload flags do not configure this mode.
-All parent directories must already exist.
+The standalone db_bench `baseline`, `write`, `verify`, `restore`, and
+`sst_tiering` modes use the same ordinary BlobDB model. Write mode times
+foreground WAL writes, explicit Flush, SyncBackup and Close separately, so the
+flush phase actually exercises blob staging/spill. Its SST experiment output
+remains JSON. Example build:
 
 ```sh
-AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j8 db_bench
-./db_bench --metabypass_mode=baseline --db=/experiment/base-index \
-  --metabypass_data_dir=/experiment/base-data --num=100000 --value_size=1024
+AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j48 db_bench
 ./db_bench --metabypass_mode=write --db=/experiment/index \
-  --metabypass_data_dir=/experiment/data --metabypass_backup_dir=/experiment/backup \
-  --num=100000 --value_size=1024
-./db_bench --metabypass_mode=restore --db=/experiment/restored \
-  --metabypass_data_dir=/experiment/data --metabypass_backup_dir=/experiment/backup
-./db_bench --metabypass_mode=verify --db=/experiment/restored \
-  --metabypass_data_dir=/experiment/data --metabypass_backup_dir=/experiment/backup \
-  --num=100000 --value_size=1024
+  --metabypass_data_dir=/experiment/data \
+  --metabypass_backup_dir=/experiment/backup --num=100000 --value_size=1024
 ```
 
-Baseline uses the same separated Blob Direct Write configuration without backup.
-Compare `num / foreground_us` for throughput overhead. Report `sync_us`,
-`close_us`, `last_point_build_us`, `last_point_lag_us`, `backpressure_us`, `queue_peak_bytes`, `mirrored_bytes`,
-logical `retained_index_bytes`, and `restore_us` separately. Measure physical
-space externally (e.g. `du`) so hardlink sharing and filesystem allocation are
-not confused. Restore time includes opening RocksDB and native WAL recovery.
-Repeat with fresh directories and report host/storage/workload parameters.
-Directory-local SIGKILL experiments do not simulate power loss, controller
-caches, torn sectors or the original Ceph data lifecycle; no real power-failure
-guarantee follows from these results.
+`metabypass_test` covers WAL-only recovery, no forced flush, concurrent writes,
+checkpoint boundaries and root lifetimes, oversized spill, quota competition,
+read pins, sticky failures, corruption and SIGKILL boundaries.
+`sst_tiering_test` covers SST routing and policy lifetimes.
 
-See [foreground-time profiling](foreground-profile.md) for the measured cause
-of the pipeline's foreground regression and notification-only controls.
+See the [native checkpoint validation record](native-checkpoint-validation.zh-CN.md)
+for current verification status, retained failures and pending acceptance work.
 
+The experiment reports and data below this directory describe earlier measured
+revisions. Reports mentioning DirectWrite, record scanners, blob sealing or
+incremental validation caches are historical evidence, not current behavior or
+format compatibility claims. Their numeric results must not be attributed to
+the native checkpoint implementation without rerunning the experiments.
 
-See [notification fix validation](notification-validation.md) for the wait
-protocol, concurrency coverage, and before/after measurements.
-
-See [the four-version performance comparison](version-comparison.md) for
-no-backup, original, incremental, and notification-fixed results.
-
-See the [Chinese implementation, execution-flow and test report](optimization-summary.zh-CN.md) for a
-compact list of implemented improvements, their rationale, and measured effects.
-
-See [WAL/SST scheduling experiments](scheduling-ab.md) for isolated A/B tests of
-operation-lock separation, WAL capacity headroom, and bounded-window priority.
-
-See [dual-channel validation](channel-validation.md) for concurrency coverage and
-the comparison with the notification and experimental split-lock versions.
-
-For the fresh four-version comparison including backup disabled, see
-[channels versus no backup](channel-baseline-comparison.md).
-
-See [identity retry and option validation fixes](review-fixes.md) for the
-review findings, regression coverage and verification results.
-
-See [recovery and tiering review fixes](recovery-tiering-review-fixes-2026-09-30.md)
-for the WAL, blob migration/read and SST restore changes and their test record.
-
-## Strong tiered blob storage
-
-See [strong tiered storage](tiered-storage.md) for the optional fast staging
-layer, remote synchronous-write contract, capacity policy and recovery protocol.
-
-See the shared [migration lifecycle contract and regression matrix](migration-lifecycle.md)
-for the SST and blob stage boundaries and their distinct read lifetimes.
-
-## Whole-SST tiering
-
-See [whole-SST SSD/HDD tiering](sst-tiering.md) for the optional cold index
-store, policy defaults, recovery boundary and benchmark protocol.
-
-## Direct slow-storage research configuration
-
-See [direct writes and synchronous protection](direct-storage.md) for the primary
-SSD-index/HDD-payload layout and the strengthened direct-mode sync contract.
-See the [comprehensive test plan](direct-storage-test-plan.zh-CN.md) for execution
-in a separate task; no new measurements have been collected for this change.
-
-See the [revised test plan and failure analysis](direct-storage-test-plan-v2.zh-CN.md)
-for follow-up after the first execution: TSAN diagnosis, resource-aware admission,
-fixed-work comparisons, and separately qualified sustained-write experiments.
-
-Whole-file reclamation, including its recovery roots, concurrency protocol and
-metrics, is documented in [Blob GC](blob-gc.md). Historical experiment reports
-describe the retention behavior of the revisions measured in those reports.
+See [历史实验分类与证据索引](experiments/history.zh-CN.md) for the classified
+reports, source data, protocol boundaries, retained failures, and evidence availability.

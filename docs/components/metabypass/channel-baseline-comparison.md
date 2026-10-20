@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Channel versions versus backup disabled
 
 This is a fresh four-version comparison, not an extrapolation from the earlier

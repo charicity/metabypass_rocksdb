@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Metabypass 优化实现、执行链路与测试报告
 
 更新日期：2026-09-20。本文汇总目前已实现的架构、可靠性与性能改进，并说明优化所在的执行链路和对应测试证据。性能对比中的“原始版”指迁移后的串行 Metabypass；“无备份基线”同样使用分离式 Blob Direct Write，只关闭备份。未对原 Ceph 实现做同条件性能测量。

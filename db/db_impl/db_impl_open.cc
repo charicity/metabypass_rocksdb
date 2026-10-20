@@ -2275,22 +2275,6 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
       edit->AddBlobFile(blob);
     }
 
-    // A recovered direct-write index can refer to a sealed blob whose metadata
-    // was filtered from the recovered Version before WAL replay. Register it
-    // in the same cumulative edit as the SST, before VersionBuilder links it.
-    // Intermediate recovery flushes share this edit without updating current.
-    for (const auto& blob : sealed_recovery_blobs_) {
-      const uint64_t number = blob.GetBlobFileNumber();
-      if (cfd->current()->storage_info()->GetBlobFileMetaData(number)) continue;
-      const auto& additions = edit->GetBlobFileAdditions();
-      const bool added =
-          std::any_of(additions.begin(), additions.end(),
-                      [&](const BlobFileAddition& entry) {
-                        return entry.GetBlobFileNumber() == number;
-                      });
-      if (!added) edit->AddBlobFile(blob);
-    }
-
     // For UDT in memtable only feature, move up the cutoff timestamp whenever
     // a flush happens.
     if (logical_strip_timestamp) {
@@ -2649,13 +2633,12 @@ void DBImpl::TrackExistingDataFiles(
   TrackOrUntrackFiles(existing_data_files, /*track=*/true);
 }
 
-Status DBImpl::Open(
-    const DBOptions& db_options, const std::string& dbname,
-    const std::vector<ColumnFamilyDescriptor>& column_families,
-    std::vector<ColumnFamilyHandle*>* handles, std::unique_ptr<DB>* dbptr,
-    const bool seq_per_batch, const bool batch_per_txn, const bool is_retry,
-    bool* can_retry,
-    const std::vector<BlobFileAddition>& sealed_recovery_blobs) {
+Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
+                    const std::vector<ColumnFamilyDescriptor>& column_families,
+                    std::vector<ColumnFamilyHandle*>* handles,
+                    std::unique_ptr<DB>* dbptr, const bool seq_per_batch,
+                    const bool batch_per_txn, const bool is_retry,
+                    bool* can_retry) {
   const WriteOptions write_options(Env::IOActivity::kDBOpen);
   const ReadOptions read_options(Env::IOActivity::kDBOpen);
 
@@ -2667,17 +2650,6 @@ Status DBImpl::Open(
   s = ValidateOptions(db_options, column_families);
   if (!s.ok()) {
     return s;
-  }
-
-  if (!sealed_recovery_blobs.empty() &&
-      (column_families.size() != 1 ||
-       column_families.front().name != kDefaultColumnFamilyName ||
-       !column_families.front().options.enable_blob_direct_write ||
-       db_options.avoid_flush_during_recovery ||
-       db_options.reuse_manifest_on_open)) {
-    return Status::InvalidArgument(
-        "sealed blob recovery requires one direct-write "
-        "column family, recovery flush, and new MANIFEST");
   }
 
   *dbptr = nullptr;
@@ -2694,7 +2666,6 @@ Status DBImpl::Open(
 
   auto impl = std::make_unique<DBImpl>(db_options, dbname, seq_per_batch,
                                        batch_per_txn);
-  impl->sealed_recovery_blobs_ = sealed_recovery_blobs;
   if (!impl->immutable_db_options_.info_log) {
     s = impl->init_logger_creation_s_;
     return s;
@@ -2744,7 +2715,6 @@ Status DBImpl::Open(
                     false /* error_if_data_exists_in_wals */, is_retry,
                     &recovered_seq, &recovery_ctx, can_retry);
   // Recovery edits own their additions now; retries create a fresh DBImpl.
-  std::vector<BlobFileAddition>().swap(impl->sealed_recovery_blobs_);
   if (s.ok()) {
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     log::Writer* new_log = nullptr;

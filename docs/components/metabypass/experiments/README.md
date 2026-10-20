@@ -1,5 +1,9 @@
 # Recovery-point content-scan ablation
 
+For the classified archive of all experiment series, architecture applicability,
+and evidence availability, see [历史实验分类与证据索引](history.zh-CN.md).
+The content-scan ablation below is retained as a historical DirectWrite report.
+
 This experiment measures the cost of content rescanning in `Backup::Publish`.
 The patch is an ablation for timing, not a supported configuration or a safe
 incremental-validation implementation. The production sources are unchanged.

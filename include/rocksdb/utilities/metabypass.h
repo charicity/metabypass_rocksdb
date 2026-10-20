@@ -61,7 +61,7 @@ struct MetaBypassOptions {
   // With staging enabled, data_dir and backup_dir must survive staging loss.
   std::string staging_dir;
   // Required when staging_dir is set. Logical bytes, excluding filesystem
-  // allocation overhead. Oversized batches are rejected before DB writes.
+  // allocation overhead. Full staging switches the current Blob to HDD.
   uint64_t staging_capacity = 0;
   // Reclaim native obsolete whole blobs after all recovery roots release them.
   // Set before Open. Disabling retains remaining files, not deleted history.
@@ -80,11 +80,13 @@ struct MetaBypassStats {
   uint64_t peak_queued_bytes = 0;
   uint64_t backpressure_micros = 0;
   uint64_t mirrored_bytes = 0;
+  // WAL payload bytes applied to the mirror; included in mirrored_bytes.
+  uint64_t mirrored_wal_bytes = 0;
   uint64_t recovery_points = 0;
-  // Cumulative bytes scanned by incremental blob persistence validation.
-  // Reference checks and native index parsing are additional work.
-  uint64_t validated_blob_bytes = 0;
-  uint64_t reused_tables = 0;
+  uint64_t checkpoint_wait_micros = 0;
+  uint64_t staging_spill_files = 0, staging_spill_bytes = 0;
+  uint64_t tier_queued_bytes = 0, peak_tier_queued_bytes = 0;
+  uint64_t hdd_extents = 0;
   // Steady-clock timestamp (not wall clock) and candidate construction time.
   uint64_t last_publish_micros = 0;
   uint64_t last_build_micros = 0;
@@ -114,17 +116,17 @@ struct MetaBypassStats {
 // Open, Restore and Close require exclusive application ownership.
 class MetaBypassDB {
  public:
-  // Forces blob direct writes and min_blob_size=0. The caller must disable
-  // allow_concurrent_memtable_write. Rejects ordinary existing databases.
+  // Uses Integrated BlobDB with min_blob_size=0. WAL and memtable retain
+  // complete values until flush. Rejects Direct Write and old database formats.
   // Options::env must outlive this object.
   static Status Open(const Options& options, const MetaBypassOptions& bypass,
                      const std::string& index_dir,
                      std::unique_ptr<MetaBypassDB>* result);
   // Copies only the published native index files to an empty directory and
-  // prepares blob metadata. Tiered mode also requires empty staging (or a
+  // verifies file checksums. Tiered mode also requires empty staging (or a
   // resumable restore), and reads values remotely without full rehydration.
   // Does not modify the published backup. data_dir must be
-  // exclusively owned; blob files may be sealed during preparation. A failed
+  // exclusively owned. Blob contents are never rewritten. A failed
   // restore can be retried on its marked destination. Call Open afterwards
   // to execute native RocksDB recovery.
   static Status Restore(const Options& options, const MetaBypassOptions& bypass,
@@ -145,7 +147,8 @@ class MetaBypassDB {
   // is forced; concurrent writes may or may not be included.
   Status SyncBackup();
   MetaBypassStats GetBackupStats() const;
-  // Exclusive with all other operations. Closes DB, then drains the backup.
+  // Exclusive with all other operations. Publishes before closing the DB,
+  // then drains mirrored close operations.
   // Destroy this object afterwards to release the directory locks.
   Status Close();
 

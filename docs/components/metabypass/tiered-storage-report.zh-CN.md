@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Metabypass 强模式实现与验证报告
 
 本次实现快盘 blob 暂存、不可变慢盘数据段、容量背压与淘汰，以及不依赖快盘的完整恢复点。

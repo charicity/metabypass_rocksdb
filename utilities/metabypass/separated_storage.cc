@@ -8,17 +8,39 @@
 #include <array>
 #include <limits>
 
-#include "db/blob/blob_index.h"
-#include "db/blob/blob_log_format.h"
-#include "db/write_batch_internal.h"
 #include "file/filename.h"
 #include "rocksdb/env.h"
-#include "rocksdb/sst_file_reader.h"
 #include "test_util/sync_point.h"
-#include "util/crc32c.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+namespace {
+// Blob files are installed through the index directory's native barrier.
+// Include the routed payload directory in that same durability contract.
+class PayloadDirectory : public FSDirectoryWrapper {
+ public:
+  PayloadDirectory(std::unique_ptr<FSDirectory> index,
+                   std::unique_ptr<FSDirectory> data)
+      : FSDirectoryWrapper(std::move(index)), data_(std::move(data)) {}
+  IOStatus Fsync(const IOOptions& options, IODebugContext* dbg) override {
+    IOStatus s = data_->Fsync(options, dbg);
+    if (s.ok()) s = FSDirectoryWrapper::Fsync(options, dbg);
+    return s;
+  }
+  IOStatus FsyncWithDirOptions(const IOOptions& options, IODebugContext* dbg,
+                               const DirFsyncOptions&) override {
+    return Fsync(options, dbg);
+  }
+  IOStatus Close(const IOOptions& options, IODebugContext* dbg) override {
+    IOStatus s = data_->Close(options, dbg);
+    s.UpdateIfOk(FSDirectoryWrapper::Close(options, dbg));
+    return s;
+  }
+
+ private:
+  std::unique_ptr<FSDirectory> data_;
+};
+}  // namespace
 SeparatedStorage::SeparatedStorage(std::shared_ptr<FileSystem> fs,
                                    std::string index, std::string data,
                                    std::shared_ptr<TieredStorage> tier,
@@ -65,6 +87,17 @@ MB_OPEN(NewRandomAccessFile, FSRandomAccessFile)
 MB_OPEN(NewWritableFile, FSWritableFile)
 MB_OPEN(ReopenWritableFile, FSWritableFile)
 #undef MB_OPEN
+IOStatus SeparatedStorage::NewDirectory(const std::string& p,
+                                        const IOOptions& o,
+                                        std::unique_ptr<FSDirectory>* r,
+                                        IODebugContext* d) {
+  IOStatus s = target()->NewDirectory(p, o, r, d);
+  if (!s.ok() || p != index_) return s;
+  std::unique_ptr<FSDirectory> data;
+  s = target()->NewDirectory(data_, o, &data, d);
+  if (s.ok()) r->reset(new PayloadDirectory(std::move(*r), std::move(data)));
+  return s;
+}
 IOStatus SeparatedStorage::FileExists(const std::string& p, const IOOptions& o,
                                       IODebugContext* d) {
   return target()->FileExists(Map(p), o, d);
@@ -95,359 +128,20 @@ IOStatus SeparatedStorage::GetChildren(const std::string& p, const IOOptions& o,
     if (IsBlob(index_ + "/" + b)) r->push_back(b);
   return s;
 }
-namespace {
-class References : public WriteBatch::Handler {
- public:
-  References(FileSystem* fs, const SeparatedStorage* storage,
-             std::map<uint64_t, uint64_t>* lengths)
-      : fs_(fs), storage_(storage), lengths_(lengths) {}
-  Status PutCF(uint32_t, const Slice&, const Slice&) override {
-    return Status::Corruption("inline value in Metabypass WAL");
-  }
-  Status DeleteCF(uint32_t cf, const Slice&) override {
-    return cf == 0 ? Status::OK() : Status::Corruption("non-default CF");
-  }
-  Status PutBlobIndexCF(uint32_t cf, const Slice& key,
-                        const Slice& value) override {
-    if (cf != 0 || value.empty())
-      return Status::Corruption("invalid blob reference");
-    BlobIndex idx;
-    Status s = idx.DecodeFrom(value);
-    if (!s.ok()) return s;
-    if (idx.IsInlined() || idx.HasTTL() || idx.IsSameFile() ||
-        idx.offset() < BlobLogRecord::kHeaderSize + key.size() ||
-        idx.size() > std::numeric_limits<uint64_t>::max() - idx.offset())
-      return Status::Corruption("unsupported blob reference");
-    std::unique_ptr<FSRandomAccessFile> f;
-    s = fs_->NewRandomAccessFile(storage_->BlobPath(idx.file_number()),
-                                 FileOptions(), &f, nullptr);
-    if (!s.ok()) return s;
-    auto compression = header_compressions_.find(idx.file_number());
-    if (compression == header_compressions_.end()) {
-      char header_bytes[BlobLogHeader::kSize];
-      Slice header_slice;
-      s = f->Read(0, sizeof(header_bytes), IOOptions(), &header_slice,
-                  header_bytes, nullptr);
-      if (!s.ok()) return s;
-      BlobLogHeader header;
-      s = header.DecodeFrom(header_slice);
-      if (!s.ok()) return s;
-      if (header.column_family_id != cf || header.has_ttl)
-        return Status::Corruption("blob header does not match reference");
-      compression =
-          header_compressions_.emplace(idx.file_number(), header.compression)
-              .first;
-    }
-    if (compression->second != idx.compression())
-      return Status::Corruption("blob compression does not match reference");
-    const uint64_t start =
-        idx.offset() - key.size() - BlobLogRecord::kHeaderSize;
-    char header[BlobLogRecord::kHeaderSize];
-    Slice result;
-    s = f->Read(start, sizeof(header), IOOptions(), &result, header, nullptr);
-    if (!s.ok()) return s;
-    BlobLogRecord record;
-    s = record.DecodeHeaderFrom(result);
-    if (!s.ok()) return s;
-    if (record.key_size != key.size() || record.value_size != idx.size())
-      return Status::Corruption("blob reference length mismatch");
-    std::array<char, 65536> buffer;
-    uint64_t position = 0;
-    const uint64_t length = key.size() + idx.size();
-    uint32_t crc = 0;
-    while (position < length) {
-      const size_t n = std::min<uint64_t>(length - position, buffer.size());
-      s = f->Read(start + sizeof(header) + position, n, IOOptions(), &result,
-                  buffer.data(), nullptr);
-      if (!s.ok()) return s;
-      if (result.size() != n) return Status::Corruption("short blob");
-      if (position < key.size()) {
-        const size_t key_bytes = std::min<uint64_t>(key.size() - position, n);
-        if (Slice(result.data(), key_bytes) !=
-            Slice(key.data() + position, key_bytes))
-          return Status::Corruption("blob key mismatch");
-      }
-      crc = crc32c::Extend(crc, result.data(), result.size());
-      position += n;
-    }
-    if (crc32c::Mask(crc) != record.blob_crc)
-      return Status::Corruption("blob CRC mismatch");
-    (*lengths_)[idx.file_number()] =
-        std::max((*lengths_)[idx.file_number()], idx.offset() + idx.size());
-    return s;
-  }
-
- private:
-  FileSystem* fs_;
-  const SeparatedStorage* storage_;
-  std::map<uint64_t, uint64_t>* lengths_;
-  std::map<uint64_t, CompressionType> header_compressions_;
-};
-// Scan before mutating anything. A bad/unwritten tail beyond the required
-// prefix can be discarded during exclusive recovery; a referenced byte cannot.
-Status Scan(FileSystem* fs, const std::string& path, uint64_t required,
-            uint64_t* end, uint64_t* count, bool* sealed) {
-  uint64_t size;
-  Status s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
-  if (!s.ok()) return s;
-  if (size < BlobLogHeader::kSize || size < required)
-    return Status::Corruption("short blob", path);
-  std::unique_ptr<FSRandomAccessFile> file;
-  s = fs->NewRandomAccessFile(path, FileOptions(), &file, nullptr);
-  if (!s.ok()) return s;
-  std::array<char, 65536> buffer;
-  auto read = [&](uint64_t offset, size_t length, Slice* result) -> Status {
-    Status io =
-        file->Read(offset, length, IOOptions(), result, buffer.data(), nullptr);
-    if (!io.ok()) return io;
-    if (result->size() != length)
-      return Status::Corruption("short blob read", path);
-    return Status::OK();
-  };
-  Slice part;
-  s = read(0, BlobLogHeader::kSize, &part);
-  if (!s.ok()) return s;
-  BlobLogHeader header;
-  s = header.DecodeFrom(part);
-  if (!s.ok()) return s;
-  if (header.has_ttl || header.column_family_id != 0)
-    return Status::Corruption("unsupported blob header", path);
-  *end = BlobLogHeader::kSize;
-  *count = 0;
-  *sealed = false;
-  while (*end < size) {
-    const uint64_t left = size - *end;
-    if (left < BlobLogRecord::kHeaderSize) break;
-    s = read(*end, BlobLogRecord::kHeaderSize, &part);
-    if (!s.ok()) return s;
-    if (left == BlobLogFooter::kSize) {
-      BlobLogFooter footer;
-      s = footer.DecodeFrom(part);
-      if (s.ok() && footer.blob_count == *count &&
-          *end + BlobLogFooter::kSize >= required) {
-        *sealed = true;
-        return Status::OK();
-      }
-      s.PermitUncheckedError();
-    }
-    BlobLogRecord record;
-    s = record.DecodeHeaderFrom(part);
-    if (!s.ok()) {
-      s.PermitUncheckedError();
-      break;
-    }
-    if (record.key_size > left - BlobLogRecord::kHeaderSize ||
-        record.value_size > left - BlobLogRecord::kHeaderSize - record.key_size)
-      break;
-    uint64_t offset = *end + BlobLogRecord::kHeaderSize;
-    uint64_t remaining = record.key_size + record.value_size;
-    uint32_t crc = 0;
-    while (remaining) {
-      const size_t n = std::min<uint64_t>(remaining, buffer.size());
-      s = read(offset, n, &part);
-      if (!s.ok()) return s;
-      crc = crc32c::Extend(crc, part.data(), part.size());
-      offset += n;
-      remaining -= n;
-    }
-    if (crc32c::Mask(crc) != record.blob_crc) break;
-    *end = offset;
-    ++*count;
-  }
-  return *end >= required ? Status::OK()
-                          : Status::Corruption("damaged referenced blob", path);
-}
-}  // namespace
-Status ScanBlob(FileSystem* fs, const std::string& path, uint64_t required,
-                uint64_t* end, uint64_t* count, bool* sealed) {
-  return Scan(fs, path, required, end, count, sealed);
-}
-Status SeparatedStorage::Dependencies(const std::string& index,
-                                      const NativeState& state,
-                                      std::map<uint64_t, uint64_t>* lengths,
-                                      WalValidationCache* cache) {
-  lengths->clear();
-  for (const auto& b : state.blobs) {
-    if (b.second.GetTotalBlobBytes() > std::numeric_limits<uint64_t>::max() -
-                                           BlobLogHeader::kSize -
-                                           BlobLogFooter::kSize)
-      return Status::Corruption("blob length overflow");
-    // Inspect has resolved historical additions using native Version rules.
-    (*lengths)[b.first] = BlobLogHeader::kSize + b.second.GetTotalBlobBytes() +
-                          BlobLogFooter::kSize;
-  }
-  std::vector<std::string> files;
-  Status s = target()->GetChildren(index, IOOptions(), &files, nullptr);
-  if (!s.ok()) return s;
-  for (const auto& f : files) {
-    uint64_t number;
-    FileType type;
-    if (!ParseFileName(f, &number, &type) || type != kWalFile ||
-        number < state.log_number)
-      continue;
-    WalValidation local;
-    WalValidation& validated = cache ? (*cache)[f] : local;
-    uint64_t size;
-    s = target()->GetFileSize(index + "/" + f, IOOptions(), &size, nullptr);
-    if (!s.ok()) return s;
-    if (size < validated.end) validated = WalValidation();
-    References references(target(), this, &validated.lengths);
-    uint64_t records = 0, end;
-    s = ReadLog(
-        target(), index + "/" + f, number,
-        [&](const Slice& record) {
-          if (++records <= validated.records) return Status::OK();
-          TEST_SYNC_POINT("MetaBypass::WalRecordValidated");
-          WriteBatch batch;
-          Status decoded = WriteBatchInternal::SetContents(&batch, record);
-          if (decoded.ok()) decoded = batch.Iterate(&references);
-          return decoded;
-        },
-        &end);
-    if (!s.ok()) return s;
-    if (records < validated.records)
-      return Status::Corruption("cached WAL prefix changed");
-    validated.records = records;
-    validated.end = end;
-    for (const auto& blob : validated.lengths)
-      (*lengths)[blob.first] = std::max((*lengths)[blob.first], blob.second);
-  }
-  return Status::OK();
-}
-Status SeparatedStorage::ValidateTable(const std::string& path,
-                                       const Options& options,
-                                       std::map<uint64_t, uint64_t>* lengths) {
-  TEST_SYNC_POINT("MetaBypass::TableValidated");
-  SstFileReader reader(options);
-  Status s = reader.Open(path);
-  if (s.ok()) s = reader.VerifyChecksum();
-  if (!s.ok()) return s;
-  auto it = reader.NewTableIterator();
-  References references(target(), this, lengths);
-  for (it->SeekToFirst(); it->Valid(); it->Next()) {
-    ParsedInternalKey key;
-    s = ParseInternalKey(it->key(), &key, false);
-    if (!s.ok()) return s;
-    if (key.type == kTypeBlobIndex)
-      s = references.PutBlobIndexCF(0, key.user_key, it->value());
-    else if (key.type != kTypeDeletion)
-      return Status::Corruption("unsupported Metabypass SST entry");
-    if (!s.ok()) return s;
-  }
-  return it->status();
-}
 Status SeparatedStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
-  for (const auto& b : lengths) {
-    uint64_t end, count;
-    bool sealed;
-    Status s =
-        Scan(target(), BlobPath(b.first), b.second, &end, &count, &sealed);
-    if (!s.ok()) return s;
+  if (tier_) return tier_->Persist(lengths);
+  for (const auto& blob : lengths) {
     uint64_t size;
-    s = target()->GetFileSize(BlobPath(b.first), IOOptions(), &size, nullptr);
+    Status s = target()->GetFileSize(BlobPath(blob.first), IOOptions(), &size,
+                                     nullptr);
     if (!s.ok()) return s;
-    if (size < b.second)
-      return Status::Corruption("blob dependency is incomplete");
-    s = target()->SyncFile(BlobPath(b.first), FileOptions(), IOOptions(), true,
-                           nullptr);
+    if (size != blob.second)
+      return Status::Corruption("native blob size mismatch");
+    s = target()->SyncFile(BlobPath(blob.first), FileOptions(), IOOptions(),
+                           true, nullptr);
     if (!s.ok()) return s;
   }
   return SyncDir(target(), data_);
-}
-Status SeparatedStorage::PersistIncremental(
-    const std::map<uint64_t, uint64_t>& lengths, BlobValidationCache* cache,
-    uint64_t* scanned) {
-  *scanned = 0;
-  for (const auto& dependency : lengths) {
-    const std::string path = BlobPath(dependency.first);
-    const uint64_t required = dependency.second;
-    uint64_t size;
-    Status s = target()->GetFileSize(path, IOOptions(), &size, nullptr);
-    if (!s.ok()) return s;
-    if (size < required) return Status::Corruption("short blob", path);
-    auto& saved = (*cache)[dependency.first];
-    if (size < saved.length)
-      return Status::Corruption("cached blob shrank", path);
-    BlobValidation next = saved;
-    // A smaller dependency cannot use a CRC of a longer prefix.
-    if (required < next.length) next = BlobValidation();
-    std::unique_ptr<FSRandomAccessFile> file;
-    if (next.length < required) {
-      s = target()->NewRandomAccessFile(path, FileOptions(), &file, nullptr);
-      if (!s.ok()) return s;
-    }
-    std::array<char, 65536> buffer;
-    auto read = [&](uint64_t offset, size_t count, Slice* bytes) -> Status {
-      Status io =
-          file->Read(offset, count, IOOptions(), bytes, buffer.data(), nullptr);
-      if (!io.ok()) return io;
-      if (bytes->size() != count) return Status::Corruption("short blob", path);
-      *scanned += count;
-      return Status::OK();
-    };
-    Slice bytes;
-    if (next.length == 0) {
-      if (required < BlobLogHeader::kSize)
-        return Status::Corruption("invalid blob dependency", path);
-      s = read(0, BlobLogHeader::kSize, &bytes);
-      if (!s.ok()) return s;
-      BlobLogHeader header;
-      s = header.DecodeFrom(bytes);
-      if (!s.ok()) return s;
-      if (header.has_ttl || header.column_family_id != 0)
-        return Status::Corruption("unsupported blob header", path);
-      next.crc = crc32c::Value(bytes.data(), bytes.size());
-      next.length = bytes.size();
-    }
-    while (next.length < required) {
-      if (next.sealed) return Status::Corruption("sealed blob extended", path);
-      const uint64_t left = required - next.length;
-      if (left < BlobLogRecord::kHeaderSize)
-        return Status::Corruption("partial blob record", path);
-      s = read(next.length, BlobLogRecord::kHeaderSize, &bytes);
-      if (!s.ok()) return s;
-      if (left == BlobLogFooter::kSize) {
-        BlobLogFooter footer;
-        Status footer_status = footer.DecodeFrom(bytes);
-        if (footer_status.ok()) {
-          if (footer.blob_count != next.records)
-            return Status::Corruption("blob footer count", path);
-          next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
-          next.length += bytes.size();
-          next.sealed = true;
-          break;
-        }
-      }
-      BlobLogRecord record;
-      s = record.DecodeHeaderFrom(bytes);
-      if (!s.ok()) return s;
-      if (record.key_size > left - bytes.size() ||
-          record.value_size > left - bytes.size() - record.key_size)
-        return Status::Corruption("partial blob payload", path);
-      next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
-      next.length += bytes.size();
-      uint64_t remaining = record.key_size + record.value_size;
-      uint32_t payload_crc = 0;
-      while (remaining) {
-        s = read(next.length, std::min<uint64_t>(remaining, buffer.size()),
-                 &bytes);
-        if (!s.ok()) return s;
-        next.crc = crc32c::Extend(next.crc, bytes.data(), bytes.size());
-        payload_crc = crc32c::Extend(payload_crc, bytes.data(), bytes.size());
-        next.length += bytes.size();
-        remaining -= bytes.size();
-      }
-      if (crc32c::Mask(payload_crc) != record.blob_crc)
-        return Status::Corruption("blob CRC mismatch", path);
-      ++next.records;
-    }
-    s = target()->SyncFile(path, FileOptions(), IOOptions(), true, nullptr);
-    if (!s.ok()) return s;
-    saved = next;
-  }
-  Status s = SyncDir(target(), data_);
-  if (s.ok() && tier_) s = tier_->Persist(lengths);
-  return s;
 }
 Status SeparatedStorage::ReclaimBlob(uint64_t number, uint64_t* bytes) {
   if (tier_) return tier_->ReclaimBlob(number, bytes);
@@ -460,124 +154,6 @@ Status SeparatedStorage::ReclaimBlob(uint64_t number, uint64_t* bytes) {
   s = target()->DeleteFile(BlobPath(number), IOOptions(), nullptr);
   if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
   if (s.ok()) s = SyncDir(target(), data_);
-  return s;
-}
-Status SeparatedStorage::PrepareRecovery(
-    const std::string& index, const Options& options,
-    std::vector<BlobFileAddition>* sealed_blobs) {
-  if (sealed_blobs) sealed_blobs->clear();
-  NativeState state;
-  Status s = Inspect(target(), index, &state);
-  if (!s.ok()) return s;
-  std::map<uint64_t, uint64_t> lengths;
-  s = Dependencies(index, state, &lengths);
-  if (!s.ok()) return s;
-  // Recovery can replay direct-write indexes after native Version metadata
-  // was dropped. Validate actual SST references before sealing or archiving.
-  auto env = NewCompositeEnv(target_);
-  Options table_options = options;
-  table_options.env = env.get();
-  for (const auto& table : state.tables) {
-    s = ValidateTable(MakeTableFileName(index, table.first), table_options,
-                      &lengths);
-    if (!s.ok()) return s;
-  }
-  // Validate every required file before the first mutation. Retried recovery
-  // recognizes already sealed files and atomically replaces the MANIFEST.
-  for (const auto& b : lengths) {
-    uint64_t end, count;
-    bool sealed;
-    s = Scan(target(), BlobPath(b.first), b.second, &end, &count, &sealed);
-    if (!s.ok()) return s;
-  }
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryValidated", &s);
-  if (!s.ok()) return s;
-  // Move required registrations before SST replay. Legacy snapshots can have
-  // an SST before its blob addition (or no addition), which leaves it unlinked.
-  // Preserve historical totals/checksums and every other field/atomic marker.
-  VersionEdit registrations;
-  std::set<uint64_t> registered;
-  for (auto& record : state.edits) {
-    VersionEdit edit;
-    s = edit.DecodeFrom(record);
-    if (!s.ok()) return s;
-    VersionEdit::BlobFileAdditions remaining;
-    bool changed = false;
-    for (const auto& blob : edit.ExtractBlobFileAdditions()) {
-      if (lengths.count(blob.GetBlobFileNumber())) {
-        registrations.AddBlobFile(blob);
-        registered.insert(blob.GetBlobFileNumber());
-        changed = true;
-      } else {
-        remaining.push_back(blob);
-      }
-    }
-    if (changed) {
-      edit.SetBlobFileAdditions(std::move(remaining));
-      record.clear();
-      if (!edit.EncodeTo(&record, 0)) return Status::Corruption("VersionEdit");
-    }
-  }
-  VersionEdit extra;
-  uint64_t next = state.next_file;
-  std::vector<std::string> files;
-  s = target()->GetChildren(data_, IOOptions(), &files, nullptr);
-  if (!s.ok()) return s;
-  for (const auto& f : files) {
-    uint64_t number;
-    FileType type;
-    if (ParseFileName(f, &number, &type) && type == kBlobFile) {
-      if (number == std::numeric_limits<uint64_t>::max())
-        return Status::Corruption("blob file number exhausted");
-      next = std::max(next, number + 1);
-    }
-  }
-  for (const auto& b : lengths) {
-    uint64_t end, count;
-    bool sealed;
-    s = Scan(target(), BlobPath(b.first), b.second, &end, &count, &sealed);
-    if (!s.ok()) return s;
-    if (!sealed || tier_) {
-      BlobLogFooter footer;
-      footer.blob_count = count;
-      std::string encoded_footer;
-      footer.EncodeTo(&encoded_footer);
-      if (tier_) {
-        s = tier_->SealRecovery(b.first, end, encoded_footer);
-        if (!s.ok()) return s;
-      } else {
-        const std::string temp = BlobPath(b.first) + ".recover";
-        s = Copy(target(), BlobPath(b.first), temp, end);
-        if (!s.ok()) return s;
-        std::unique_ptr<FSWritableFile> writer;
-        s = target()->ReopenWritableFile(temp, FileOptions(), &writer, nullptr);
-        if (!s.ok()) return s;
-        s = writer->Append(encoded_footer, IOOptions(), nullptr);
-        if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
-        s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
-        if (s.ok())
-          s = target()->RenameFile(temp, BlobPath(b.first), IOOptions(),
-                                   nullptr);
-        if (!s.ok()) return s;
-      }
-    }
-    TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryBlobSealed", &s);
-    if (!s.ok()) return s;
-    BlobFileAddition addition(b.first, count, end - BlobLogHeader::kSize, "",
-                              "");
-    if (sealed_blobs) sealed_blobs->push_back(addition);
-    if (!registered.count(b.first)) registrations.AddBlobFile(addition);
-  }
-  if (tier_) s = tier_->ArchiveUnreferenced(lengths);
-  if (s.ok()) s = SyncDir(target(), data_);
-  extra.SetNextFile(next);
-  if (s.ok() && !registrations.GetBlobFileAdditions().empty()) {
-    std::string record;
-    if (!registrations.EncodeTo(&record, 0))
-      return Status::Corruption("VersionEdit");
-    state.edits.insert(state.edits.begin(), std::move(record));
-  }
-  if (s.ok()) s = RewriteManifest(target(), index, state, extra);
   return s;
 }
 }  // namespace metabypass

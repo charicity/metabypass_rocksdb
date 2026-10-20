@@ -10,9 +10,6 @@
 #include <limits>
 #include <set>
 
-#include "db/log_reader.h"
-#include "db/log_writer.h"
-#include "file/writable_file_writer.h"
 #include "util/crc32c.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -61,6 +58,8 @@ Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
   if (s.ok()) s = fs->NewWritableFile(to, FileOptions(), &out, nullptr);
   if (!s.ok()) return s;
   std::array<char, 65536> buf;
+  uint32_t expected = 0;
+  const uint64_t original_length = length;
   while (s.ok() && length) {
     Slice part;
     s = in->Read(std::min<uint64_t>(length, buf.size()), IOOptions(), &part,
@@ -70,11 +69,18 @@ Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
       s = Status::Corruption("short file", from);
       break;
     }
+    expected = crc32c::Extend(expected, part.data(), part.size());
     s = out->Append(part, IOOptions(), nullptr);
     length -= part.size();
   }
   if (s.ok()) s = out->Fsync(IOOptions(), nullptr);
   s.UpdateIfOk(out->Close(IOOptions(), nullptr));
+  if (s.ok()) {
+    uint32_t actual = 0;
+    s = Digest(fs, to, original_length, &actual);
+    if (s.ok() && actual != expected)
+      s = Status::Corruption("copied file checksum mismatch", to);
+  }
   return s;
 }
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
@@ -114,155 +120,6 @@ Status RemoveDir(FileSystem* fs, const std::string& path) {
     if (!s.ok()) return s;
   }
   return fs->DeleteDir(path, IOOptions(), nullptr);
-}
-namespace {
-class Reporter : public log::Reader::Reporter {
- public:
-  Status status;
-  void Corruption(size_t, const Status& s, uint64_t) override {
-    if (status.ok()) status = s;
-  }
-};
-}  // namespace
-Status ReadLog(FileSystem* fs, const std::string& path, uint64_t number,
-               const std::function<Status(const Slice&)>& visit,
-               uint64_t* end) {
-  Status s = fs->FileExists(path, IOOptions(), nullptr);
-  if (!s.ok()) return s;
-  std::unique_ptr<FSSequentialFile> f;
-  s = fs->NewSequentialFile(path, FileOptions(), &f, nullptr);
-  if (!s.ok()) return s;
-  Reporter reporter;
-  log::Reader reader(nullptr,
-                     std::make_unique<SequentialFileReader>(std::move(f), path),
-                     &reporter, true, number);
-  Slice record;
-  std::string scratch;
-  *end = 0;
-  while (reader.ReadRecord(&record, &scratch)) {
-    if (!reporter.status.ok()) return reporter.status;
-    s = visit(record);
-    if (!s.ok()) return s;
-    *end = reader.LastRecordEnd();
-  }
-  return reporter.status;
-}
-Status Inspect(FileSystem* fs, const std::string& dir, NativeState* state) {
-  *state = NativeState();
-  Status s = Read(fs, dir + "/CURRENT", &state->manifest);
-  if (!s.ok()) return s;
-  if (state->manifest.empty() || state->manifest.back() != '\n')
-    return Status::Incomplete("CURRENT not complete");
-  state->manifest.pop_back();
-  if (state->manifest.find('/') != std::string::npos ||
-      state->manifest.compare(0, 9, "MANIFEST-") != 0)
-    return Status::Corruption("invalid CURRENT");
-  std::map<uint64_t, uint64_t> oldest_blobs, garbage, garbage_bytes;
-  std::set<uint64_t> unlinked_tables;
-  uint32_t remaining = 0;
-  bool group = false;
-  s = ReadLog(
-      fs, dir + "/" + state->manifest, 0,
-      [&](const Slice& record) {
-        VersionEdit edit;
-        Status decoded = edit.DecodeFrom(record);
-        if (!decoded.ok()) return decoded;
-        if (edit.GetColumnFamily() != 0 || edit.IsColumnFamilyAdd() ||
-            edit.IsColumnFamilyDrop())
-          return Status::NotSupported("Metabypass requires one column family");
-        if (group && (!edit.IsInAtomicGroup() ||
-                      edit.GetRemainingEntries() + 1 != remaining))
-          return Status::Corruption("invalid MANIFEST atomic group");
-        remaining = edit.IsInAtomicGroup() ? edit.GetRemainingEntries() : 0;
-        group = remaining != 0;
-        state->edits.emplace_back(record.data(), record.size());
-        if (edit.HasLogNumber()) state->log_number = edit.GetLogNumber();
-        if (edit.HasNextFile()) state->next_file = edit.GetNextFile();
-        for (const auto& blob : edit.GetBlobFileAdditions()) {
-          state->registered_blobs.insert(blob.GetBlobFileNumber());
-          if (!state->blobs.emplace(blob.GetBlobFileNumber(), blob).second)
-            return Status::Corruption("duplicate blob addition");
-        }
-        for (const auto& blob : edit.GetBlobFileGarbages()) {
-          const uint64_t number = blob.GetBlobFileNumber();
-          const auto added = state->blobs.find(number);
-          if (added == state->blobs.end())
-            return Status::Corruption("garbage for unknown blob");
-          auto& count = garbage[number];
-          auto& bytes = garbage_bytes[number];
-          if (count > added->second.GetTotalBlobCount() ||
-              blob.GetGarbageBlobCount() >
-                  added->second.GetTotalBlobCount() - count ||
-              bytes > added->second.GetTotalBlobBytes() ||
-              blob.GetGarbageBlobBytes() >
-                  added->second.GetTotalBlobBytes() - bytes)
-            return Status::Corruption("excess blob garbage");
-          count += blob.GetGarbageBlobCount();
-          bytes += blob.GetGarbageBlobBytes();
-        }
-        for (const auto& f : edit.GetDeletedFiles()) {
-          state->tables.erase(f.second);
-          unlinked_tables.erase(f.second);
-          oldest_blobs.erase(f.second);
-        }
-        for (const auto& f : edit.GetNewFiles()) {
-          const uint64_t number = f.second.fd.GetNumber();
-          state->tables[number] = f.second.fd.GetFileSize();
-          unlinked_tables.erase(number);
-          if (f.second.oldest_blob_file_number != kInvalidBlobFileNumber &&
-              !state->blobs.count(f.second.oldest_blob_file_number))
-            unlinked_tables.insert(number);
-          oldest_blobs[f.second.fd.GetNumber()] =
-              f.second.oldest_blob_file_number;
-        }
-        return Status::OK();
-      },
-      &state->manifest_end);
-  if (s.ok() && group)
-    return Status::Incomplete("MANIFEST atomic group pending");
-  if (!s.ok()) return s;
-  // Match VersionBuilder::SaveBlobFilesTo: SSTs link their oldest blob;
-  // newer files can be referenced without an explicit link. Unregistered
-  // oldest blobs are legal after WAL-only recovery. Actual WAL/SST reference
-  // validation adds their dependencies independently of native metadata.
-  std::set<uint64_t> linked;
-  for (const auto& table : oldest_blobs)
-    if (!unlinked_tables.count(table.first) &&
-        table.second != kInvalidBlobFileNumber &&
-        state->blobs.count(table.second))
-      linked.insert(table.second);
-  for (auto it = state->blobs.begin(); it != state->blobs.end();) {
-    if (linked.empty() || it->first < *linked.begin() ||
-        (!linked.count(it->first) &&
-         garbage[it->first] >= it->second.GetTotalBlobCount()))
-      it = state->blobs.erase(it);
-    else
-      ++it;
-  }
-  return s;
-}
-Status RewriteManifest(FileSystem* fs, const std::string& dir,
-                       const NativeState& state, const VersionEdit& extra) {
-  const std::string temp = dir + "/METABYPASS-MANIFEST.tmp";
-  std::unique_ptr<FSWritableFile> f;
-  Status s = fs->NewWritableFile(temp, FileOptions(), &f, nullptr);
-  if (!s.ok()) return s;
-  log::Writer writer(
-      std::make_unique<WritableFileWriter>(std::move(f), temp, FileOptions()),
-      0, false);
-  for (const auto& record : state.edits) {
-    s = writer.AddRecord(WriteOptions(), record);
-    if (!s.ok()) break;
-  }
-  std::string record;
-  if (s.ok() && !extra.EncodeTo(&record)) s = Status::Corruption("VersionEdit");
-  if (s.ok()) s = writer.AddRecord(WriteOptions(), record);
-  if (s.ok()) s = writer.file()->Sync(IOOptions(), true);
-  s.UpdateIfOk(writer.Close(WriteOptions()));
-  if (s.ok())
-    s = fs->RenameFile(temp, dir + "/" + state.manifest, IOOptions(), nullptr);
-  if (s.ok()) s = SyncDir(fs, dir);
-  return s;
 }
 }  // namespace metabypass
 }  // namespace ROCKSDB_NAMESPACE

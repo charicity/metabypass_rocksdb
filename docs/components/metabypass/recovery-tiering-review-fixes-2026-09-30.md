@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # Recovery and tiering review fixes (2026-09-30)
 
 This records four fixes to the final MetaBypass feature code and their Linux

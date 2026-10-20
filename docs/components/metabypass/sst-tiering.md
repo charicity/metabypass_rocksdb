@@ -1,3 +1,7 @@
+> Current writes use ordinary Integrated BlobDB and full-value WAL. Native
+> no-flush checkpoint capture supplies SST recovery roots; formats older than
+> MBN2/MBI2/MBT2 are rejected without migration. See [current design](index.md).
+
 # Whole-SST SSD/HDD tiering
 
 See the shared [migration lifecycle contract and scenario matrix](migration-lifecycle.md)

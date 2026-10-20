@@ -1,159 +1,52 @@
-# Strong tiered blob storage
+# Bounded blob staging and HDD spill
 
-See the shared [migration lifecycle contract and scenario matrix](migration-lifecycle.md)
-for persistence, route switching, physical I/O draining and reclamation.
+Ordinary Integrated BlobDB creates blob files during native memtable flush and
+compaction. Foreground Put/Write stores the full value in WAL and memtable;
+staging admission is performed by blob file Append, including background flush
+and compaction writers.
 
-Metabypass can stage Blob Direct Write payloads on a fast filesystem and migrate
-native blob bytes to a separate slow filesystem. This is an opt-in, experimental,
-single-column-family configuration. Non-tiered databases retain their direct payload placement. Both modes now
-wait for a complete backup point on synchronous writes; see
-[direct storage](direct-storage.md). Converting an existing database to tiered
-storage is not supported.
+Enable staging with a disjoint `staging_dir` and positive `staging_capacity`.
+The capacity is a hard bound on logical SSD blob bytes plus outstanding local
+append reservations. Reservation and capacity accounting share a mutex, so
+multiple blob writers cannot each spend the same free bytes. File system
+allocation overhead, WAL/index space, memory and HDD capacity are separate.
 
-```cpp
-MetaBypassOptions bypass;
-bypass.staging_dir = "/fast/blob-staging";
-bypass.staging_capacity = 256ULL * 1024 * 1024;
-bypass.data_dir = "/slow/blobs";
-bypass.backup_dir = "/slow/index-backup";
-```
+When the next append cannot fit, that file switches once to HDD. Its existing
+SSD prefix becomes immutable. An independent worker copies and fsyncs that
+prefix, persists a versioned descriptor and switches new reads to HDD. The
+current file then sends subsequent appends through the worker's bounded queue.
+It never returns to SSD. A value or batch larger than the staging cap succeeds
+without requiring the entire record to fit locally. No DB write-side staging
+reservation or forced memtable flush is used to obtain capacity.
 
-All directories, including the primary index directory, must be absolute,
-normalized and disjoint. The application must place both slow directories outside
-the fast device's failure domain. A different pathname alone does not establish
-an independent failure domain. The backend must implement file and directory
-synchronization and atomic rename. S3 is not supported by this version.
+The worker aggregates HDD writes into 4 MiB extents. File Sync/Close establishes
+a durable descriptor boundary; crash recovery uses only committed descriptor
+prefixes and ignores uncommitted tail extents. Flush must make its blob payload
+durable before native RocksDB installs an SST referencing it. Worker operations
+do not wait for themselves, so background flush and compaction do not require a
+foreground thread to free staging capacity.
 
-## Completion contracts
+A physical SSD read pins its opened handle. After the route switches, new reads
+use HDD immediately; an older pinned read may finish using SSD. That pin delays
+SSD unlink and quota reclamation but does not block later HDD appends. Remote
+reads hold an immutable mapping version until completion. Whole-file deletion
+waits for both read lifetimes.
 
-| Operation | Successful completion |
-|---|---|
-| `WriteOptions::sync=false` | Primary write completed; remote publication may lag |
-| `WriteOptions::sync=true` | A complete remote point covers the write |
-| `SyncBackup()` | A complete remote point covers writes completed before the call |
-| `Close()` | Primary DB closed and final complete remote point published |
+`SyncBackup` and synchronous writes publish native recovery points on HDD.
+For a WAL-only point no blob migration is needed: its full-value WAL is sufficient.
+For points containing blob references, required closed blob files and descriptors
+are persisted before publication. Restore can lose both index and staging while
+retaining HDD data/backup. It verifies the published mapping and uses native
+RocksDB recovery; it does not scan records, seal blobs or repair MANIFESTs.
 
-The tiered synchronous-write contract is stronger than native RocksDB's local
-WAL sync: the primary index and staging device may subsequently be lost. A write
-whose primary operation succeeds but whose remote barrier fails returns an error;
-the primary mutation may already be visible. There is no rollback promise.
-Concurrent later writes can be covered by the same barrier. Ordinary writes do
-not wait for a periodic remote point, except through bounded-capacity backpressure
-or shared resource contention. There is no fixed recovery point objective.
+Formats are `MBN2` (database/backup), `MBI2` (inventory) and `MBT2` (mapping).
+Older formats are rejected before modifying the source directories. There is no
+compatibility migration path.
 
-## Ownership and scheduling
-
-`SeparatedStorage` owns a `TieredStorage` filesystem wrapper. RocksDB still sees
-ordinary numbered blob paths; the wrapper provides local reads or a logical
-random-access view over remote extents. The index mirror remains responsible only
-for native index files. It retains its WAL/metadata queues and its mirror and
-validation threads. One additional worker performs blob migration.
-
-The validator computes and validates required blob prefixes, then requests their
-remote persistence. Requested dependencies take precedence over unrelated closed
-files. Only one candidate is outstanding. Waiting for blob persistence does not
-hold the DB mutex or stop the mirror from applying further events. It can delay
-publication and explicit synchronization. Capture still copies mutable index
-files and can temporarily delay the mirror itself.
-
-Tiered foreground write admission is serialized before entering RocksDB. This
-keeps byte reservations and pressure rotation outside DB locks. It is a deliberate
-first-version cost, to be included in benchmarks. Synchronous-write barriers are
-waited after releasing the admission lock.
-
-## Remote representation
-
-Remote payload extents contain unmodified ranges of native blob bytes. Extents
-are immutable and bounded to 256 KiB per file. A checksum-protected `MBT1`
-descriptor assembles them into a logical blob. A descriptor is replaced only
-after its new extents and directory entries are durable. Newly copied extents
-are read back and checksummed before committing the descriptor.
-
-A recovery point includes a checksummed `BLOB-MAP`, binding the exact extent view
-and validated length of each dependency. Its inventory also checksums each
-logical blob prefix. A descriptor may later advance without changing the old
-point's view. Only a complete record prefix is published; extent boundaries
-inside that prefix need not themselves be record boundaries. No custom file
-operation log is replayed during recovery.
-
-Local reads pin a staging file for an individual I/O operation. Eviction waits
-for these reads, publishes the remote view first, and then removes the local
-file. Cached logical readers subsequently resolve the remote view. An active
-local blob cannot silently fall back to a shorter remote prefix.
-
-The remote store retains historical extents until their logical blob is native
-obsolete and all recovery roots release it. [Whole-file GC](blob-gc.md) then
-removes the descriptor before its extents, after draining physical reads. Remote
-extent consolidation and live value relocation remain disabled. Small
-synchronous writes can create many extents and descriptors; complete-point
-publication is intentionally more expensive than simply synchronizing a WAL.
-
-## Capacity and failures
-
-`staging_capacity` is mandatory in tiered mode (minimum 8 KiB). It accounts for
-logical staged file bytes and in-flight admission, not filesystem allocation,
-page cache, or unrelated files. Admission uses a conservative batch-size and
-per-record bound; an oversized batch is rejected before primary writes. Existing
-files also require footer headroom.
-
-Closed, fully migrated files can be evicted. Under pressure, the caller seals
-active and deferred blob files while retaining their memtable generation
-ownership. This is the only pressure-specific core addition; it does not switch
-or flush a memtable. Publication and synchronous writes do not otherwise force
-blob rotation.
-
-Migration and backup failures share a terminal error state, wake capacity and
-barrier waiters, stop publication and reject new writes. Reads that still have a
-valid source remain available. Explicit synchronization and close report the
-error. Backend calls must eventually complete: this wrapper cannot cancel an
-arbitrarily hung filesystem call.
-
-## Recovery
-
-Normal `Open` uses the primary index and WAL. It does not replace a broken primary
-with an older backup. Missing unprotected staging dependencies are errors.
-
-To recover from complete fast-device loss, use `Restore` with empty replacement
-index and staging directories and the original slow directories. Recovery checks
-the published pointer, inventory, blob map and referenced payload checksums.
-It creates separate recovery descriptors/footer extents instead of editing old
-payload extents. Logical remote reads avoid loading the entire database into the
-staging budget. Allocated blob numbers, including orphan extent names, advance
-the native file-number high-water mark before new writes.
-
-Restore is exclusive and resumable on its marked destination. The published
-index point and its extent mapping remain unchanged. Corruption in a published
-point is reported; no silent fallback to an older point is performed.
-
-## Validation and measurements
-
-`metabypass_test` includes full fast-directory loss, SIGKILL at migration and
-publication boundaries, bounded staging without memtable flush, migration errors,
-blocked migration with foreground progress, compressed batches, and reopen tests.
-Fault injection and directory removal do not establish real power-loss safety.
-
-`db_bench` accepts `--metabypass_staging_dir` and
-`--metabypass_staging_capacity`. `--metabypass_slow_write_delay_us` injects latency
-per slow writable-file append/sync operation for controlled experiments. This
-models neither device bandwidth nor all filesystem calls. Outputs separate
-foreground, final sync, close, p99 write latency, migration bytes, staging peak,
-capacity waits and recovery-point lag. The benchmark's latency sample vector is
-outside the storage budget and is used in all comparison configurations.
-
-See [the implementation test report](tiered-storage-report.zh-CN.md) for measured
-results, commands and environmental limitations.
-
-### Read and migration lifetime
-
-A closed staging blob can be copied while local reads are in flight. After its
-complete remote descriptor is committed, new reads use remote extents; physical
-staging deletion and space reclamation wait for existing local reads to finish.
-The worker sleeps while those readers drain instead of repeatedly retrying eviction.
-
-Remote reads pin an immutable descriptor snapshot. An in-memory cumulative extent
-index locates the starting extent by binary search; reads traverse only the extents
-covering the requested range. Descriptor publication builds this index outside the
-read-path mutex. The on-disk `MBT1` and checkpoint formats are unchanged.
-
-Both direct and staging modes reject batches with a WAL termination point before
-mutation: a successful write must retain the entire batch in WAL for recovery.
+Observe `peak_staging_bytes`, `staging_spill_files`, `staging_spill_bytes`,
+`tier_queued_bytes`, `peak_tier_queued_bytes`, `hdd_extents`, migration bytes and
+sync latency together. `mirrored_wal_bytes` isolates WAL append traffic from
+`mirrored_bytes`, which includes SST and metadata append traffic as well.
+Full-value WAL increases mirror traffic; HDD service time
+can increase flush latency even while staging stays below its hard cap. Current
+behavior is summarized in the [component entry point](index.md).

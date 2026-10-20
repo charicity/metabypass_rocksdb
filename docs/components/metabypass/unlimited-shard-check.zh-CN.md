@@ -1,3 +1,7 @@
+> Historical experiment/review record for the earlier DirectWrite architecture.
+> This document does not specify current behavior or format compatibility. See
+> [native checkpoint design](index.md) for the current implementation.
+
 # 7 个失败分片的无时限复查
 
 2026-09-20。取消原来的 `timeout 60`，保留原测试二进制、分片编号和分片总数，

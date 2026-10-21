@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -40,6 +42,7 @@
 #include "rocksdb/utilities/replayer.h"
 #include "test_util/sync_point.h"
 #include "util/compression.h"
+#include "util/defer.h"
 #include "utilities/fault_injection_env.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -1755,6 +1758,70 @@ TEST_F(
   ASSERT_TRUE(iter->Valid());
   ASSERT_EQ(iter->value().ToString(), values[target_idx]);
 }
+TEST_F(DBBlobDirectWriteTest,
+       DirectWriteProtectedObsoleteBlobCanBePurgedAfterIteratorRelease) {
+  Options options = GetDirectWriteOptions();
+  options.disable_auto_compactions = true;
+  Reopen(options);
+
+  const std::string old_value(256, 'o');
+  ASSERT_OK(Put("old", old_value));
+  std::unique_ptr<Iterator> iter(db_->NewIterator(ReadOptions()));
+  ASSERT_OK(Flush());
+  const auto blobs = GetBlobFileNumbers();
+  ASSERT_EQ(blobs.size(), 1U);
+  const uint64_t old_blob = blobs.front();
+  const std::string old_path = BlobFileName(dbname_, old_blob);
+  std::mutex deferred_mutex;
+  std::condition_variable deferred_cv;
+  size_t deferred = 0;
+  SyncPoint::GetInstance()->SetCallBack(
+      "DBImpl::PurgeObsoleteFiles:ReleaseDeferredBlob", [&](void* arg) {
+        if (*static_cast<uint64_t*>(arg) == old_blob) {
+          std::lock_guard<std::mutex> lock(deferred_mutex);
+          ++deferred;
+          deferred_cv.notify_all();
+        }
+      });
+  Defer clear_callbacks([] {
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+  });
+  SyncPoint::GetInstance()->EnableProcessing();
+
+  ASSERT_OK(Delete("old"));
+  ASSERT_OK(Put("live", std::string(256, 'n')));
+  ASSERT_OK(Flush());
+  CompactRangeOptions compact;
+  compact.bottommost_level_compaction = BottommostLevelCompaction::kForce;
+  ASSERT_OK(db_->CompactRange(compact, nullptr, nullptr));
+  ASSERT_OK(dbfull()->TEST_WaitForPurge());
+  {
+    // Manual compaction can return before its synchronous purge finishes.
+    // TEST_WaitForPurge only waits for separately scheduled purge jobs.
+    std::unique_lock<std::mutex> lock(deferred_mutex);
+    ASSERT_TRUE(deferred_cv.wait_for(lock, std::chrono::seconds(20),
+                                     [&] { return deferred > 0; }));
+    EXPECT_GT(deferred, 0U);
+  }
+  // Releasing a purge reservation must not release the reader's protection.
+  dbfull()->TEST_DeleteObsoleteFiles();
+  ASSERT_OK(dbfull()->TEST_WaitForPurge());
+  ASSERT_OK(env_->FileExists(old_path));
+  iter->Seek("old");
+  ASSERT_TRUE(iter->Valid());
+  ASSERT_EQ(iter->value(), old_value);
+  ASSERT_OK(iter->status());
+
+  // The obsolete list was already consumed while the memtable was pinned.
+  // A full scan must rediscover the file once its final reader is gone.
+  iter.reset();
+  dbfull()->TEST_DeleteObsoleteFiles();
+  ASSERT_OK(dbfull()->TEST_WaitForPurge());
+  ASSERT_TRUE(env_->FileExists(old_path).IsNotFound());
+  ASSERT_EQ(Get("live"), std::string(256, 'n'));
+}
+
 TEST_F(DBBlobDirectWriteTest, OrderedTraceUsesLogicalBatchForBlobDirectWrite) {
   AssertOrderedTraceStoresLogicalPut(GetDirectWriteOptions(),
                                      /*expect_blob_files=*/true);

@@ -1134,7 +1134,10 @@ DEFINE_string(metabypass_backup_dir, "", "Native index backup directory");
 DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
               "Pending event bytes");
 DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
-DEFINE_uint64(metabypass_interval_ms, 1000, "Background trigger interval");
+DEFINE_uint64(metabypass_interval_ms, 1000, "Mirror trigger interval");
+DEFINE_uint64(
+    metabypass_checkpoint_interval_ms, 5000,
+    "Recovery point trigger interval, independent of mirror interval");
 DEFINE_bool(metabypass_blob_file_gc, true, "Reclaim obsolete whole blob files");
 DEFINE_string(metabypass_sst_action, "legacy",
               "SST protocol: legacy, seed, run, rpo_write, rpo_restore");
@@ -11986,7 +11989,9 @@ static int RunMetaBypassBenchmark() {
   options.env = delayed_env ? delayed_env.get() : FLAGS_env;
   options.create_if_missing = true;
   options.enable_blob_files = true;
-  options.enable_blob_direct_write = false;
+  options.enable_blob_direct_write = FLAGS_enable_blob_direct_write;
+  options.allow_concurrent_memtable_write =
+      FLAGS_allow_concurrent_memtable_write;
   options.min_blob_size = 0;
   options.compression = kNoCompression;
   MetaBypassOptions bypass;
@@ -11997,7 +12002,14 @@ static int RunMetaBypassBenchmark() {
   bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
+  bypass.checkpoint_interval_ms = FLAGS_metabypass_checkpoint_interval_ms;
   bypass.enable_blob_file_gc = FLAGS_metabypass_blob_file_gc;
+  printf(
+      "metabypass effective_options enable_blob_direct_write=%d"
+      " allow_concurrent_memtable_write=%d mirror_interval_ms=%" PRIu64
+      " checkpoint_interval_ms=%" PRIu64 " sync=%d\n",
+      options.enable_blob_direct_write, options.allow_concurrent_memtable_write,
+      bypass.interval_ms, bypass.checkpoint_interval_ms, FLAGS_sync);
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();
@@ -12105,6 +12117,13 @@ static int RunMetaBypassBenchmark() {
          stats.reclaimed_blob_files, stats.reclaimed_blob_bytes,
          stats.blob_gc_micros, stats.candidate_copied_bytes,
          s.ToString().c_str());
+  printf("metabypass checkpoint_captures=%" PRIu64
+         " checkpoint_capture_us=%" PRIu64 " checkpoint_flush_us=%" PRIu64
+         " checkpoint_persist_us=%" PRIu64 " checkpoint_publish_us=%" PRIu64
+         "\n",
+         stats.checkpoint_captures, stats.checkpoint_capture_micros,
+         stats.checkpoint_flush_micros, stats.checkpoint_persist_micros,
+         stats.checkpoint_publish_micros);
   printf("metabypass tiered=%d p99_us=%" PRIu64 " staging_bytes=%" PRIu64
          " staging_peak=%" PRIu64 " migrated_blob_bytes=%" PRIu64
          " pending_blob_bytes=%" PRIu64 " staging_wait_us=%" PRIu64

@@ -3220,6 +3220,21 @@ struct LiveFilesStorageInfoOptions {
   // by wal_size_for_flush).
   // Default: false (uses DBOptions::atomic_flush setting).
   bool atomic_flush = false;
+  // Include the WAL files needed to recover writes not represented in SSTs.
+  // If false, flush first and return only the resulting persisted file view.
+  // This view covers writes completed before the call and may include later
+  // writes that have also been flushed. Concurrent writes remain allowed; their
+  // unflushed WAL records and active blob files are excluded together.
+  //
+  // Excluding WAL files requires wal_size_for_flush == 0, a writable DB with
+  // exactly one non-dropped column family, allow_2pc == false, and both
+  // track_and_verify_wals options disabled. The WAL must be unlocked.
+  // Concurrent column-family creation is rejected, including creation followed
+  // by dropping the new column family. Unsupported configurations return an
+  // error without returning a partial file list. The caller must still pin file
+  // deletions while copying the returned files and persist the copies before
+  // using them.
+  bool include_wal_files = true;
 };
 
 struct WaitForCompactOptions {

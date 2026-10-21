@@ -2193,6 +2193,16 @@ unsigned char rocksdb_livefiles_storage_info_options_get_atomic_flush(
   return opt->rep.atomic_flush;
 }
 
+void rocksdb_livefiles_storage_info_options_set_include_wal_files(
+    rocksdb_livefiles_storage_info_options_t* opt, unsigned char v) {
+  opt->rep.include_wal_files = v;
+}
+
+unsigned char rocksdb_livefiles_storage_info_options_get_include_wal_files(
+    rocksdb_livefiles_storage_info_options_t* opt) {
+  return opt->rep.include_wal_files;
+}
+
 /* GetColumnFamilyMetaDataOptions */
 
 void rocksdb_column_family_metadata_options_set_level(

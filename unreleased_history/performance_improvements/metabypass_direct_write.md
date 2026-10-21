@@ -1,0 +1,1 @@
+* Metabypass now accepts opt-in Blob DirectWrite with native flush-based WAL-free recovery points, separates the periodic checkpoint interval from mirror batching (default 5 seconds), and fixes obsolete Blob files remaining unreclaimable after a protecting iterator is released.

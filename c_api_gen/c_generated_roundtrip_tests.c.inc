@@ -577,6 +577,12 @@ static void rocksdb_roundtrip_test_rocksdb_livefiles_storage_info_options(
   CheckCondition(
       rocksdb_livefiles_storage_info_options_get_include_checksum_info(obj) ==
       0);
+  rocksdb_livefiles_storage_info_options_set_include_wal_files(obj, 1);
+  CheckCondition(
+      rocksdb_livefiles_storage_info_options_get_include_wal_files(obj) == 1);
+  rocksdb_livefiles_storage_info_options_set_include_wal_files(obj, 0);
+  CheckCondition(
+      rocksdb_livefiles_storage_info_options_get_include_wal_files(obj) == 0);
   rocksdb_livefiles_storage_info_options_set_wal_size_for_flush(obj, 1);
   CheckCondition(
       rocksdb_livefiles_storage_info_options_get_wal_size_for_flush(obj) == 1);

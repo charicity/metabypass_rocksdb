@@ -357,6 +357,10 @@ void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
   if (primary.ok() && stats_.error.ok() && !stopping_) {
     e.seq = ++accepted_;
     e.queued_micros = Now();
+    if (e.kind == Kind::kRetireBlob) {
+      ++native_changes_;
+      MarkDirty();
+    }
     channel.queue.push_back(std::move(e));
   } else {
     // Failure cleanup owns queued events, but a producer still owns its
@@ -610,7 +614,12 @@ Status Backup::Publish(const Candidate& candidate) {
     if (info.file_type != kBlobFile)
       files.emplace(info.relative_filename, info.size);
   const auto& blobs = candidate.blobs;
+  const uint64_t persist_started = Now();
   s = storage_->Persist(blobs);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stats_.checkpoint_persist_micros += Now() - persist_started;
+  }
   if (!s.ok()) return s;
   for (const auto& blob : blobs) {
     auto& digest = blob_cache_[blob.first];
@@ -737,6 +746,7 @@ Status Backup::Publish(const Candidate& candidate) {
       published_ = candidate.seq;
       published_writes_ = candidate.writes;
       published_request_ = candidate.request;
+      published_native_changes_ = candidate.native_changes;
       ++stats_.recovery_points;
       stats_.last_build_micros = Now() - candidate.started;
       stats_.last_publish_micros = Now();
@@ -802,12 +812,11 @@ void Backup::Run() {
     mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
     const uint64_t boundary = accepted_;
+    const uint64_t before_applied = applied_;
     while (auto* channel = NextChannel()) {
       if (channel->queue.front().seq > boundary) break;
       Event e = std::move(channel->queue.front());
       channel->queue.pop_front();
-      if (!oldest_unpublished_micros_)
-        oldest_unpublished_micros_ = e.queued_micros;
       lock.unlock();
       Status s = Apply(e);
       lock.lock();
@@ -835,7 +844,7 @@ void Backup::Run() {
       capture_done_ = true;
       validator_cv_.notify_all();
     }
-    validator_cv_.notify_one();
+    if (applied_ != before_applied) validator_cv_.notify_one();
     if (stopping_ && QueuesEmpty()) break;
   }
   for (auto* channel : {&wal_channel_, &metadata_channel_}) {
@@ -858,34 +867,64 @@ void Backup::Run() {
 void Backup::ValidateLoop() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (!stopping_ && stats_.error.ok()) {
-    validator_cv_.wait_for(
-        lock, std::chrono::milliseconds(options_.interval_ms), [&] {
-          return stopping_ || !stats_.error.ok() ||
-                 (active_ && !blob_gc_busy_ &&
-                  requested_point_ > published_request_);
-        });
-    if (stopping_ || !stats_.error.ok()) break;
-    if (!active_ || blob_gc_busy_) continue;
-    if (requested_point_ <= published_request_ && accepted_ <= captured_ &&
-        completed_writes_ <= published_writes_ && !NeedsBlobCheckpoint())
+    if (!active_ || blob_gc_busy_) {
+      validator_cv_.wait(lock);
       continue;
+    }
+    if (completed_writes_ > published_writes_ ||
+        native_changes_ > published_native_changes_ || NeedsBlobCheckpoint())
+      MarkDirty();
+    const bool requested = requested_point_ > published_request_;
+    if (!requested) {
+      if (!dirty_since_micros_) {
+        TEST_SYNC_POINT("MetaBypass::CheckpointIdle");
+        validator_cv_.wait(lock);
+        continue;
+      }
+      uint64_t deadline =
+          dirty_since_micros_ + options_.checkpoint_interval_ms * 1000;
+      uint64_t now = Now();
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::CheckpointNow", &now);
+      if (now < deadline) {
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::CheckpointDeadline", &deadline);
+        uint64_t wait_micros = deadline - now;
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::CheckpointWaitMicros",
+                                 &wait_micros);
+        validator_cv_.wait_for(lock, std::chrono::microseconds(wait_micros));
+        continue;
+      }
+    }
     candidate_busy_ = true;
     auto candidate = std::make_unique<Candidate>();
     candidate->started = Now();
-    candidate->oldest = oldest_unpublished_micros_ ? oldest_unpublished_micros_
-                                                   : candidate->started;
-    oldest_unpublished_micros_ = 0;
+    candidate->oldest =
+        dirty_since_micros_ ? dirty_since_micros_ : candidate->started;
+    dirty_since_micros_ = 0;
     candidate->writes = completed_writes_;
     candidate->request = requested_point_;
+    candidate->native_changes = native_changes_;
     DB* db = db_;
     lock.unlock();
+    TEST_SYNC_POINT("MetaBypass::CheckpointBoundary");
     Status s = db->DisableFileDeletions();
     const bool pinned = s.ok();
     if (s.ok()) {
       TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
       LiveFilesStorageInfoOptions options;
-      options.wal_size_for_flush = std::numeric_limits<uint64_t>::max();
+      const bool direct = db_options_.enable_blob_direct_write;
+      options.wal_size_for_flush =
+          direct ? 0 : std::numeric_limits<uint64_t>::max();
+      options.include_wal_files = !direct;
+      const uint64_t capture_started = Now();
       s = db->GetLiveFilesStorageInfo(options, &candidate->files);
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+      {
+        std::lock_guard<std::mutex> stats_lock(mutex_);
+        const uint64_t elapsed = Now() - capture_started;
+        ++stats_.checkpoint_captures;
+        stats_.checkpoint_capture_micros += elapsed;
+        if (direct) stats_.checkpoint_flush_micros += elapsed;
+      }
       if (s.ok()) {
         // Native checkpoints do not preserve IDENTITY. Metabypass binds the
         // independently routed directories to this immutable database owner.
@@ -919,10 +958,18 @@ void Backup::ValidateLoop() {
       s.UpdateIfOk(db->EnableFileDeletions());
       TEST_SYNC_POINT("MetaBypass::NativeFilesReleased");
     }
-    if (s.ok()) s = Publish(*candidate);
+    if (s.ok()) {
+      const uint64_t publish_started = Now();
+      s = Publish(*candidate);
+      std::lock_guard<std::mutex> stats_lock(mutex_);
+      stats_.checkpoint_publish_micros += Now() - publish_started;
+    }
     if (!s.ok()) Fail(s);
     lock.lock();
     candidate_busy_ = false;
+    // Retained roots can require one more point after the current publication.
+    // New writes and listener events already own their first-event deadline.
+    if (s.ok() && NeedsBlobCheckpoint()) MarkDirty();
     gc_cv_.notify_all();
     sync_cv_.notify_all();
   }
@@ -1020,6 +1067,7 @@ void Backup::GarbageCollectLoop() {
     lock.lock();
     stats_.blob_gc_micros += Now() - started;
     blob_gc_busy_ = false;
+    validator_cv_.notify_one();
     WakeMirror();
     gc_cv_.notify_all();
     if (!s.ok()) break;
@@ -1029,6 +1077,18 @@ void Backup::GarbageCollectLoop() {
 void Backup::WriteCompleted() {
   std::lock_guard<std::mutex> lock(mutex_);
   ++completed_writes_;
+  MarkDirty();
+}
+void Backup::NativeFilesChanged() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ++native_changes_;
+  MarkDirty();
+}
+void Backup::MarkDirty() {
+  if (!dirty_since_micros_) {
+    dirty_since_micros_ = Now();
+    validator_cv_.notify_one();
+  }
 }
 Status Backup::Sync() {
   std::unique_lock<std::mutex> lock(mutex_);

@@ -644,6 +644,7 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
 
   bool own_files = OwnTablesAndLogs();
   std::unordered_set<uint64_t> files_to_del;
+  std::unordered_set<uint64_t> deferred_blob_files;
   for (const auto& candidate_file : candidate_files) {
     const std::string& to_delete = candidate_file.file_name;
     uint64_t number;
@@ -688,16 +689,22 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
         }
         break;
       case kBlobFile: {
+        const bool protected_direct_write_file =
+            state.active_blob_direct_write_files.find(number) !=
+            state.active_blob_direct_write_files.end();
         keep = number >= state.min_pending_output ||
                number >= state.min_blob_file_number_to_keep ||
                (blob_live_set.find(number) != blob_live_set.end()) ||
-               (state.active_blob_direct_write_files.find(number) !=
-                state.active_blob_direct_write_files.end());
+               protected_direct_write_file;
+        if (protected_direct_write_file) {
+          deferred_blob_files.insert(number);
+        }
         if (!keep) {
           const std::string blob_file_path =
               BlobFileName(candidate_file.file_path, number);
           if (ShouldKeepBlobFileDuringPurge(number, blob_file_path)) {
             keep = true;
+            deferred_blob_files.insert(number);
             break;
           }
           TableCache::Evict(table_cache_.get(), number);
@@ -794,6 +801,18 @@ void DBImpl::PurgeObsoleteFiles(JobContext& state, bool schedule_only) {
     }
     for (auto fn : to_be_removed) {
       files_grabbed_for_purge_.erase(fn);
+    }
+    // VersionSet transferred these obsolete blobs to this job, but a live
+    // direct-write memtable can still protect them. Release only this job's
+    // reservations so a later full scan can retry after protection ends.
+    // Full-scan candidates do not establish ownership of a reservation.
+    for (const auto& blob_file : state.blob_delete_files) {
+      uint64_t number = blob_file.GetBlobFileNumber();
+      if (deferred_blob_files.count(number)) {
+        files_grabbed_for_purge_.erase(number);
+        TEST_SYNC_POINT_CALLBACK(
+            "DBImpl::PurgeObsoleteFiles:ReleaseDeferredBlob", &number);
+      }
     }
   }
 

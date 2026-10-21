@@ -203,6 +203,20 @@ Status DBImpl::GetLiveFilesStorageInfo(
   files->clear();
   std::vector<LiveFileStorageInfo> results;
 
+  if (!opts.include_wal_files) {
+    if (opts.wal_size_for_flush != 0) {
+      return Status::InvalidArgument(
+          "Excluding WAL files requires wal_size_for_flush=0");
+    }
+    if (read_only_ || immutable_db_options_.allow_2pc ||
+        immutable_db_options_.track_and_verify_wals ||
+        immutable_db_options_.track_and_verify_wals_in_manifest) {
+      return Status::NotSupported(
+          "Excluding WAL files requires a writable DB without 2PC or WAL "
+          "tracking");
+    }
+  }
+
   // NOTE: This implementation was largely migrated from Checkpoint.
 
   VectorWalPtr live_wal_files;
@@ -242,9 +256,30 @@ Status DBImpl::GetLiveFilesStorageInfo(
   // This is a modified version of GetLiveFiles, to get access to more
   // metadata.
   mutex_.Lock();
+  uint32_t max_column_family = 0;
+  auto validate_without_wals = [&]() -> Status {
+    mutex_.AssertHeld();
+    if (versions_->GetColumnFamilySet()->NumberOfColumnFamilies() != 1) {
+      return Status::NotSupported(
+          "Excluding WAL files requires exactly one column family");
+    }
+    if (!lock_wal_owner_thread_id_counts_.empty()) {
+      return Status::NotSupported(
+          "Excluding WAL files requires the WAL to be unlocked");
+    }
+    return Status::OK();
+  };
+  if (!opts.include_wal_files) {
+    Status status = validate_without_wals();
+    if (!status.ok()) {
+      mutex_.Unlock();
+      return status;
+    }
+    max_column_family = versions_->GetColumnFamilySet()->GetMaxColumnFamily();
+  }
   bool wal_locked = false;
   const bool needs_blob_direct_write_flush =
-      HasInFlightBlobDirectWriteFilesWithLockHeld();
+      opts.include_wal_files && HasInFlightBlobDirectWriteFilesWithLockHeld();
   if (needs_blob_direct_write_flush && !flush_memtable) {
     mutex_.Unlock();
     return Status::NotSupported(
@@ -274,6 +309,22 @@ Status DBImpl::GetLiveFilesStorageInfo(
                         "Cannot Flush data %s\n", status.ToString().c_str());
         return status;
       }
+    }
+  }
+
+  if (!opts.include_wal_files) {
+    // Flush releases the DB mutex. Validate the supported CF configuration
+    // again under the same lock used to capture Version and MANIFEST state.
+    Status status = validate_without_wals();
+    if (status.ok() &&
+        max_column_family !=
+            versions_->GetColumnFamilySet()->GetMaxColumnFamily()) {
+      status = Status::NotSupported(
+          "Column families changed while capturing files without WALs");
+    }
+    if (!status.ok()) {
+      mutex_.Unlock();
+      return status;
     }
   }
 
@@ -410,6 +461,16 @@ Status DBImpl::GetLiveFilesStorageInfo(
 
   TEST_SYNC_POINT("CheckpointImpl::CreateCheckpoint:SavedLiveFiles1");
   TEST_SYNC_POINT("CheckpointImpl::CreateCheckpoint:SavedLiveFiles2");
+
+  if (!opts.include_wal_files) {
+    // Flush completed before the Version/MANIFEST capture above. Later writes
+    // can create new active blob files, but their WAL references are omitted
+    // along with the files. Only manifest-visible blobs belong to this view.
+    *files = std::move(results);
+    return Status::OK();
+  }
+
+  TEST_SYNC_POINT("DBImpl::GetLiveFilesStorageInfo:WALCapture");
 
   // FlushWAL is required to ensure we can physically copy everything
   // logically written to the WAL. (Sync not strictly required for

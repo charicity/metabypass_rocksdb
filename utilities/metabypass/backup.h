@@ -27,6 +27,8 @@ class Backup : public FileSystemWrapper {
   Status Start(bool existing);
   Status Activate(const std::string& identity, DB* db);
   void WriteCompleted();
+  // Listener notification only; never performs I/O or waits for a checkpoint.
+  void NativeFilesChanged();
   void DetachDB();
   Status Sync();
   Status Stop();
@@ -91,7 +93,7 @@ class Backup : public FileSystemWrapper {
   Status Apply(const Event& event);
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
-    uint64_t writes = 0, request = 0;
+    uint64_t writes = 0, request = 0, native_changes = 0;
     std::vector<LiveFileStorageInfo> files;
     std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
@@ -112,6 +114,7 @@ class Backup : public FileSystemWrapper {
   void GarbageCollectLoop();
   bool BlobEligible(uint64_t number, uint64_t seq) const;
   bool NeedsBlobCheckpoint() const;
+  void MarkDirty();  // Requires mutex_. Keeps the first pending deadline.
   struct Point {
     std::string reference;
     uint64_t bytes = 0;
@@ -146,10 +149,11 @@ class Backup : public FileSystemWrapper {
   DB* db_ = nullptr;
   std::string identity_;
   uint64_t completed_writes_ = 0, published_writes_ = 0;
+  uint64_t native_changes_ = 0, published_native_changes_ = 0;
   uint64_t requested_point_ = 0, published_request_ = 0;
   bool capture_done_ = false;
   Status capture_status_;
-  uint64_t oldest_unpublished_micros_ = 0;
+  uint64_t dirty_since_micros_ = 0;
   bool stopping_ = false;
   bool active_ = false;
   bool candidate_busy_ = false, mirror_done_ = false;

@@ -2108,6 +2108,8 @@ class DB {
   // live copies (Checkpoint, backups, etc.) or other storage-related purposes.
   // If creating a live copy, use DisableFileDeletions() before and
   // EnableFileDeletions() after to prevent deletions.
+  // See LiveFilesStorageInfoOptions::include_wal_files for a flushed view
+  // that can be recovered without copying WAL files.
   // For LSM-tree metadata, use Get*MetaData() functions instead.
   virtual Status GetLiveFilesStorageInfo(
       const LiveFilesStorageInfoOptions& opts,

@@ -57,6 +57,10 @@ struct MetaBypassOptions {
   // Wake the worker on this many pending bytes or after interval_ms.
   size_t batch_bytes = 256 * 1024;
   uint64_t interval_ms = 1000;
+  // Start a checkpoint this long after the first uncovered write or native
+  // file change. Later work does not postpone the deadline. Idle databases
+  // have no checkpoint timer. Explicit barriers bypass this batching delay.
+  uint64_t checkpoint_interval_ms = 5000;
   // Optional fast blob staging. Empty preserves the original storage mode.
   // With staging enabled, data_dir and backup_dir must survive staging loss.
   std::string staging_dir;
@@ -84,6 +88,13 @@ struct MetaBypassStats {
   uint64_t mirrored_wal_bytes = 0;
   uint64_t recovery_points = 0;
   uint64_t checkpoint_wait_micros = 0;
+  // Attempts and cumulative phase times, including failed attempts. Capture
+  // includes the native flush when Direct Write is enabled. The flush counter
+  // measures that entire native call, not just the flush job. Publish includes
+  // Persist, checksums and the durable pointer update.
+  uint64_t checkpoint_captures = 0;
+  uint64_t checkpoint_capture_micros = 0, checkpoint_flush_micros = 0;
+  uint64_t checkpoint_persist_micros = 0, checkpoint_publish_micros = 0;
   uint64_t staging_spill_files = 0, staging_spill_bytes = 0;
   uint64_t tier_queued_bytes = 0, peak_tier_queued_bytes = 0;
   uint64_t hdd_extents = 0;
@@ -116,8 +127,12 @@ struct MetaBypassStats {
 // Open, Restore and Close require exclusive application ownership.
 class MetaBypassDB {
  public:
-  // Uses Integrated BlobDB with min_blob_size=0. WAL and memtable retain
-  // complete values until flush. Rejects Direct Write and old database formats.
+  // Uses Integrated BlobDB with min_blob_size=0. Direct Write follows
+  // Options::enable_blob_direct_write and requires concurrent memtable writes
+  // and MemPurge to be disabled. Direct Write checkpoints flush through the
+  // native engine and omit WALs; otherwise checkpoints retain full-value WALs.
+  // Crash recovery with Direct Write is guaranteed through Restore of a
+  // published point, not through unregistered active blobs in the primary DB.
   // Options::env must outlive this object.
   static Status Open(const Options& options, const MetaBypassOptions& bypass,
                      const std::string& index_dir,
@@ -143,8 +158,9 @@ class MetaBypassDB {
   Iterator* NewIterator(const ReadOptions&);
   Status Flush(const FlushOptions&);
   Status CompactRange(const CompactRangeOptions&, const Slice*, const Slice*);
-  // Publishes a point covering writes completed before this call. No flush
-  // is forced; concurrent writes may or may not be included.
+  // Publishes a point covering writes completed before this call. Direct Write
+  // permits a native flush; the ordinary BlobDB path does not force one.
+  // Concurrent writes may or may not be included.
   Status SyncBackup();
   MetaBypassStats GetBackupStats() const;
   // Exclusive with all other operations. Publishes before closing the DB,

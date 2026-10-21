@@ -1,3 +1,9 @@
+> 本文保留此前默认 DirectWrite 关闭路径的验证记录。新增 DirectWrite 路径要求
+> `allow_concurrent_memtable_write=false`，检查点调用原生 flush 并排除 WAL，默认独立检查点间隔
+> 为 5000 ms；恢复以已发布点 Restore 为边界，不保证 active Blob WAL 本地 crash 重开。
+> 新路径当前测试和性能验收须单独记录，不能由下列历史通过项推导。
+> 参见[三臂、三轮162样本协议](experiments/direct-write/README.zh-CN.md)。
+
 # Native checkpoint 改造验收记录
 
 记录日期：2026-10-16 UTC。当前状态：**本轮指定的实现、6 个 binary 功能回归、coerce 重复压力和本地 release db_bench 验收已完成**。

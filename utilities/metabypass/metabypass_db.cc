@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "rocksdb/convenience.h"
+#include "rocksdb/listener.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/write_batch.h"
 #include "utilities/metabypass/backup.h"
@@ -85,6 +86,13 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
       m.batch_bytes > m.queue_capacity || m.interval_ms == 0 ||
       m.interval_ms > std::numeric_limits<int64_t>::max())
     return Status::InvalidArgument("invalid Metabypass queue configuration");
+  const auto max_interval =
+      std::chrono::duration_cast<std::chrono::duration<uint64_t, std::milli>>(
+          std::chrono::steady_clock::duration::max())
+          .count() /
+      2;
+  if (!m.checkpoint_interval_ms || m.checkpoint_interval_ms > max_interval)
+    return Status::InvalidArgument("invalid Metabypass checkpoint interval");
   const auto& tier = m.sst_tiering;
   if (tier.mode != SstTieringMode::kDisabled &&
       (tier.mode != SstTieringMode::kObserveOnly &&
@@ -106,14 +114,19 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
     return Status::NotSupported("Metabypass requires write_identity_file");
   if (o.compaction_service)
     return Status::NotSupported("Metabypass remote compaction service");
-  if (o.enable_blob_direct_write || o.enable_pipelined_write ||
-      o.unordered_write || o.two_write_queues || o.manual_wal_flush ||
-      o.sst_file_manager || o.use_direct_io_for_flush_and_compaction ||
-      o.use_direct_reads || o.allow_mmap_writes || !o.db_paths.empty() ||
-      !o.cf_paths.empty() || !o.wal_dir.empty() || o.recycle_log_file_num ||
-      o.WAL_ttl_seconds || o.WAL_size_limit_MB || o.wal_filter ||
-      o.track_and_verify_wals || o.track_and_verify_wals_in_manifest ||
-      o.merge_operator || o.compaction_filter || o.compaction_filter_factory ||
+  if (o.enable_blob_direct_write && (o.allow_concurrent_memtable_write ||
+                                     o.experimental_mempurge_threshold > 0.0))
+    return Status::NotSupported(
+        "Metabypass Direct Write requires concurrent memtable writes and "
+        "MemPurge to be disabled");
+  if (o.enable_pipelined_write || o.unordered_write || o.two_write_queues ||
+      o.manual_wal_flush || o.sst_file_manager ||
+      o.use_direct_io_for_flush_and_compaction || o.use_direct_reads ||
+      o.allow_mmap_writes || !o.db_paths.empty() || !o.cf_paths.empty() ||
+      !o.wal_dir.empty() || o.recycle_log_file_num || o.WAL_ttl_seconds ||
+      o.WAL_size_limit_MB || o.wal_filter || o.track_and_verify_wals ||
+      o.track_and_verify_wals_in_manifest || o.merge_operator ||
+      o.compaction_filter || o.compaction_filter_factory ||
       o.comparator != BytewiseComparator() ||
       o.enable_blob_garbage_collection || o.best_efforts_recovery ||
       o.persist_stats_to_disk || o.allow_ingest_behind ||
@@ -143,6 +156,22 @@ class SupportedBatch : public WriteBatch::Handler {
     return cf == 0 ? Status::OK()
                    : Status::NotSupported("Metabypass multiple CFs");
   }
+};
+class BackupListener : public EventListener {
+ public:
+  explicit BackupListener(std::weak_ptr<metabypass::Backup> backup)
+      : backup_(std::move(backup)) {}
+  const char* Name() const override { return "MetaBypassBackupListener"; }
+  void OnFlushCompleted(DB*, const FlushJobInfo&) override { Notify(); }
+  void OnCompactionCompleted(DB*, const CompactionJobInfo& info) override {
+    if (info.status.ok()) Notify();
+  }
+
+ private:
+  void Notify() {
+    if (auto backup = backup_.lock()) backup->NativeFilesChanged();
+  }
+  const std::weak_ptr<metabypass::Backup> backup_;
 };
 }  // namespace
 struct MetaBypassDB::Impl {
@@ -301,7 +330,8 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   Options configured = options;
   configured.env = impl->env.get();
   configured.enable_blob_files = true;
-  configured.enable_blob_direct_write = false;
+  configured.listeners.push_back(
+      std::make_shared<BackupListener>(impl->backup));
   configured.min_blob_size = 0;
   configured.enable_blob_garbage_collection = false;
   s = DB::Open(configured, index, &impl->db);

@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <utility>
 
@@ -217,6 +218,31 @@ class CheckpointTest : public testing::Test {
     } else {
       return db_->Flush(FlushOptions(), handles_[cf]);
     }
+  }
+
+  Status CopyLiveFilesToSnapshot(
+      const std::vector<LiveFileStorageInfo>& files) {
+    Status s = env_->CreateDir(snapshot_name_);
+    if (!s.ok()) {
+      return s;
+    }
+    for (const auto& file : files) {
+      const std::string destination =
+          snapshot_name_ + "/" + file.relative_filename;
+      if (!file.replacement_contents.empty()) {
+        s = WriteStringToFile(env_, file.replacement_contents, destination,
+                              /*should_sync=*/true);
+      } else {
+        s = CopyFile(env_->GetFileSystem(),
+                     file.directory + "/" + file.relative_filename,
+                     Temperature::kUnknown, destination, Temperature::kUnknown,
+                     file.size, /*use_fsync=*/true, /*io_tracer=*/nullptr);
+      }
+      if (!s.ok()) {
+        return s;
+      }
+    }
+    return s;
   }
 
   Status Put(const Slice& k, const Slice& v, WriteOptions wo = WriteOptions()) {
@@ -1177,6 +1203,247 @@ TEST_P(CheckpointDestroyTest, DisableEnableSlowDeletion) {
 }
 INSTANTIATE_TEST_CASE_P(CheckpointDestroyTest, CheckpointDestroyTest,
                         ::testing::Values(true, false));
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALConcurrentDirectWrite) {
+  Options options = CurrentOptions();
+  options.enable_blob_files = true;
+  options.enable_blob_direct_write = true;
+  options.allow_concurrent_memtable_write = false;
+  options.min_blob_size = 0;
+  options.write_buffer_size = 64 * 1024 * 1024;
+  options.disable_auto_compactions = true;
+  Reopen(options);
+
+  const std::string before(128, 'b');
+  const std::string after(128, 'a');
+  ASSERT_OK(Put("key", before));
+  ASSERT_OK(db_->DisableFileDeletions());
+
+  bool captured_wal = false;
+  SyncPoint::GetInstance()->SetCallBack(
+      "DBImpl::GetLiveFilesStorageInfo:WALCapture",
+      [&](void*) { captured_wal = true; });
+  SyncPoint::GetInstance()->LoadDependency(
+      {{"DBImpl::FlushAllColumnFamilies:1", "WALFreeFiles::WriteAfterFlush"},
+       {"WALFreeFiles::WroteAfterFlush", "DBImpl::FlushAllColumnFamilies:2"},
+       {"CheckpointImpl::CreateCheckpoint:SavedLiveFiles1",
+        "WALFreeFiles::WriteAfterCapture"},
+       {"WALFreeFiles::WroteAfterCapture",
+        "CheckpointImpl::CreateCheckpoint:SavedLiveFiles2"}});
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status after_flush;
+  Status after_capture;
+  port::Thread writer([&] {
+    TEST_SYNC_POINT("WALFreeFiles::WriteAfterFlush");
+    after_flush = Put("key", after);
+    TEST_SYNC_POINT("WALFreeFiles::WroteAfterFlush");
+    TEST_SYNC_POINT("WALFreeFiles::WriteAfterCapture");
+    after_capture = Put("later", after);
+    TEST_SYNC_POINT("WALFreeFiles::WroteAfterCapture");
+  });
+
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  std::vector<LiveFileStorageInfo> files;
+  Status capture = db_->GetLiveFilesStorageInfo(live_options, &files);
+  writer.join();
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->LoadDependency({});
+  ASSERT_OK(capture);
+  ASSERT_OK(after_flush);
+  ASSERT_OK(after_capture);
+  ASSERT_FALSE(captured_wal);
+  bool has_blob = false;
+  for (const auto& file : files) {
+    ASSERT_NE(file.file_type, kWalFile);
+    has_blob |= file.file_type == kBlobFile;
+  }
+  ASSERT_TRUE(has_blob);
+  ASSERT_OK(CopyLiveFilesToSnapshot(files));
+  ASSERT_OK(db_->EnableFileDeletions());
+
+  // Open the captured files while the source still owns active blob files.
+  options.create_if_missing = false;
+  std::unique_ptr<DB> snapshot;
+  ASSERT_OK(DB::Open(options, snapshot_name_, &snapshot));
+  std::string value;
+  ASSERT_OK(snapshot->Get(ReadOptions(), "key", &value));
+  ASSERT_EQ(before, value);
+  ASSERT_TRUE(snapshot->Get(ReadOptions(), "later", &value).IsNotFound());
+  ASSERT_EQ(after, Get("key"));
+  ASSERT_EQ(after, Get("later"));
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALEmptyAndAtomicFlush) {
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  live_options.atomic_flush = true;
+  std::vector<LiveFileStorageInfo> files;
+  ASSERT_OK(db_->GetLiveFilesStorageInfo(live_options, &files));
+  ASSERT_FALSE(files.empty());
+  for (const auto& file : files) {
+    ASSERT_NE(file.file_type, kWalFile);
+  }
+
+  ASSERT_OK(Put("key", "value"));
+  ASSERT_OK(db_->DisableFileDeletions());
+  ASSERT_OK(db_->GetLiveFilesStorageInfo(live_options, &files));
+  bool has_table = false;
+  for (const auto& file : files) {
+    ASSERT_NE(file.file_type, kWalFile);
+    has_table |= file.file_type == kTableFile;
+  }
+  ASSERT_TRUE(has_table);
+  ASSERT_OK(CopyLiveFilesToSnapshot(files));
+  ASSERT_OK(db_->EnableFileDeletions());
+  std::unique_ptr<DB> snapshot;
+  ASSERT_OK(DB::Open(CurrentOptions(), snapshot_name_, &snapshot));
+  std::string value;
+  ASSERT_OK(snapshot->Get(ReadOptions(), "key", &value));
+  ASSERT_EQ("value", value);
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALDefaultStillIncludesWAL) {
+  ASSERT_OK(Put("key", "value"));
+  LiveFilesStorageInfoOptions live_options;
+  ASSERT_TRUE(live_options.include_wal_files);
+  live_options.wal_size_for_flush = std::numeric_limits<uint64_t>::max();
+  std::vector<LiveFileStorageInfo> files;
+  ASSERT_OK(db_->GetLiveFilesStorageInfo(live_options, &files));
+  bool has_wal = false;
+  for (const auto& file : files) {
+    has_wal |= file.file_type == kWalFile;
+  }
+  ASSERT_TRUE(has_wal);
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALRejectsFlushThreshold) {
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  for (uint64_t threshold :
+       {uint64_t{1}, std::numeric_limits<uint64_t>::max()}) {
+    live_options.wal_size_for_flush = threshold;
+    std::vector<LiveFileStorageInfo> files(1);
+    Status s = db_->GetLiveFilesStorageInfo(live_options, &files);
+    ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
+    ASSERT_TRUE(files.empty());
+  }
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALRejectsUnsupportedDBOptions) {
+  for (int setting = 0; setting < 3; ++setting) {
+    SCOPED_TRACE(setting);
+    Options options = CurrentOptions();
+    options.allow_2pc = setting == 0;
+    options.track_and_verify_wals = setting == 1;
+    options.track_and_verify_wals_in_manifest = setting == 2;
+    DestroyAndReopen(options);
+    ASSERT_OK(Put("key", "value"));
+    LiveFilesStorageInfoOptions live_options;
+    live_options.include_wal_files = false;
+    std::vector<LiveFileStorageInfo> files(1);
+    Status s = db_->GetLiveFilesStorageInfo(live_options, &files);
+    ASSERT_TRUE(s.IsNotSupported()) << s.ToString();
+    ASSERT_TRUE(files.empty());
+  }
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALRejectsReadOnly) {
+  ASSERT_OK(Put("key", "value"));
+  Close();
+  ASSERT_OK(ReadOnlyReopen(CurrentOptions()));
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  std::vector<LiveFileStorageInfo> files(1);
+  Status s = db_->GetLiveFilesStorageInfo(live_options, &files);
+  ASSERT_TRUE(s.IsNotSupported()) << s.ToString();
+  ASSERT_TRUE(files.empty());
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALRejectsLockedWAL) {
+  ASSERT_OK(Put("key", "value"));
+  ASSERT_OK(db_->LockWAL());
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  std::vector<LiveFileStorageInfo> files(1);
+  Status same_thread = db_->GetLiveFilesStorageInfo(live_options, &files);
+  ASSERT_TRUE(same_thread.IsNotSupported()) << same_thread.ToString();
+  ASSERT_TRUE(files.empty());
+  Status other_thread;
+  port::Thread capture([&] {
+    other_thread = db_->GetLiveFilesStorageInfo(live_options, &files);
+  });
+  capture.join();
+  ASSERT_OK(db_->UnlockWAL());
+  ASSERT_TRUE(other_thread.IsNotSupported()) << other_thread.ToString();
+  ASSERT_TRUE(files.empty());
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALRejectsMultipleColumnFamilies) {
+  CreateAndReopenWithCF({"other"}, CurrentOptions());
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  std::vector<LiveFileStorageInfo> files(1);
+  Status s = db_->GetLiveFilesStorageInfo(live_options, &files);
+  ASSERT_TRUE(s.IsNotSupported()) << s.ToString();
+  ASSERT_TRUE(files.empty());
+}
+
+TEST_F(CheckpointTest,
+       LiveFilesWithoutWALRejectsConcurrentColumnFamilyCreation) {
+  for (bool drop_before_capture : {false, true}) {
+    SCOPED_TRACE(drop_before_capture);
+    ASSERT_OK(Put("key", "value"));
+    SyncPoint::GetInstance()->LoadDependency(
+        {{"DBImpl::FlushAllColumnFamilies:1", "WALFreeFiles::CreateCF"},
+         {"WALFreeFiles::CreatedCF", "DBImpl::FlushAllColumnFamilies:2"}});
+    SyncPoint::GetInstance()->EnableProcessing();
+    ColumnFamilyHandle* cf = nullptr;
+    Status create;
+    Status drop;
+    port::Thread create_thread([&] {
+      TEST_SYNC_POINT("WALFreeFiles::CreateCF");
+      create = db_->CreateColumnFamily(ColumnFamilyOptions(), "other", &cf);
+      if (create.ok() && drop_before_capture) {
+        drop = db_->DropColumnFamily(cf);
+      }
+      TEST_SYNC_POINT("WALFreeFiles::CreatedCF");
+    });
+    LiveFilesStorageInfoOptions live_options;
+    live_options.include_wal_files = false;
+    std::vector<LiveFileStorageInfo> files(1);
+    Status capture = db_->GetLiveFilesStorageInfo(live_options, &files);
+    create_thread.join();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->LoadDependency({});
+    ASSERT_OK(create);
+    ASSERT_OK(drop);
+    ASSERT_TRUE(capture.IsNotSupported()) << capture.ToString();
+    ASSERT_TRUE(files.empty());
+    if (!drop_before_capture) {
+      ASSERT_OK(db_->DropColumnFamily(cf));
+    }
+    ASSERT_OK(db_->DestroyColumnFamilyHandle(cf));
+  }
+}
+
+TEST_F(CheckpointTest, LiveFilesWithoutWALFlushFailure) {
+  ASSERT_OK(Put("key", "value"));
+  SyncPoint::GetInstance()->SetCallBack(
+      "FlushJob::WriteLevel0Table:s", [](void* arg) {
+        auto* status = static_cast<Status*>(arg);
+        status->PermitUncheckedError();
+        *status = Status::IOError("injected flush failure");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  LiveFilesStorageInfoOptions live_options;
+  live_options.include_wal_files = false;
+  std::vector<LiveFileStorageInfo> files(1);
+  Status s = db_->GetLiveFilesStorageInfo(live_options, &files);
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_TRUE(s.IsIOError()) << s.ToString();
+  ASSERT_TRUE(files.empty());
+}
 
 TEST_F(CheckpointTest, CheckpointCFAtomicFlushOverride) {
   // Test that LiveFilesStorageInfoOptions::atomic_flush forces atomic flush

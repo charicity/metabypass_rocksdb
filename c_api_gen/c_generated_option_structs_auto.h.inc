@@ -925,6 +925,14 @@ extern ROCKSDB_LIBRARY_API unsigned char
 rocksdb_livefiles_storage_info_options_get_atomic_flush(
     rocksdb_livefiles_storage_info_options_t* opt);
 
+extern ROCKSDB_LIBRARY_API void
+rocksdb_livefiles_storage_info_options_set_include_wal_files(
+    rocksdb_livefiles_storage_info_options_t* opt, unsigned char v);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_livefiles_storage_info_options_get_include_wal_files(
+    rocksdb_livefiles_storage_info_options_t* opt);
+
 /* GetColumnFamilyMetaDataOptions */
 
 extern ROCKSDB_LIBRARY_API void

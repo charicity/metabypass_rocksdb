@@ -10,6 +10,7 @@
 #include <limits>
 #include <set>
 
+#include "test_util/sync_point.h"
 #include "util/crc32c.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -81,6 +82,36 @@ Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
     if (s.ok() && actual != expected)
       s = Status::Corruption("copied file checksum mismatch", to);
   }
+  return s;
+}
+Status StageCopy(FileSystem* fs, const std::string& from, const std::string& to,
+                 uint64_t length, StagedCopy* result) {
+  std::unique_ptr<FSSequentialFile> in;
+  std::unique_ptr<FSWritableFile> out;
+  Status s = fs->NewSequentialFile(from, FileOptions(), &in, nullptr);
+  if (s.ok()) s = fs->NewWritableFile(to, FileOptions(), &out, nullptr);
+  if (!s.ok()) return s;
+  std::array<char, 65536> buf;
+  StagedCopy staged;
+  while (s.ok() && staged.length < length) {
+    Slice part;
+    const size_t requested =
+        std::min<uint64_t>(length - staged.length, buf.size());
+    s = in->Read(requested, IOOptions(), &part, buf.data(), nullptr);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::StageCopyReadStatus", &s);
+    if (!s.ok()) break;
+    if (part.empty() || part.size() > requested) {
+      s = Status::Corruption("invalid staged copy read length", from);
+      break;
+    }
+    staged.crc = crc32c::Extend(staged.crc, part.data(), part.size());
+    s = out->Append(part, IOOptions(), nullptr);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::StageCopyAppendStatus", &s);
+    staged.length += part.size();
+  }
+  s.UpdateIfOk(out->Close(IOOptions(), nullptr));
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::StageCopyCloseStatus", &s);
+  if (s.ok()) *result = staged;
   return s;
 }
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,

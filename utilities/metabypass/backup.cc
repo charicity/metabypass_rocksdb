@@ -590,8 +590,10 @@ Status Backup::Capture(Candidate* candidate) {
         s = disk_->LinkFile(source, destination, IOOptions(), nullptr);
       }
       if (!immutable || !s.ok()) {
-        s = Copy(disk_, source, destination, info.size);
+        StagedCopy staged;
+        s = StageCopy(disk_, source, destination, info.size, &staged);
         if (s.ok()) {
+          candidate->staged.emplace(file, staged);
           std::lock_guard<std::mutex> lock(mutex_);
           stats_.candidate_copied_bytes += info.size;
         }
@@ -646,6 +648,7 @@ Status Backup::Publish(const Candidate& candidate) {
     FileType type;
     const bool table =
         ParseFileName(f.first, &number, &type) && type == kTableFile;
+    TEST_SYNC_POINT("MetaBypass::BeforeCandidateFileSync");
     if (!table) {
       std::unique_ptr<FSWritableFile> writer;
       s = disk_->ReopenWritableFile(point + "/" + f.first, FileOptions(),
@@ -658,13 +661,26 @@ Status Backup::Publish(const Candidate& candidate) {
       s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
                           true, nullptr);
     }
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileSyncStatus", &s);
     if (!s.ok()) return s;
     auto& digest = digest_cache_[f.first];
     const uint64_t epoch = candidate.epochs.at(f.first);
-    if (digest.epoch != epoch || digest.length > f.second)
-      digest = FileDigest();
-    s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
-                     &digest.crc);
+    const auto staged = candidate.staged.find(f.first);
+    if (staged != candidate.staged.end()) {
+      // A fresh copy must verify its prefix too, even when the source epoch
+      // and length match the preceding recovery point's cached digest.
+      TEST_SYNC_POINT("MetaBypass::BeforeCandidateFileReadback");
+      s = Digest(disk_, point + "/" + f.first, f.second, &digest.crc);
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileReadbackStatus", &s);
+      if (s.ok() && (staged->second.length != f.second ||
+                     staged->second.crc != digest.crc))
+        s = Status::Corruption("staged file checksum mismatch", f.first);
+    } else {
+      if (digest.epoch != epoch || digest.length > f.second)
+        digest = FileDigest();
+      s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
+                       &digest.crc);
+    }
     if (!s.ok()) return s;
     digest.epoch = epoch;
     digest.length = f.second;
@@ -723,6 +739,7 @@ Status Backup::Publish(const Candidate& candidate) {
                           options_.backup_dir + "/LATEST", IOOptions(),
                           nullptr);
     if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::PointerDirectorySyncStatus", &s);
     if (!s.ok()) return s;
     {
       std::lock_guard<std::mutex> lock(mutex_);

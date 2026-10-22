@@ -20,6 +20,15 @@ Status EnsureDir(FileSystem* fs, const std::string& path);
 Status SyncDir(FileSystem* fs, const std::string& path);
 Status Copy(FileSystem* fs, const std::string& from, const std::string& to,
             uint64_t length);
+struct StagedCopy {
+  uint64_t length = 0;
+  uint32_t crc = 0;
+};
+// Copies an independent byte snapshot and closes it without syncing or reading
+// it back. The caller must sync and verify the entire destination before use as
+// a recovery point. The result is set only after a successful Close.
+Status StageCopy(FileSystem* fs, const std::string& from, const std::string& to,
+                 uint64_t length, StagedCopy* result);
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
               uint32_t* crc);
 // Extend an existing CRC with [begin, end), without rereading its prefix.

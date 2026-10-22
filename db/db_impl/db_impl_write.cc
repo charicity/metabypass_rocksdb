@@ -615,16 +615,18 @@ Status DBImpl::MaybeTransformBatchForBlobDirectWrite(
   Status s = BlobWriteBatchTransformer::TransformBatch(
       write_options, *batch, transformed_storage, partition_mgr_provider,
       settings_provider, &transformed, &batch_managers, &batch_rollbacks);
+  // A transformer can fail after appending records (including part of a
+  // wide entity). Preserve those rollback records before returning the error.
+  blob_direct_write_ctx->rollback_infos.insert(
+      blob_direct_write_ctx->rollback_infos.end(), batch_rollbacks.begin(),
+      batch_rollbacks.end());
+  blob_direct_write_ctx->touched_managers.insert(batch_managers.begin(),
+                                               batch_managers.end());
   if (!s.ok()) {
     return s;
   }
   if (transformed) {
     *batch = transformed_storage;
-    blob_direct_write_ctx->touched_managers.insert(batch_managers.begin(),
-                                                   batch_managers.end());
-    blob_direct_write_ctx->rollback_infos.insert(
-        blob_direct_write_ctx->rollback_infos.end(), batch_rollbacks.begin(),
-        batch_rollbacks.end());
   }
   return Status::OK();
 }

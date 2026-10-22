@@ -100,6 +100,7 @@ class Backup : public FileSystemWrapper {
     NativeState state;
     std::set<std::string> closed;
     std::map<std::string, uint64_t> epochs;
+    std::map<std::string, StagedCopy> staged;
   };
   Status Capture(Candidate* candidate);
   Status Publish(const Candidate& candidate);

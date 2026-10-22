@@ -31,6 +31,7 @@
 #include "db/db_test_util.h"
 #include "db/db_with_timestamp_test_util.h"
 #include "db/wide/wide_column_test_util.h"
+#include "db/write_batch_internal.h"
 #include "env/composite_env_wrapper.h"
 #include "file/filename.h"
 #include "file/random_access_file_reader.h"
@@ -1342,6 +1343,53 @@ TEST_F(DBBlobDirectWriteTest, DirectWriteFailedBatchTrackedAsInitialGarbage) {
   ASSERT_EQ(cf_meta.blob_files[0].total_blob_count, 2U);
   ASSERT_EQ(cf_meta.blob_files[0].garbage_blob_count, 1U);
   ASSERT_EQ(cf_meta.blob_files[0].garbage_blob_bytes, failed_record_bytes);
+}
+
+TEST_F(DBBlobDirectWriteTest, DirectWritePartialTransformFailureTrackedAsGarbage) {
+  Options options = GetDirectWriteOptions();
+  options.blob_direct_write_partitions = 1;
+  options.blob_file_size = 1 << 20;
+  options.blob_compression_type = kNoCompression;
+  Reopen(options);
+  CreateAndReopenWithCF({"second"}, options);
+  const std::string value(128, 'f');
+  for (int cf = 0; cf < 2; ++cf) {
+    ASSERT_OK(Put(cf, "good", value));
+  }
+  WriteBatch partial;
+  for (auto* handle : handles_) {
+    ASSERT_OK(partial.Put(handle, "bad", value));
+  }
+  // An invalid serialized entity fails after the preceding two records have
+  // already been appended, without introducing a filesystem error.
+  ASSERT_OK(WriteBatchInternal::PutEntitySerialized(
+      &partial, handles_[1]->GetID(), "invalid", Slice()));
+  ASSERT_TRUE(db_->Write(WriteOptions(), &partial).IsCorruption());
+  for (int cf = 0; cf < 2; ++cf) {
+    ASSERT_EQ(Get(cf, "bad"), "NOT_FOUND");
+    ASSERT_OK(Put(cf, "next", value));
+  }
+  ASSERT_OK(db_->Flush(FlushOptions(), handles_));
+  for (auto* handle : handles_) {
+    ColumnFamilyMetaData metadata;
+    db_->GetColumnFamilyMetaData(handle, &metadata);
+    ASSERT_EQ(metadata.blob_files.size(), 1U);
+    ASSERT_EQ(metadata.blob_files[0].total_blob_count, 3U);
+    ASSERT_EQ(metadata.blob_files[0].garbage_blob_count, 1U);
+    ASSERT_EQ(metadata.blob_files[0].total_blob_bytes,
+              3 * (BlobLogRecord::kHeaderSize + value.size()) + 4 + 3 + 4);
+    ASSERT_EQ(metadata.blob_files[0].garbage_blob_bytes,
+              BlobLogRecord::kHeaderSize + 3 + value.size());
+  }
+
+  Close();
+  ReopenWithColumnFamilies({kDefaultColumnFamilyName, "second"}, options);
+  for (int cf = 0; cf < 2; ++cf) {
+    ASSERT_EQ(Get(cf, "bad"), "NOT_FOUND");
+    ASSERT_EQ(Get(cf, "invalid"), "NOT_FOUND");
+    ASSERT_EQ(Get(cf, "good"), value);
+    ASSERT_EQ(Get(cf, "next"), value);
+  }
 }
 
 TEST_F(DBBlobDirectWriteTest, DirectWriteRollbackMismatchReturnsCorruption) {

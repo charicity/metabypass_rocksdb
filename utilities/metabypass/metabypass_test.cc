@@ -574,6 +574,162 @@ class MetaBypassTest : public testing::Test {
                                             }
                                           });
   }
+  void CandidateValidationBlockedScenario(const std::string& point) {
+    m_.queue_capacity = 32768;
+    m_.batch_bytes = 1;
+    m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+    o_.write_buffer_size = 4 * 1024 * 1024;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+    ASSERT_OK(db_->SyncBackup());
+    std::string before;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+    TestGate validating;
+    std::atomic<bool> returned{false};
+    SyncPoint::GetInstance()->SetCallBack(point,
+                                          [&](void*) { validating.Block(); });
+    SyncPoint::GetInstance()->EnableProcessing();
+    ASSERT_OK(db_->Put(WriteOptions(), "candidate", "value"));
+    Status synced;
+    std::thread sync([&] {
+      synced = db_->SyncBackup();
+      returned = true;
+    });
+    validating.WaitUntilBlocked();
+    // Completion requires the mirror to consume substantially more than the
+    // queue capacity while the validator holds the candidate.
+    for (int i = 0; i < 200; ++i)
+      EXPECT_OK(db_->Put(WriteOptions(), "tail" + std::to_string(i),
+                         std::string(1024, 'v')));
+    EXPECT_FALSE(returned.load());
+    std::string pending;
+    EXPECT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pending));
+    EXPECT_EQ(pending, before);
+    validating.Release();
+    sync.join();
+    ASSERT_OK(synced);
+    SyncPoint::GetInstance()->DisableProcessing();
+    ASSERT_OK(db_->SyncBackup());
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("old", "retained");
+    Check("tail199", std::string(1024, 'v'));
+  }
+  void CandidateFailureScenario(const std::string& point) {
+    m_.queue_capacity = 32768;
+    m_.batch_bytes = m_.queue_capacity;
+    m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+    o_.write_buffer_size = 4 * 1024 * 1024;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+    ASSERT_OK(db_->SyncBackup());
+    std::string before;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+    TestGate failing, waiters, applying, capacity;
+    std::atomic<int> waiting{0};
+    SyncPoint::GetInstance()->SetCallBack(point, [&](void* arg) {
+      failing.Block();
+      *static_cast<Status*>(arg) = Status::IOError("candidate fault");
+    });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                          [&](void*) {
+                                            if (++waiting == 4) waiters.Block();
+                                          });
+    SyncPoint::GetInstance()->EnableProcessing();
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "new"));
+    std::array<Status, 4> results;
+    std::vector<std::thread> threads;
+    threads.emplace_back([&] { results[0] = db_->SyncBackup(); });
+    failing.WaitUntilBlocked();
+    for (size_t i = 1; i < results.size(); ++i)
+      threads.emplace_back([&, i] { results[i] = db_->SyncBackup(); });
+    waiters.WaitUntilBlocked();
+    waiters.Release();
+    // Also park a WAL producer on capacity. For a validator failure, keep the
+    // mirror from draining; for a staging failure it is already blocked above.
+    BlockFirstApply(&applying);
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure",
+                                          [&](void*) { capacity.Block(); });
+    Status produced;
+    std::thread producer([&] {
+      for (int i = 0; i < 200; ++i) {
+        produced = db_->Put(WriteOptions(), "tail" + std::to_string(i),
+                            std::string(1024, 'v'));
+        if (!produced.ok()) break;
+      }
+    });
+    capacity.WaitUntilBlocked();
+    capacity.Release();
+    failing.Release();
+    for (auto& thread : threads) thread.join();
+    producer.join();
+    applying.Release();
+    EXPECT_TRUE(produced.IsIOError()) << produced.ToString();
+    for (const auto& result : results)
+      EXPECT_TRUE(result.IsIOError()) << result.ToString();
+    EXPECT_EQ(db_->GetBackupStats().error, results[0]);
+    EXPECT_EQ(db_->Put(WriteOptions(), "rejected", "value"), results[0]);
+    EXPECT_EQ(db_->Close(), results[0]);
+    db_.reset();
+    SyncPoint::GetInstance()->DisableProcessing();
+    std::string after;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &after));
+    EXPECT_EQ(after, before);
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("key", "old");
+  }
+  void StagedCandidateCorruptionScenario(bool suffix) {
+    m_.batch_bytes = m_.queue_capacity;
+    m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+    o_.write_buffer_size = 4 * 1024 * 1024;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    ASSERT_OK(db_->Put(WriteOptions(), "old", std::string(10000, 'o')));
+    ASSERT_OK(db_->SyncBackup());
+    std::string before;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+    const auto logs = FilesOfType(PublishedPoint(), kWalFile);
+    ASSERT_EQ(logs.size(), 1U);
+    uint64_t prefix = 0;
+    ASSERT_OK(fs_->GetFileSize(PublishedPoint() + "/" + logs.front(),
+                               IOOptions(), &prefix, nullptr));
+    if (suffix) {
+      ASSERT_OK(db_->Put(WriteOptions(), "new", std::string(10000, 'n')));
+    }
+    bool corrupted = false;
+    Status mutation;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::CandidateCaptured", [&](void* arg) {
+          const std::string path =
+              *static_cast<std::string*>(arg) + "/" + logs.front();
+          std::string bytes;
+          mutation = metabypass::Read(fs_.get(), path, &bytes);
+          if (!mutation.ok()) return;
+          // With no intervening Put, epoch AND length match the digest cache.
+          // Otherwise the last byte lies beyond that cached prefix.
+          EXPECT_TRUE(suffix ? bytes.size() > prefix : bytes.size() == prefix);
+          if (bytes.empty()) return;
+          bytes[suffix ? bytes.size() - 1 : 0] ^= 1;
+          mutation = metabypass::Write(fs_.get(), path, bytes);
+          corrupted = mutation.ok();
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    const Status failed = db_->SyncBackup();
+    EXPECT_TRUE(failed.IsCorruption()) << failed.ToString();
+    EXPECT_TRUE(corrupted);
+    ASSERT_OK(mutation);
+    EXPECT_EQ(db_->GetBackupStats().error, failed);
+    EXPECT_EQ(db_->Close(), failed);
+    db_.reset();
+    SyncPoint::GetInstance()->DisableProcessing();
+    std::string after;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &after));
+    EXPECT_EQ(after, before);
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("old", std::string(10000, 'o'));
+    std::string value;
+    ASSERT_TRUE(db_->Get(ReadOptions(), "new", &value).IsNotFound());
+  }
   void StartBackupFiles(std::unique_ptr<metabypass::Backup>* backup,
                         std::unique_ptr<FSWritableFile>* wal,
                         std::unique_ptr<FSWritableFile>* sst) {
@@ -2639,6 +2795,65 @@ TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
   Check("old", "retained");
   Check(std::string(128, 'k') + "999", std::string(100, 'v'));
 }
+TEST_F(MetaBypassTest, CandidateSyncBlockedMirrorStillDrains) {
+  CandidateValidationBlockedScenario("MetaBypass::BeforeCandidateFileSync");
+}
+TEST_F(MetaBypassTest, CandidateReadbackBlockedMirrorStillDrains) {
+  CandidateValidationBlockedScenario("MetaBypass::BeforeCandidateFileReadback");
+}
+TEST_F(MetaBypassTest, StagedCandidateRechecksCachedPrefix) {
+  StagedCandidateCorruptionScenario(false);
+}
+TEST_F(MetaBypassTest, StagedCandidateChecksNewSuffix) {
+  StagedCandidateCorruptionScenario(true);
+}
+TEST_F(MetaBypassTest, StagedCandidateReadFailureWakesSyncWaiters) {
+  CandidateFailureScenario("MetaBypass::StageCopyReadStatus");
+}
+TEST_F(MetaBypassTest, StagedCandidateAppendFailureWakesSyncWaiters) {
+  CandidateFailureScenario("MetaBypass::StageCopyAppendStatus");
+}
+TEST_F(MetaBypassTest, StagedCandidateCloseFailureWakesSyncWaiters) {
+  CandidateFailureScenario("MetaBypass::StageCopyCloseStatus");
+}
+TEST_F(MetaBypassTest, CandidateSyncFailureWakesSyncWaiters) {
+  CandidateFailureScenario("MetaBypass::CandidateFileSyncStatus");
+}
+TEST_F(MetaBypassTest, CandidateReadbackFailureWakesSyncWaiters) {
+  CandidateFailureScenario("MetaBypass::CandidateFileReadbackStatus");
+}
+TEST_F(MetaBypassTest, StageCopyRejectsShortSourceWithoutPublishingResult) {
+  const std::string source = root_ + "/source";
+  const std::string destination = root_ + "/staged";
+  ASSERT_OK(metabypass::Write(fs_.get(), source, "short"));
+  metabypass::StagedCopy staged{123, 456};
+  ASSERT_TRUE(metabypass::StageCopy(fs_.get(), source, destination, 6, &staged)
+                  .IsCorruption());
+  EXPECT_EQ(staged.length, 123U);
+  EXPECT_EQ(staged.crc, 456U);
+}
+TEST_F(MetaBypassTest, PointerDirectorySyncFailureRestoresCompletePoint) {
+  m_.batch_bytes = m_.queue_capacity;
+  m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+  ASSERT_OK(db_->SyncBackup());
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::PointerDirectorySyncStatus", [](void* arg) {
+        *static_cast<Status*>(arg) = Status::IOError("pointer directory sync");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "new"));
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  EXPECT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  SyncPoint::GetInstance()->DisableProcessing();
+  // Rename has already exposed the new pointer. This injected error does not
+  // discard unsynced filesystem state, so the selected point is the new one.
+  // Both old and new candidates must already be independently recoverable.
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "new");
+}
 TEST_F(MetaBypassTest, RetiredPointCleanupDoesNotDelaySyncOrMirror) {
   m_.queue_capacity = 32768;
   m_.batch_bytes = m_.queue_capacity;
@@ -3395,8 +3610,9 @@ TEST_F(MetaBypassTest, FragmentedWalBatchIsAtomic) {
 #ifndef OS_WIN
 TEST_F(MetaBypassTest, SigkillPublicationStages) {
   for (const std::string stage :
-       {"MetaBypass::DependenciesSynced", "MetaBypass::CandidateSynced",
-        "MetaBypass::BeforePointerReplace", "MetaBypass::PointerSynced"}) {
+       {"MetaBypass::CandidateCaptured", "MetaBypass::DependenciesSynced",
+        "MetaBypass::CandidateSynced", "MetaBypass::BeforePointerReplace",
+        "MetaBypass::PointerSynced"}) {
     SCOPED_TRACE(stage);
     ASSERT_NO_FATAL_FAILURE(RunCrashWriter(stage));
     ASSERT_NO_FATAL_FAILURE(Restore());

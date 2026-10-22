@@ -1,5 +1,7 @@
 # metabypass--
 
+Current naming: this historical `metabypass--` baseline is now [Metabypass](components/metabypass/research-baseline.zh-CN.md); the original definition below is retained.
+
 This experimental variant starts from `fb0f5092f97aa3ba7b7a56e5a331a87a30946c67`
 and restores the five stage1 backup optimization files exactly from
 `reports/dw-optimization-20261022/stage1/provenance/source.tar.gz`

@@ -1,5 +1,19 @@
 # Metabypass native checkpoints
 
+The [current research baseline and validation handoff](research-baseline.zh-CN.md)
+defines the branch names and the approved next experiment. Current Metabypass
+means Stage1 backup optimization plus native DirectWrite compatibility and
+correctness fixes; Stage2 background sealing and Stage3 batch Flush optimization
+remain on `metabypass-with-DW`. Both DW modes are primary comparisons against
+pinned official RocksDB; native backup-disabled runs from the same source are
+internal diagnostics.
+
+Only approved steps 1-3 (archive, branch adjustment, driver/document sync) are
+complete in this session. Step 4 correctness tests and HDD Restore, and step 5
+the new same-batch 36-sample comparison, have not run. Historical reports below
+retain their original names, values and source scope; they do not establish a
+passing result for the new baseline.
+
 Metabypass is an experimental single-column-family RocksDB wrapper. It uses
 Integrated BlobDB (`enable_blob_files=true`, `min_blob_size=0`). The native
 `enable_blob_direct_write` default remains false: full values enter the WAL and

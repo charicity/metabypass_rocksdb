@@ -1,7 +1,7 @@
 # Native checkpoint driver contract (v1)
 
 The Linux-only executable is `mb_native`. Build it twice: current source for
-B/D/S, pinned upstream `abeebd9630f11bd08c28b7bd43c7bdfc62050654` for U.
+B/D/S, pinned upstream `abeebd9630f11bd08c28b7bd43c7bdfc62050654` for U/B.
 The CMake target uses Release, portable CPU instructions and no RTTI. No gflags
 or JSON input parser is required. `build.py --out=/absolute/external/build`
 builds both adapters, writes `build.json`, and defaults to 48 compiler jobs.
@@ -25,6 +25,7 @@ raw stdout retention, OPTIONS capture and device telemetry.
 | workload | insert; insert/overwrite/randomread/hotspot/scan/mixed/sync/gc/sst |
 | keys / ops | 1024 / 1024 |
 | value-size / threads | 1024 / 1; value >=32 bytes |
+| batch-size | 1; values above 1 require untimed, single-thread insert prepare/run |
 | warmup-seconds / measure-seconds | 0 / 0; integer seconds; zero uses operation quota |
 | sync / flush / fresh / gc | false / true / false / true |
 | staging-capacity | 268435456 logical bytes (S only) |
@@ -33,12 +34,23 @@ raw stdout retention, OPTIONS capture and device telemetry.
 | cache-bytes | 268435456; SST mechanism runs can use 65536 |
 | flush-every | 0; nonzero per-thread completed operations between explicit flushes |
 | seed | 20261017 |
-| direct-write | false; true requires current binary, disables concurrent memtable writes |
+| direct-write | false; true requires B/D/S, disables concurrent memtable writes |
 | checkpoint-interval-ms / mirror-interval-ms | 1000 / 1000; historical protocol defaults, both positive |
 | gc-wait-seconds | 0; maximum 60, periodic stats after work |
 | crash-stage | empty; write/publish/migration gates, only D/S crashwrite |
 | verify-acks | empty; optional text file of `key version` lines for crash verification |
 | verify-samples | 0; zero preserves full verification; positive selects min(requested, keys) unique keys |
+
+The `MB_UPSTREAM` adapter accepts U/B and rejects D/S. U retains inline SST
+values and rejects DirectWrite. B enables Integrated BlobDB and routes native
+Blob files through the same HDD BlobFS used by the fork. Both adapters set
+`enable_blob_direct_write` and `allow_concurrent_memtable_write` on the actual
+Options object; the pinned v11.8.1 supports both. The effective output reads
+these flags and `blob_file_size` from that object. Backup-only options
+`mirror_interval_ms`, `checkpoint_interval_ms`, `sst_mode`, `sst_budget` and
+`whole_blob_gc` are null for U/B; `backup_enabled` identifies D/S. A requested
+GC flag is not evidence of active Metabypass GC on native B or official U/B.
+Archive native OPTIONS and LOG files to check the library's configuration.
 
 `prepare` creates a new database and writes each key once (version 1),
 forcibly ignoring warmup/measure duration and forcing ops=keys. Every state
@@ -48,6 +60,23 @@ when untimed; its operation count is keys, not ops. Other untimed workloads
 split the total ops quota across workers. Timed workloads run until their common
 deadline. Each worker owns a disjoint key range for mutations. Warmup uses the
 same semantics and updates the expected state; it has its own sample event.
+
+`batch-size=1` retains individual Put calls. Larger sizes group consecutive
+insert keys into one WriteBatch, including a partial final batch, and split
+batches at `flush-every` boundaries. Batched mode rejects timed windows,
+warmup, other workloads/actions and multiple workers. The maximum size is
+65536 records and 64 MiB of key/value payload per requested batch. Each
+successful Write commits the sidecar versions for all its keys. The sync
+flag applies to each WriteBatch. Verification uses the usual sidecar protocol;
+invoke verifying actions with the default batch size.
+
+Options, samples and done events record `batch_size`; samples also record
+`write_calls`. Throughput and histogram counts remain logical record counts.
+For batches, each record is assigned its batch's complete Write latency,
+without division by record count, and `latency_scope="write_batch"` makes
+this explicit. Individual operations use `latency_scope="operation"`.
+Payload and WriteBatch construction remain outside engine latency but inside
+foreground throughput and lifecycle timing.
 
 By default (`verify-samples=0`), `verify` fully checks presence/deletion, key,
 exact version, checksum and total key count. `restore` calls native Metabypass

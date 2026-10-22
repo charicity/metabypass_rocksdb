@@ -37,6 +37,7 @@
 #include "rocksdb/listener.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
+#include "rocksdb/write_batch.h"
 #ifndef MB_UPSTREAM
 #include "rocksdb/utilities/metabypass.h"
 #endif
@@ -90,6 +91,7 @@ struct Config {
       {"ops", "1024"},
       {"value-size", "1024"},
       {"threads", "1"},
+      {"batch-size", "1"},
       {"warmup-seconds", "0"},
       {"measure-seconds", "0"},
       {"sync", "false"},
@@ -129,10 +131,11 @@ struct Config {
         throw std::runtime_error("unknown argument: " + a);
       flags[a.substr(2, p - 2)] = a.substr(p + 1);
     }
-    for (auto k : {"keys", "ops", "value-size", "threads", "warmup-seconds",
-                   "measure-seconds", "staging-capacity", "sst-budget",
-                   "cache-bytes", "flush-every", "seed", "gc-wait-seconds",
-                   "mirror-interval-ms", "checkpoint-interval-ms", "verify-samples"})
+    for (auto k :
+         {"keys", "ops", "value-size", "threads", "warmup-seconds",
+          "measure-seconds", "staging-capacity", "sst-budget", "cache-bytes",
+          "flush-every", "seed", "gc-wait-seconds", "mirror-interval-ms",
+          "checkpoint-interval-ms", "verify-samples", "batch-size"})
       N(k);
     for (auto k : {"sync", "flush", "fresh", "gc", "disable-auto-compactions",
                    "direct-write"})
@@ -154,10 +157,21 @@ struct Config {
         N("mirror-interval-ms") > 86400000 ||
         N("checkpoint-interval-ms") > 86400000)
       throw std::runtime_error("interval outside supported bounds");
+    if (N("batch-size") == 0 || N("batch-size") > 65536 ||
+        (N("batch-size") > 1 &&
+         N("batch-size") * (N("value-size") + 16) > 64 * 1024 * 1024))
+      throw std::runtime_error("batch-size outside supported bounds");
+    if (N("batch-size") > 1 &&
+        (S("workload") != "insert" || N("threads") != 1 ||
+         (S("action") != "prepare" && S("action") != "run") ||
+         N("warmup-seconds") != 0 || N("measure-seconds") != 0))
+      throw std::runtime_error(
+          "batch-size > 1 requires untimed single-thread insert prepare/run");
     if (N("verify-samples") != 0 && !S("verify-acks").empty())
-      throw std::runtime_error("sample verification does not support verify-acks");
+      throw std::runtime_error(
+          "sample verification does not support verify-acks");
     if (B("direct-write") && S("variant") == "U")
-      throw std::runtime_error("upstream does not support direct-write");
+      throw std::runtime_error("inline variant U does not support direct-write");
     if (!std::set<std::string>{"disabled", "observe", "adaptive"}.count(
             S("sst-mode")))
       throw std::runtime_error("invalid sst-mode");
@@ -202,8 +216,8 @@ struct Config {
       dirs.push_back(p);
     }
 #ifdef MB_UPSTREAM
-    if (S("variant") != "U")
-      throw std::runtime_error("upstream binary only accepts U");
+    if (S("variant") != "U" && S("variant") != "B")
+      throw std::runtime_error("upstream binary only accepts U/B");
 #else
     if (S("variant") == "U")
       throw std::runtime_error("U requires pinned upstream binary");
@@ -406,9 +420,9 @@ class Database {
     BlockBasedTableOptions table;
     table.block_cache = NewLRUCache(c.N("cache-bytes"));
     o_.table_factory.reset(NewBlockBasedTableFactory(table));
-#ifndef MB_UPSTREAM
     o_.enable_blob_direct_write = c.B("direct-write");
     o_.allow_concurrent_memtable_write = !c.B("direct-write");
+#ifndef MB_UPSTREAM
     b_.interval_ms = c.N("mirror-interval-ms");
     b_.checkpoint_interval_ms = c.N("checkpoint-interval-ms");
     b_.data_dir = c.S("data");
@@ -433,6 +447,7 @@ class Database {
     env_ = NewCompositeEnv(fs);
     o_.env = env_.get();
   }
+  const Options& options() const { return o_; }
   void Open(bool fresh) {
     o_.create_if_missing = fresh;
     o_.error_if_exists = fresh;
@@ -462,6 +477,14 @@ class Database {
     if (mb_) return mb_->Put(w, k, v);
 #endif
     return raw_->Put(w, k, v);
+  }
+  Status Write(WriteBatch* batch, bool sync) {
+    WriteOptions w;
+    w.sync = sync;
+#ifndef MB_UPSTREAM
+    if (mb_) return mb_->Write(w, batch);
+#endif
+    return raw_->Write(w, batch);
   }
   Status Delete(const std::string& k, bool sync) {
     WriteOptions w;
@@ -734,9 +757,9 @@ struct Histogram {
     if (power >= 58) return std::numeric_limits<uint64_t>::max();
     return ((uint64_t(33 + (b - 32) % 32)) << power) - 1;
   }
-  void Add(uint64_t us) {
-    ++bins[Bucket(us)];
-    ++count;
+  void Add(uint64_t us, uint64_t weight = 1) {
+    bins[Bucket(us)] += weight;
+    count += weight;
   }
   void Merge(const Histogram& h) {
     count += h.count;
@@ -853,7 +876,8 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
           ? 0
           : (warmup ? c.N("warmup-seconds") : c.N("measure-seconds"));
   const uint64_t threads = c.N("threads"), keys = c.N("keys"),
-                 ops = c.S("action") == "prepare" ? keys : c.N("ops");
+                 ops = c.S("action") == "prepare" ? keys : c.N("ops"),
+                 batch_size = c.N("batch-size");
   const bool timed = seconds > 0;
   db.Stats(warmup ? "warmup_begin" : "foreground_begin");
   auto start = Clock::now();
@@ -863,7 +887,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
   std::vector<Histogram> hist(threads), gets(threads), puts(threads),
       deletes(threads);
   std::vector<uint64_t> rows(threads, 0), hot_count(threads, 0),
-      cold_count(threads, 0);
+      cold_count(threads, 0), write_calls(threads, 0);
   std::vector<std::thread> workers;
   for (uint64_t id = 0; id < threads; ++id)
     workers.emplace_back([&, id] {
@@ -874,6 +898,40 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
         std::string value;
         uint64_t quota = ops * (id + 1) / threads - ops * id / threads;
         if (workload == "insert") quota = width;
+        if (batch_size > 1) {
+          WriteBatch batch;
+          while (!failed && seq < quota) {
+            uint64_t count = std::min(batch_size, quota - seq);
+            const uint64_t flush_every = c.N("flush-every");
+            if (flush_every)
+              count = std::min(count, flush_every - seq % flush_every);
+            batch.Clear();
+            for (uint64_t offset = 0; offset < count; ++offset) {
+              const uint64_t k = lo + seq + offset;
+              const uint64_t version = (state.version[k] & ~kDeleted) + 1;
+              if (version >= kDeleted)
+                throw std::runtime_error("version overflow");
+              Check(batch.Put(Key(k), Value(k, version, c.N("value-size"))));
+            }
+            // Payload generation and batch construction stay outside engine
+            // latency and inside foreground throughput, like individual Put.
+            auto t = Clock::now();
+            Check(db.Write(&batch, c.B("sync")));
+            const auto latency = Us(t);
+            // Each logical record observes its batch's complete Write latency.
+            // Do not divide by count and hide synchronous commit latency.
+            hist[id].Add(latency, count);
+            puts[id].Add(latency, count);
+            ++write_calls[id];
+            for (uint64_t offset = 0; offset < count; ++offset) {
+              auto& version = state.version[lo + seq + offset];
+              version = (version & ~kDeleted) + 1;
+            }
+            seq += count;
+            if (flush_every && seq % flush_every == 0) db.Flush();
+          }
+          return;
+        }
         while (!failed &&
                (timed ? Us(start) < seconds * 1000000 : seq < quota)) {
           auto r = Random(rng);
@@ -911,6 +969,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
             auto latency = Us(t);
             hist[id].Add(latency);
             puts[id].Add(latency);
+            ++write_calls[id];
             state.version[k] = version;
             if (ack)
               Emit("ack", ",\"key\":" + std::to_string(k) +
@@ -966,7 +1025,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
   if (failed) throw std::runtime_error(error);
   auto elapsed = Us(start);
   Histogram total, get, put, del;
-  uint64_t scanned = 0, hot_total = 0, cold_total = 0;
+  uint64_t scanned = 0, hot_total = 0, cold_total = 0, writes_total = 0;
   for (size_t i = 0; i < hist.size(); ++i) {
     total.Merge(hist[i]);
     get.Merge(gets[i]);
@@ -975,6 +1034,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
     scanned += rows[i];
     hot_total += hot_count[i];
     cold_total += cold_count[i];
+    writes_total += write_calls[i];
   }
   std::ostringstream s;
   s << ",\"name\":" << Q(warmup ? "warmup" : "foreground")
@@ -986,7 +1046,9 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
     << ",\"p99_us\":" << total.Percent(99) << ",\"hist_us\":" << total.Json()
     << ",\"get_hist_us\":" << get.Json() << ",\"put_hist_us\":" << put.Json()
     << ",\"delete_hist_us\":" << del.Json() << ",\"scanned_rows\":" << scanned
-    << ",\"hot_ops\":" << hot_total << ",\"cold_ops\":" << cold_total;
+    << ",\"hot_ops\":" << hot_total << ",\"cold_ops\":" << cold_total
+    << ",\"batch_size\":" << batch_size << ",\"write_calls\":" << writes_total
+    << ",\"latency_scope\":" << Q(batch_size > 1 ? "write_batch" : "operation");
   Emit("sample", s.str());
   db.Stats(warmup ? "warmup_end" : "foreground_end");
 }
@@ -1000,28 +1062,38 @@ int main(int argc, char** argv) {
     State state(c, fresh);
     Database db(c);
     uint64_t verified = 0;
+    const auto& actual = db.options();
+    const bool backup = c.S("variant") == "D" || c.S("variant") == "S";
     std::ostringstream options;
     options << ",\"variant\":" << Q(c.S("variant"))
+            << ",\"batch_size\":" << c.N("batch-size")
             << ",\"effective_options\":{\"compression\":\"none\",\"write_"
                "buffer_size\":134217728,\"max_write_buffer_number\":2,\"max_"
                "background_jobs\":4,\"block_cache_bytes\":"
             << c.N("cache-bytes") << ",\"disable_auto_compactions\":"
             << (c.B("disable-auto-compactions") ? "true" : "false")
             << ",\"enable_blob_files\":"
-            << (c.S("variant") == "U" ? "false" : "true")
+            << (actual.enable_blob_files ? "true" : "false")
             << ",\"enable_blob_direct_write\":"
-            << (c.B("direct-write") ? "true" : "false")
+            << (actual.enable_blob_direct_write ? "true" : "false")
             << ",\"allow_concurrent_memtable_write\":"
-            << (c.B("direct-write") ? "false" : "true")
-            << ",\"mirror_interval_ms\":" << c.N("mirror-interval-ms")
-            << ",\"checkpoint_interval_ms\":" << c.N("checkpoint-interval-ms")
+            << (actual.allow_concurrent_memtable_write ? "true" : "false")
+            << ",\"mirror_interval_ms\":"
+            << (backup ? std::to_string(c.N("mirror-interval-ms")) : "null")
+            << ",\"checkpoint_interval_ms\":"
+            << (backup ? std::to_string(c.N("checkpoint-interval-ms")) : "null")
             << ",\"sync\":" << (c.B("sync") ? "true" : "false")
+            << ",\"blob_file_size\":" << actual.blob_file_size
             << ",\"min_blob_size\":0,\"blob_"
                "value_gc\":false,\"sst_mode\":"
-            << Q(c.S("sst-mode")) << ",\"sst_budget\":" << c.N("sst-budget")
+            << (backup ? Q(c.S("sst-mode")) : "null")
+            << ",\"sst_budget\":"
+            << (backup ? std::to_string(c.N("sst-budget")) : "null")
             << ",\"staging_capacity\":"
             << (c.S("variant") == "S" ? c.N("staging-capacity") : 0)
-            << ",\"whole_blob_gc\":" << (c.B("gc") ? "true" : "false") << "}";
+            << ",\"whole_blob_gc\":"
+            << (backup ? (c.B("gc") ? "true" : "false") : "null")
+            << ",\"backup_enabled\":" << (backup ? "true" : "false") << "}";
     Emit("options", options.str());
     if (c.S("action") == "restore") {
       auto t = Clock::now();
@@ -1113,6 +1185,7 @@ int main(int argc, char** argv) {
     Emit("done", ",\"status\":\"pass\",\"variant\":" + Q(c.S("variant")) +
                      ",\"action\":" + Q(c.S("action")) +
                      ",\"workload\":" + Q(c.S("workload")) +
+                     ",\"batch_size\":" + std::to_string(c.N("batch-size")) +
                      ",\"verified_keys\":" + std::to_string(verified));
     return 0;
   } catch (const std::exception& e) {

@@ -529,6 +529,11 @@ class Database {
       FIELD(peak_staging_bytes);
       FIELD(migrated_blob_bytes);
       FIELD(staging_backpressure_micros);
+      FIELD(tier_task_wait_micros);
+      FIELD(tier_extent_fsyncs);
+      FIELD(tier_extent_fsync_micros);
+      FIELD(tier_commit_dir_syncs);
+      FIELD(tier_commit_dir_sync_micros);
       FIELD(sync_write_micros);
       FIELD(queued_bytes);
       FIELD(peak_queued_bytes);

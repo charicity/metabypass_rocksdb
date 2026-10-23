@@ -120,6 +120,7 @@ class TieredStorage : public FileSystemWrapper {
   std::string Descriptor(uint64_t) const;
   static std::shared_ptr<const Version> Snapshot(Version);
   Status Commit(uint64_t, Version);
+  Status SyncCommitDirectory();
   Status Migrate(uint64_t, uint64_t, bool background);
   Status AppendExtent(uint64_t, const Slice&, Version*);
   enum class TaskKind { kAppend, kBarrier, kClose, kSwitch };
@@ -146,7 +147,8 @@ class TieredStorage : public FileSystemWrapper {
   std::deque<std::shared_ptr<Task>> tasks_;
   uint64_t queued_bytes_ = 0, peak_queued_bytes_ = 0;
   uint64_t spill_files_ = 0, spill_bytes_ = 0;
-  static constexpr uint64_t kExtentSize = 4 * 1024 * 1024;
+  static constexpr uint64_t kChunkSize = 4 * 1024 * 1024;
+  static constexpr uint64_t kExtentSize = 32 * 1024 * 1024;
   static constexpr uint64_t kQueueLimit = 16 * 1024 * 1024;
   void Run();
   void Fail(const Status&);
@@ -174,6 +176,8 @@ class TieredStorage : public FileSystemWrapper {
   std::set<uint64_t> retiring_;
   std::map<uint64_t, uint64_t> remote_readers_;
   uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0, wait_us_ = 0;
+  uint64_t task_wait_us_ = 0, extent_fsyncs_ = 0, extent_fsync_us_ = 0;
+  uint64_t commit_dir_syncs_ = 0, commit_dir_sync_us_ = 0;
   uint64_t extent_id_ = 0;
   bool stopping_ = false, restoring_ = false;
   Status error_;

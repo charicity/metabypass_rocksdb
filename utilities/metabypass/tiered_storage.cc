@@ -127,7 +127,7 @@ class TierWriter : public FSWritableFileOwnerWrapper {
     size_t offset = 0;
     while (offset < b.size()) {
       const size_t take =
-          std::min<uint64_t>(b.size() - offset, TieredStorage::kExtentSize);
+          std::min<uint64_t>(b.size() - offset, TieredStorage::kChunkSize);
       Status s = storage_->Submit(number_, TieredStorage::TaskKind::kAppend,
                                   Slice(b.data() + offset, take));
       if (!s.ok()) return IO(s);
@@ -601,12 +601,44 @@ std::shared_ptr<const TieredStorage::Version> TieredStorage::Snapshot(
   }
   return std::make_shared<const Version>(std::move(v));
 }
+Status TieredStorage::SyncCommitDirectory() {
+  const uint64_t start = Micros();
+  Status s = SyncDir(target(), options_.data_dir);
+  const uint64_t elapsed = Micros() - start;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++commit_dir_syncs_;
+    commit_dir_sync_us_ += elapsed;
+  }
+  return s;
+}
 Status TieredStorage::Commit(uint64_t n, Version v) {
+  auto active = active_.find(n);
+  if (active != active_.end()) {
+    if (active->second.file) {
+      Status s = SealExtent(&active->second);
+      if (!s.ok()) return s;
+    }
+    active_.erase(active);
+  }
+  bool new_extents;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto durable = durable_.find(n);
+    new_extents = !v.extents.empty() &&
+                  (durable == durable_.end() ||
+                   v.extents.size() > durable->second->extents.size());
+  }
+  // Persist new payload names before publishing a descriptor that needs them.
+  Status s;
+  if (new_extents) s = SyncCommitDirectory();
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierDependenciesSynced", &s);
   const std::string p = Descriptor(n);
-  Status s = Write(target(), p + ".tmp", Encode(v));
+  if (s.ok()) s = Write(target(), p + ".tmp", Encode(v));
   TEST_SYNC_POINT_CALLBACK("MetaBypass::TierDescriptorSynced", &s);
   if (s.ok()) s = target()->RenameFile(p + ".tmp", p, IOOptions(), nullptr);
-  if (s.ok()) s = SyncDir(target(), options_.data_dir);
+  if (s.ok()) s = SyncCommitDirectory();
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierPublicationSynced", &s);
   if (s.ok()) {
     auto snapshot = Snapshot(std::move(v));
     {
@@ -636,9 +668,11 @@ Status TieredStorage::Submit(uint64_t n, TaskKind kind, const Slice& bytes) {
   queued_bytes_ += bytes.size();
   peak_queued_bytes_ = std::max(peak_queued_bytes_, queued_bytes_);
   tasks_.push_back(task);
+  const uint64_t queued_at = Micros();
   TEST_SYNC_POINT("MetaBypass::TierTaskQueued");
   work_.notify_one();
   progress_.wait(lock, [&] { return task->done || !error_.ok() || stopping_; });
+  task_wait_us_ += Micros() - queued_at;
   return !error_.ok() ? error_
          : task->done ? Status::OK()
                       : Status::ShutdownInProgress();
@@ -651,40 +685,8 @@ Status TieredStorage::AppendRemote(uint64_t n, const Slice& bytes) {
     if (it == versions_.end()) return Status::Corruption("missing HDD route");
     v = *it->second;
   }
-  if (bytes.size() > UINT64_MAX - v.size)
-    return Status::InvalidArgument("tier blob size overflow");
-  auto& active = active_[n];
-  size_t offset = 0;
-  while (offset < bytes.size()) {
-    if (!active.file) {
-      if (extent_id_ == UINT64_MAX)
-        return Status::Corruption("tier extent id exhausted");
-      active.name =
-          "segment-" + std::to_string(n) + "-" + std::to_string(++extent_id_);
-      active.size = 0;
-      active.crc = 0;
-      Status s =
-          target()->NewWritableFile(options_.data_dir + "/" + active.name,
-                                    FileOptions(), &active.file, nullptr);
-      if (!s.ok()) return s;
-      v.extents.push_back({0, active.name});
-    }
-    const size_t take =
-        std::min<uint64_t>(bytes.size() - offset, kExtentSize - active.size);
-    Status s = active.file->Append(Slice(bytes.data() + offset, take),
-                                   IOOptions(), nullptr);
-    if (s.ok()) s = active.file->Flush(IOOptions(), nullptr);
-    if (!s.ok()) return s;
-    active.crc = crc32c::Extend(active.crc, bytes.data() + offset, take);
-    active.size += take;
-    v.extents.back().length += take;
-    v.size += take;
-    offset += take;
-    if (active.size == kExtentSize) {
-      s = SealExtent(&active);
-      if (!s.ok()) return s;
-    }
-  }
+  Status s = AppendExtent(n, bytes, &v);
+  if (!s.ok()) return s;
   v.sealed = false;
   auto snapshot = Snapshot(std::move(v));
   {
@@ -695,25 +697,30 @@ Status TieredStorage::AppendRemote(uint64_t n, const Slice& bytes) {
   return Status::OK();
 }
 Status TieredStorage::SealExtent(ActiveExtent* active) {
+  const uint64_t start = Micros();
   Status s = active->file->Fsync(IOOptions(), nullptr);
+  const uint64_t elapsed = Micros() - start;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++extent_fsyncs_;
+    extent_fsync_us_ += elapsed;
+  }
   uint32_t actual = 0;
   if (s.ok())
     s = Digest(target(), options_.data_dir + "/" + active->name, active->size,
                &actual);
   if (s.ok() && actual != active->crc)
     s = Status::Corruption("HDD extent checksum");
-  if (s.ok()) s = active->file->Close(IOOptions(), nullptr);
+  if (s.ok()) {
+    s = active->file->Close(IOOptions(), nullptr);
+    // A successful Close consumes the handle even if a later publication
+    // stage fails. In particular, fault injection must not resurrect it.
+    if (s.ok()) active->file.reset();
+  }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::TierExtentSynced", &s);
-  if (s.ok()) active->file.reset();
   return s;
 }
 Status TieredStorage::Barrier(uint64_t n, bool close) {
-  auto active = active_.find(n);
-  if (active != active_.end() && active->second.file) {
-    Status s = SealExtent(&active->second);
-    if (!s.ok()) return s;
-    active_.erase(active);
-  }
   Version v;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -747,23 +754,41 @@ Status TieredStorage::Execute(const Task& task) {
   return Status::Corruption("unknown tier task");
 }
 Status TieredStorage::AppendExtent(uint64_t n, const Slice& bytes, Version* v) {
-  if (extent_id_ == UINT64_MAX)
-    return Status::Corruption("tier extent id exhausted");
-  const std::string name =
-      "segment-" + std::to_string(n) + "-" + std::to_string(++extent_id_);
-  Status s = Write(target(), options_.data_dir + "/" + name, bytes);
-  uint32_t crc = 0;
-  if (s.ok())
-    s = Digest(target(), options_.data_dir + "/" + name, bytes.size(), &crc);
-  if (s.ok() && crc != crc32c::Value(bytes.data(), bytes.size()))
-    s = Status::Corruption("migrated extent checksum");
-  if (s.ok()) s = SyncDir(target(), options_.data_dir);
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierExtentSynced", &s);
-  if (s.ok()) {
-    v->extents.push_back({bytes.size(), name});
-    v->size += bytes.size();
+  if (bytes.size() > UINT64_MAX - v->size)
+    return Status::InvalidArgument("tier blob size overflow");
+  auto& active = active_[n];
+  size_t offset = 0;
+  while (offset < bytes.size()) {
+    if (!active.file) {
+      if (extent_id_ == UINT64_MAX)
+        return Status::Corruption("tier extent id exhausted");
+      active.name =
+          "segment-" + std::to_string(n) + "-" + std::to_string(++extent_id_);
+      active.size = 0;
+      active.crc = 0;
+      Status s =
+          target()->NewWritableFile(options_.data_dir + "/" + active.name,
+                                    FileOptions(), &active.file, nullptr);
+      if (!s.ok()) return s;
+      v->extents.push_back({0, active.name});
+    }
+    const size_t take =
+        std::min<uint64_t>(bytes.size() - offset, kExtentSize - active.size);
+    Status s = active.file->Append(Slice(bytes.data() + offset, take),
+                                   IOOptions(), nullptr);
+    if (s.ok()) s = active.file->Flush(IOOptions(), nullptr);
+    if (!s.ok()) return s;
+    active.crc = crc32c::Extend(active.crc, bytes.data() + offset, take);
+    active.size += take;
+    v->extents.back().length += take;
+    v->size += take;
+    offset += take;
+    if (active.size == kExtentSize) {
+      s = SealExtent(&active);
+      if (!s.ok()) return s;
+    }
   }
-  return s;
+  return Status::OK();
 }
 Status TieredStorage::Migrate(uint64_t n, uint64_t required, bool background) {
   TEST_SYNC_POINT("MetaBypass::TierMigration");
@@ -796,7 +821,7 @@ Status TieredStorage::Migrate(uint64_t n, uint64_t required, bool background) {
   if (!s.ok()) return s;
   // Copy opaque bytes in bounded scheduling quanta. The writer was closed
   // before this task was admitted, so its physical prefix cannot change.
-  std::vector<char> buffer(kExtentSize);
+  std::vector<char> buffer(kChunkSize);
   while (v.size < required) {
     const size_t take = std::min<uint64_t>(required - v.size, buffer.size());
     Slice bytes;
@@ -928,7 +953,14 @@ Status TieredStorage::ReclaimBlob(uint64_t n, uint64_t* bytes) {
 }
 Status TieredStorage::DeleteRetiredBlob(uint64_t n, uint64_t* bytes) {
   // The sole worker excludes migration; retiring_ excludes new physical I/O.
-  active_.erase(n);
+  auto active = active_.find(n);
+  if (active != active_.end()) {
+    if (active->second.file) {
+      Status s = active->second.file->Close(IOOptions(), nullptr);
+      if (!s.ok()) return s;
+    }
+    active_.erase(active);
+  }
   // Snapshot every historical/orphan extent before unlinking the descriptor.
   std::vector<std::string> names, payloads;
   Status s =
@@ -1189,7 +1221,7 @@ Status TieredStorage::ArchiveUnreferenced(
                                              &source, nullptr);
     if (!s.ok()) return s;
     Version v;
-    std::vector<char> buffer(kExtentSize);
+    std::vector<char> buffer(kChunkSize);
     while (v.size < size) {
       const size_t take = std::min<uint64_t>(size - v.size, buffer.size());
       Slice bytes;
@@ -1223,6 +1255,11 @@ void TieredStorage::AddStats(MetaBypassStats* stats) const {
   stats->peak_staging_bytes = peak_;
   stats->migrated_blob_bytes = migrated_;
   stats->staging_backpressure_micros = wait_us_;
+  stats->tier_task_wait_micros = task_wait_us_;
+  stats->tier_extent_fsyncs = extent_fsyncs_;
+  stats->tier_extent_fsync_micros = extent_fsync_us_;
+  stats->tier_commit_dir_syncs = commit_dir_syncs_;
+  stats->tier_commit_dir_sync_micros = commit_dir_sync_us_;
   for (const auto& l : local_) {
     auto v = versions_.find(l.first);
     stats->pending_blob_bytes +=

@@ -195,3 +195,9 @@ active Blob WAL local crash reopen is outside that contract.
 Optional post-work GC observation emits a background_tail phase and remains
 inside lifecycle timing. The checkpoint timing counters overlap and must not
 be summed as disjoint phases.
+
+Staging telemetry also emits `tier_task_wait_micros`, `tier_extent_fsyncs`,
+`tier_extent_fsync_micros`, `tier_commit_dir_syncs`, and
+`tier_commit_dir_sync_micros`. These cumulative counters separate task completion
+wait, physical extent Fsync, and Commit directory persistence. See
+[staging counter definitions](../../tiered-storage.md).

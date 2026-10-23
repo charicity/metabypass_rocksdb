@@ -120,6 +120,17 @@ struct MetaBypassStats {
   // Cumulative successful candidate file copies; hardlinks do not count.
   uint64_t candidate_copied_bytes = 0;
   SstTieringStats sst_tiering;
+  // Cumulative staging task wait from enqueue until completion or interruption.
+  // Excludes queue admission, measured by staging_backpressure_micros.
+  uint64_t tier_task_wait_micros = 0;
+  // Physical staging extent Fsync attempts/time, including failures but not
+  // checksum verification or Close. Disabled staging leaves these at zero.
+  uint64_t tier_extent_fsyncs = 0;
+  uint64_t tier_extent_fsync_micros = 0;
+  // Commit dependency and descriptor publication directory sync attempts/time,
+  // including failures. Excludes staging eviction and garbage collection.
+  uint64_t tier_commit_dir_syncs = 0;
+  uint64_t tier_commit_dir_sync_micros = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

@@ -11309,6 +11309,11 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, pending_blob_bytes);
     MB_NODE_FIELD(b, migrated_blob_bytes);
     MB_NODE_FIELD(b, staging_backpressure_micros);
+    MB_NODE_FIELD(b, tier_task_wait_micros);
+    MB_NODE_FIELD(b, tier_extent_fsyncs);
+    MB_NODE_FIELD(b, tier_extent_fsync_micros);
+    MB_NODE_FIELD(b, tier_commit_dir_syncs);
+    MB_NODE_FIELD(b, tier_commit_dir_sync_micros);
     MB_NODE_FIELD(b, sync_write_micros);
     MB_NODE_FIELD(b, queued_bytes);
     MB_NODE_FIELD(b, peak_queued_bytes);
@@ -12136,6 +12141,13 @@ static int RunMetaBypassBenchmark() {
          stats.sync_write_micros, stats.staging_spill_files,
          stats.staging_spill_bytes, stats.tier_queued_bytes,
          stats.peak_tier_queued_bytes, stats.hdd_extents);
+  printf("metabypass tier_task_wait_micros=%" PRIu64
+         " tier_extent_fsyncs=%" PRIu64 " tier_extent_fsync_micros=%" PRIu64
+         " tier_commit_dir_syncs=%" PRIu64
+         " tier_commit_dir_sync_micros=%" PRIu64 "\n",
+         stats.tier_task_wait_micros, stats.tier_extent_fsyncs,
+         stats.tier_extent_fsync_micros, stats.tier_commit_dir_syncs,
+         stats.tier_commit_dir_sync_micros);
   return s.ok() ? 0 : 1;
 }
 

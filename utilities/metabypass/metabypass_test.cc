@@ -3677,6 +3677,43 @@ TEST_F(MetaBypassTest, SigkillUnflushedBatchRecovery) {
 namespace metabypass {
 class TieredStorageTest : public MetaBypassTest {
  public:
+  class ExtentFailureFileSystem : public FileSystemWrapper {
+   public:
+    explicit ExtentFailureFileSystem(std::shared_ptr<FileSystem> fs)
+        : FileSystemWrapper(std::move(fs)) {}
+    const char* Name() const override { return "ExtentFailureFileSystem"; }
+    std::atomic<bool> fail_fsync{false}, fail_close{false};
+    std::atomic<uint64_t> closes{0};
+    IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
+                             std::unique_ptr<FSWritableFile>* out,
+                             IODebugContext* d) override {
+      IOStatus s = target()->NewWritableFile(path, o, out, d);
+      if (s.ok() && path.find("/segment-") != std::string::npos)
+        out->reset(new Writer(std::move(*out), this));
+      return s;
+    }
+
+   private:
+    class Writer : public FSWritableFileOwnerWrapper {
+     public:
+      Writer(std::unique_ptr<FSWritableFile> file, ExtentFailureFileSystem* fs)
+          : FSWritableFileOwnerWrapper(std::move(file)), fs_(fs) {}
+      IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+        if (fs_->fail_fsync.exchange(false))
+          return IOStatus::IOError("extent fsync failure");
+        return target()->Fsync(o, d);
+      }
+      IOStatus Close(const IOOptions& o, IODebugContext* d) override {
+        ++fs_->closes;
+        if (fs_->fail_close.exchange(false))
+          return IOStatus::IOError("extent close failure");
+        return target()->Close(o, d);
+      }
+
+     private:
+      ExtentFailureFileSystem* fs_;
+    };
+  };
   class LocalReadFailureFileSystem : public FileSystemWrapper {
    public:
     explicit LocalReadFailureFileSystem(std::shared_ptr<FileSystem> fs)
@@ -3744,6 +3781,31 @@ class TieredStorageTest : public MetaBypassTest {
   }
   Status Migrate(uint64_t length) {
     return storage_->TieredStorage::Migrate(1, length, false);
+  }
+  Status MigrateChunk(uint64_t length) {
+    return storage_->TieredStorage::Migrate(1, length, true);
+  }
+  Status AppendPending(const std::string& bytes) {
+    return storage_->TieredStorage::AppendRemote(1, bytes);
+  }
+  Status CommitPending() { return storage_->TieredStorage::Barrier(1, false); }
+  std::vector<uint64_t> ExtentLengths(bool durable = false) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    const auto& versions = durable ? storage_->durable_ : storage_->versions_;
+    auto it = versions.find(1);
+    std::vector<uint64_t> lengths;
+    if (it != versions.end())
+      for (const auto& extent : it->second->extents)
+        lengths.push_back(extent.length);
+    return lengths;
+  }
+  void CheckPendingSnapshot() {
+    const auto old = storage_->versions_.at(1);
+    const auto old_lengths = ExtentLengths();
+    ASSERT_OK(AppendPending("tail"));
+    ASSERT_EQ(old->size + 4, RemoteSize());
+    ASSERT_EQ(old->extents.back().length, old_lengths.back());
+    ASSERT_EQ(old->ends.back(), old->size);
   }
   uint64_t LocalPins() {
     std::lock_guard<std::mutex> lock(storage_->mutex_);
@@ -4278,6 +4340,225 @@ TEST_F(TieredStorageTest, ExtentBoundariesCheckpointAndPinnedVersion) {
   std::string bytes;
   ASSERT_OK(ReadBytes(0, expected.size() + 32, &bytes));
   ASSERT_EQ(bytes, expected);
+}
+
+TEST_F(TieredStorageTest, MigrationAggregatesAcrossSchedulingYields) {
+  constexpr uint64_t chunk = 4 * 1024 * 1024;
+  constexpr uint64_t extent = 8 * chunk;
+  Initialize(extent + 17);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob(std::string(extent + 17, 'm'), &writer));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  for (uint64_t i = 1; i <= 8; ++i) {
+    ASSERT_OK(MigrateChunk(extent + 17));
+    ASSERT_EQ(RemoteSize(), i * chunk);
+    ASSERT_EQ(ExtentLengths(), std::vector<uint64_t>{i * chunk});
+    ASSERT_TRUE(ExtentLengths(true).empty());
+    ASSERT_OK(LocalExists());
+    MetaBypassStats stats;
+    storage_->AddStats(&stats);
+    ASSERT_OK(stats.error);
+    ASSERT_EQ(stats.tier_extent_fsyncs, i == 8 ? 1 : 0);
+    ASSERT_EQ(stats.tier_commit_dir_syncs, 0);
+  }
+  ASSERT_OK(MigrateChunk(extent + 17));
+  ASSERT_EQ(ExtentLengths(true), (std::vector<uint64_t>{extent, 17}));
+  ASSERT_TRUE(RemoteSealed());
+  ASSERT_TRUE(LocalExists().IsNotFound());
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.tier_extent_fsyncs, 2);
+  ASSERT_EQ(stats.tier_commit_dir_syncs, 2);
+  std::string bytes;
+  ASSERT_OK(ReadBytes(extent - 3, 20, &bytes));
+  ASSERT_EQ(bytes, std::string(20, 'm'));
+}
+
+TEST_F(TieredStorageTest, Migration256MiBUsesEightDataSyncs) {
+  constexpr uint64_t chunk = 4 * 1024 * 1024;
+  constexpr uint64_t size = 256 * 1024 * 1024;
+  Initialize(size);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("", &writer));
+  const std::string bytes(chunk, 'x');
+  for (uint64_t offset = 0; offset < size; offset += chunk)
+    ASSERT_OK(writer->Append(bytes, IOOptions(), nullptr));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  ASSERT_OK(Migrate(size));
+  ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>(8, 32 * 1024 * 1024));
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.tier_extent_fsyncs, 8);
+  ASSERT_EQ(stats.tier_commit_dir_syncs, 2);
+}
+
+TEST_F(TieredStorageTest, PendingSnapshotsAndMixedExtentLengths) {
+  constexpr uint64_t old_extent = 4 * 1024 * 1024;
+  constexpr uint64_t extent = 32 * 1024 * 1024;
+  Initialize();
+  // A committed 4 MiB MBT2 extent remains readable beside new 32 MiB extents.
+  ASSERT_OK(Append(std::string(old_extent, 'o')));
+  ASSERT_OK(AppendPending("a"));
+  ASSERT_NO_FATAL_FAILURE(CheckPendingSnapshot());
+  ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>{old_extent});
+  ASSERT_OK(AppendPending(std::string(extent - 5, 'n')));
+  ASSERT_OK(AppendPending("z"));
+  ASSERT_OK(CommitPending());
+  ASSERT_EQ(ExtentLengths(true),
+            (std::vector<uint64_t>{old_extent, extent, 1}));
+  storage_.reset();
+  storage_.reset(new TieredStorage(fs_, m_));
+  ASSERT_OK(storage_->Initialize(false));
+  std::string bytes;
+  ASSERT_OK(ReadBytes(old_extent - 1, 7, &bytes));
+  ASSERT_EQ(bytes, "oatailn");
+  ASSERT_OK(ReadBytes(old_extent + extent - 1, 2, &bytes));
+  ASSERT_EQ(bytes, "nz");
+}
+
+TEST_F(TieredStorageTest, PartialCommitNeverExtendsDurablePhysicalExtent) {
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("abcdefgh", &writer));
+  ASSERT_OK(Migrate(3));
+  ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>{3});
+  ASSERT_FALSE(RemoteSealed());
+  ASSERT_OK(Migrate(8));
+  ASSERT_EQ(ExtentLengths(true), (std::vector<uint64_t>{3, 5}));
+  ASSERT_OK(LocalExists());
+  ASSERT_FALSE(RemoteSealed());
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  ASSERT_OK(Migrate(8));
+  ASSERT_TRUE(RemoteSealed());
+}
+
+TEST_F(TieredStorageTest, CommitFailureOrderKeepsPreviousDurableVersion) {
+  auto counting = std::make_shared<ExtentFailureFileSystem>(fs_);
+  fs_ = counting;
+  Initialize();
+  ASSERT_OK(Append("old"));
+  for (const std::string stage :
+       {"MetaBypass::TierExtentSynced", "MetaBypass::TierDependenciesSynced",
+        "MetaBypass::TierDescriptorSynced",
+        "MetaBypass::TierPublicationSynced"}) {
+    SCOPED_TRACE(stage);
+    std::vector<std::string> visited;
+    for (const std::string point :
+         {"MetaBypass::TierExtentSynced", "MetaBypass::TierDependenciesSynced",
+          "MetaBypass::TierDescriptorSynced",
+          "MetaBypass::TierPublicationSynced"}) {
+      SyncPoint::GetInstance()->SetCallBack(point, [&, point](void* arg) {
+        auto* status = static_cast<Status*>(arg);
+        if (status->ok()) {
+          visited.push_back(point);
+          if (point == stage) *status = Status::IOError("commit failure");
+        }
+      });
+    }
+    SyncPoint::GetInstance()->EnableProcessing();
+    ASSERT_TRUE(Append("new").IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    ASSERT_EQ(visited.back(), stage);
+    ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>{3});
+    // These failures occur after the extent handle has closed successfully.
+    // Neither worker teardown nor destruction may close that handle again.
+    const uint64_t closes = counting->closes.load();
+    storage_->Start();
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    ASSERT_EQ(counting->closes.load(), closes);
+    Clean(m_.data_dir);
+    ASSERT_OK(EnsureDir(fs_.get(), m_.data_dir));
+    storage_.reset(new TieredStorage(fs_, m_));
+    ASSERT_OK(storage_->Initialize(false));
+    ASSERT_OK(Append("old"));
+  }
+}
+
+TEST_F(TieredStorageTest, CancelClosesPendingTailWithoutPublishing) {
+  Initialize();
+  ASSERT_OK(Append("old"));
+  ASSERT_OK(AppendPending("uncommitted"));
+  storage_->Cancel(Status::IOError("cancel"));
+  storage_->Start();
+  ASSERT_TRUE(storage_->Stop().IsIOError());
+  storage_.reset();
+  storage_.reset(new TieredStorage(fs_, m_));
+  ASSERT_OK(storage_->Initialize(false));
+  std::string bytes;
+  ASSERT_OK(ReadBytes(0, 64, &bytes));
+  ASSERT_EQ(bytes, "old");
+}
+
+TEST_F(TieredStorageTest, ReclaimClosesAndDeletesPendingTail) {
+  Initialize();
+  ASSERT_OK(Append("old"));
+  ASSERT_OK(AppendPending("pending"));
+  storage_->Start();
+  uint64_t reclaimed = 0;
+  ASSERT_OK(storage_->ReclaimBlob(1, &reclaimed));
+  ASSERT_GT(reclaimed, 10);
+  ASSERT_OK(storage_->Stop());
+  std::vector<std::string> names;
+  ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
+  for (const auto& name : names)
+    ASSERT_NE(name.compare(0, 10, "segment-1-"), 0);
+}
+
+TEST_F(TieredStorageTest, FailedExtentFsyncIsCountedBeforeAnyDirectorySync) {
+  auto failing = std::make_shared<ExtentFailureFileSystem>(fs_);
+  fs_ = failing;
+  Initialize();
+  failing->fail_fsync = true;
+  ASSERT_TRUE(Append("tail").IsIOError());
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.tier_extent_fsyncs, 1);
+  ASSERT_EQ(stats.tier_commit_dir_syncs, 0);
+  ASSERT_TRUE(ExtentLengths(true).empty());
+  storage_->Start();
+  ASSERT_OK(storage_->Stop());
+  ASSERT_EQ(failing->closes.load(), 1);
+}
+
+TEST_F(TieredStorageTest, ReclaimCloseFailurePreservesDescriptorAndPayload) {
+  auto failing = std::make_shared<ExtentFailureFileSystem>(fs_);
+  fs_ = failing;
+  Initialize();
+  ASSERT_OK(Append("old"));
+  ASSERT_OK(AppendPending("pending"));
+  std::string before;
+  ASSERT_OK(Read(fs_.get(), BlobFileName(m_.data_dir, 1), &before));
+  failing->fail_close = true;
+  storage_->Start();
+  uint64_t reclaimed = 0;
+  ASSERT_TRUE(storage_->ReclaimBlob(1, &reclaimed).IsIOError());
+  ASSERT_TRUE(storage_->Stop().IsIOError());
+  std::string after;
+  ASSERT_OK(Read(fs_.get(), BlobFileName(m_.data_dir, 1), &after));
+  ASSERT_EQ(after, before);
+  ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>{3});
+  // One committed close, one failed GC close, then worker teardown retry.
+  ASSERT_EQ(failing->closes.load(), 3);
+}
+
+TEST_F(TieredStorageTest, OrphanArchiveSealsTailAtCommit) {
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("orphan", &writer));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  ASSERT_OK(storage_->ArchiveUnreferenced({}));
+  ASSERT_TRUE(LocalExists().IsNotFound());
+  ASSERT_EQ(ExtentLengths(true), std::vector<uint64_t>{6});
+  MetaBypassStats stats;
+  storage_->AddStats(&stats);
+  ASSERT_OK(stats.error);
+  ASSERT_EQ(stats.tier_extent_fsyncs, 1);
+  ASSERT_EQ(stats.tier_commit_dir_syncs, 2);
 }
 
 TEST_F(TieredStorageTest, ActiveAndPartialMigrationRetainLocalSource) {

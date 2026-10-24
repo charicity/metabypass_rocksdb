@@ -801,7 +801,8 @@ class MetaBypassTest : public testing::Test {
     ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
     ASSERT_OK(db_->SyncBackup());
     const std::string old_point = PublishedPoint();
-    TestGate first, batch, pressure;
+    TestGate first, batch, pressure, sync_waiters;
+    int waiting_syncs = 0;
     BlockFirstApply(&first);
     bool first_batch = true;
     SyncPoint::GetInstance()->SetCallBack(
@@ -836,9 +837,16 @@ class MetaBypassTest : public testing::Test {
     });
     pressure.WaitUntilBlocked();
     pressure.Release();
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                          [&](void*) {
+                                            if (++waiting_syncs == 2)
+                                              sync_waiters.Block();
+                                          });
     std::array<Status, 2> synced;
     std::thread sync1([&] { synced[0] = db_->SyncBackup(); });
     std::thread sync2([&] { synced[1] = db_->SyncBackup(); });
+    sync_waiters.WaitUntilBlocked();
+    sync_waiters.Release();
     batch.Release();
     producer.join();
     sync1.join();

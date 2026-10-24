@@ -70,3 +70,29 @@ attempts and time, excluding eviction and GC. Counts include failed attempts.
 The native-checkpoint driver and db_bench emit all five fields. An uninterrupted
 256 MiB migration uses eight data Fsync calls and two Commit directory syncs;
 explicit intermediate barriers can create shorter extents.
+
+### Redundant persistence and checkpoint reads
+
+Persist still validates local closure and exact local length before omitting
+already durable blob entries from the work queue. Every caller waits for its
+own requested lengths; a smaller satisfied caller cannot remove another
+caller's larger request. Commit omits I/O only for identical length, sealed
+state, and extent names/lengths, with no open extent writer. Sealing and changed
+mappings retain payload Fsync/readback/Close, dependency directory sync,
+descriptor Fsync/rename, and publication directory sync ordering.
+
+Checkpoint CRC computation pins a fixed durable version for the entire call,
+including gaps between extents. It reads the requested prefix sequentially,
+opening each needed physical extent once. The pin excludes GC until all handles
+are closed, including error paths. This does not replace extent seal readback
+or change the backup cache's length-based verification trigger.
+
+`tier_persist_skips` counts satisfied blob entries, `tier_commit_skips` counts
+identical commits, and `tier_append_tasks` counts admitted Append tasks.
+`tier_append_wait_micros` and `tier_switch_wait_micros` are subsets of
+`tier_task_wait_micros`, with the same enqueue-to-completion/interruption scope.
+`tier_checkpoint_digest_opens` counts physical reader open attempts and
+`tier_checkpoint_digest_micros` covers entire durable-prefix checksum calls,
+including failures and pin acquisition. These counters are zero with staging
+disabled. Version-comparison adapters emit null for unavailable fields.
+Cumulative waits overlap background I/O and do not represent additive savings.

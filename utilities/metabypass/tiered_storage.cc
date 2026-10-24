@@ -612,8 +612,68 @@ Status TieredStorage::SyncCommitDirectory() {
   }
   return s;
 }
+Status TieredStorage::DigestDurablePrefix(uint64_t n, uint64_t length,
+                                          uint32_t* crc) {
+  const uint64_t start = Micros();
+  uint64_t opens = 0;
+  *crc = 0;
+  const auto digest = [&]() -> Status {
+    std::shared_ptr<const Version> version;
+    RemoteReadPin pin;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (retiring_.count(n)) return Status::NotFound("retiring blob");
+      auto it = durable_.find(n);
+      if (it == durable_.end()) return Status::NotFound("durable tier blob");
+      if (it->second->size < length)
+        return Status::Corruption("short durable tier blob");
+      version = it->second;
+      pin.Pin(this, n);
+    }
+    TEST_SYNC_POINT("MetaBypass::TierDigestPinned");
+    uint64_t remaining = length;
+    for (const auto& extent : version->extents) {
+      if (remaining == 0) break;
+      const uint64_t take = std::min(remaining, extent.length);
+      Status s = ExtendDigest(target(), options_.data_dir + "/" + extent.name,
+                              0, take, crc, &opens);
+      if (!s.ok()) return s;
+      remaining -= take;
+      TEST_SYNC_POINT("MetaBypass::TierDigestExtentRead");
+    }
+    return remaining == 0 ? Status::OK()
+                          : Status::Corruption("short durable extent map");
+  };
+  Status s = digest();
+  const uint64_t elapsed = Micros() - start;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    digest_opens_ += opens;
+    digest_us_ += elapsed;
+  }
+  return s;
+}
 Status TieredStorage::Commit(uint64_t n, Version v) {
   auto active = active_.find(n);
+  // active_ is owned by the sole worker (or exclusive offline recovery).
+  // An open writer must still be sealed even if the supplied map is unchanged.
+  if (active == active_.end() || !active->second.file) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto durable = durable_.find(n);
+    if (durable != durable_.end()) {
+      const auto& old = *durable->second;
+      if (v.size == old.size && v.sealed == old.sealed &&
+          v.extents.size() == old.extents.size() &&
+          std::equal(v.extents.begin(), v.extents.end(), old.extents.begin(),
+                     [](const Extent& a, const Extent& b) {
+                       return a.length == b.length && a.name == b.name;
+                     })) {
+        if (active != active_.end()) active_.erase(active);
+        ++commit_skips_;
+        return Status::OK();
+      }
+    }
+  }
   if (active != active_.end()) {
     if (active->second.file) {
       Status s = SealExtent(&active->second);
@@ -627,7 +687,12 @@ Status TieredStorage::Commit(uint64_t n, Version v) {
     auto durable = durable_.find(n);
     new_extents = !v.extents.empty() &&
                   (durable == durable_.end() ||
-                   v.extents.size() > durable->second->extents.size());
+                   v.extents.size() != durable->second->extents.size() ||
+                   !std::equal(v.extents.begin(), v.extents.end(),
+                               durable->second->extents.begin(),
+                               [](const Extent& a, const Extent& b) {
+                                 return a.name == b.name;
+                               }));
   }
   // Persist new payload names before publishing a descriptor that needs them.
   Status s;
@@ -668,11 +733,15 @@ Status TieredStorage::Submit(uint64_t n, TaskKind kind, const Slice& bytes) {
   queued_bytes_ += bytes.size();
   peak_queued_bytes_ = std::max(peak_queued_bytes_, queued_bytes_);
   tasks_.push_back(task);
+  if (kind == TaskKind::kAppend) ++append_tasks_;
   const uint64_t queued_at = Micros();
   TEST_SYNC_POINT("MetaBypass::TierTaskQueued");
   work_.notify_one();
   progress_.wait(lock, [&] { return task->done || !error_.ok() || stopping_; });
-  task_wait_us_ += Micros() - queued_at;
+  const uint64_t elapsed = Micros() - queued_at;
+  task_wait_us_ += elapsed;
+  if (kind == TaskKind::kAppend) append_wait_us_ += elapsed;
+  if (kind == TaskKind::kSwitch) switch_wait_us_ += elapsed;
   return !error_.ok() ? error_
          : task->done ? Status::OK()
                       : Status::ShutdownInProgress();
@@ -721,6 +790,9 @@ Status TieredStorage::SealExtent(ActiveExtent* active) {
   return s;
 }
 Status TieredStorage::Barrier(uint64_t n, bool close) {
+  Status status;
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierBarrierExecuting", &status);
+  if (!status.ok()) return status;
   Version v;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -907,7 +979,12 @@ Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
         (!local->second.closed || local->second.size != b.second))
       return Status::InvalidArgument(
           "checkpoint requires closed complete blob");
-    requests_[b.first] = std::max(requests_[b.first], b.second);
+    auto durable = durable_.find(b.first);
+    if (durable != durable_.end() && durable->second->size >= b.second) {
+      ++persist_skips_;
+    } else {
+      requests_[b.first] = std::max(requests_[b.first], b.second);
+    }
   }
   TEST_SYNC_POINT("MetaBypass::TierPersistRequested");
   work_.notify_one();
@@ -1256,6 +1333,14 @@ void TieredStorage::AddStats(MetaBypassStats* stats) const {
   stats->migrated_blob_bytes = migrated_;
   stats->staging_backpressure_micros = wait_us_;
   stats->tier_task_wait_micros = task_wait_us_;
+  stats->tier_persist_skips = persist_skips_;
+  stats->tier_commit_skips = commit_skips_;
+  stats->tier_append_tasks = append_tasks_;
+  stats->tier_append_wait_micros = append_wait_us_;
+  stats->tier_switch_wait_micros = switch_wait_us_;
+  stats->tier_checkpoint_digest_opens = digest_opens_;
+  stats->tier_checkpoint_digest_micros = digest_us_;
+
   stats->tier_extent_fsyncs = extent_fsyncs_;
   stats->tier_extent_fsync_micros = extent_fsync_us_;
   stats->tier_commit_dir_syncs = commit_dir_syncs_;

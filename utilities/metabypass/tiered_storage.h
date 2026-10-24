@@ -34,6 +34,8 @@ class TieredStorage : public FileSystemWrapper {
   // Submit an already-qualified whole-object retirement to the sole worker.
   Status ReclaimBlob(uint64_t number, uint64_t* bytes);
   Status Persist(const std::map<uint64_t, uint64_t>&);
+  // Hash a fixed durable prefix while pinning its extents against reclamation.
+  Status DigestDurablePrefix(uint64_t number, uint64_t length, uint32_t* crc);
   Status SaveCheckpoint(const std::string&,
                         const std::map<uint64_t, uint64_t>&);
   Status LoadCheckpoint(const std::string&);
@@ -178,6 +180,9 @@ class TieredStorage : public FileSystemWrapper {
   uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0, wait_us_ = 0;
   uint64_t task_wait_us_ = 0, extent_fsyncs_ = 0, extent_fsync_us_ = 0;
   uint64_t commit_dir_syncs_ = 0, commit_dir_sync_us_ = 0;
+  uint64_t persist_skips_ = 0, commit_skips_ = 0;
+  uint64_t append_tasks_ = 0, append_wait_us_ = 0, switch_wait_us_ = 0;
+  uint64_t digest_opens_ = 0, digest_us_ = 0;
   uint64_t extent_id_ = 0;
   bool stopping_ = false, restoring_ = false;
   Status error_;

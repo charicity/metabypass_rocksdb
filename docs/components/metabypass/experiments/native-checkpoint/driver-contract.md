@@ -201,3 +201,10 @@ Staging telemetry also emits `tier_task_wait_micros`, `tier_extent_fsyncs`,
 `tier_commit_dir_sync_micros`. These cumulative counters separate task completion
 wait, physical extent Fsync, and Commit directory persistence. See
 [staging counter definitions](../../tiered-storage.md).
+
+The staging redundancy diagnostics additionally emit `tier_persist_skips`,
+`tier_commit_skips`, `tier_append_tasks`, `tier_append_wait_micros`,
+`tier_switch_wait_micros`, `tier_checkpoint_digest_opens`, and
+`tier_checkpoint_digest_micros`. Append/Switch waits are subsets of total task
+wait, not additive wall time. Cross-version adapters must report unsupported
+fields as null; they must not synthesize zero measurements for old binaries.

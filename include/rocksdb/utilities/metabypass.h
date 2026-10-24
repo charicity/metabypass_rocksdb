@@ -131,6 +131,19 @@ struct MetaBypassStats {
   // including failures. Excludes staging eviction and garbage collection.
   uint64_t tier_commit_dir_syncs = 0;
   uint64_t tier_commit_dir_sync_micros = 0;
+  // Satisfied blob entries omitted from Persist's queue, and identical durable
+  // versions omitted from Commit. Validation and caller watermarks still apply.
+  uint64_t tier_persist_skips = 0;
+  uint64_t tier_commit_skips = 0;
+  // Admitted Append tasks and subsets of tier_task_wait_micros. These waits
+  // overlap background I/O and must not be added to I/O time as wall time.
+  uint64_t tier_append_tasks = 0;
+  uint64_t tier_append_wait_micros = 0;
+  uint64_t tier_switch_wait_micros = 0;
+  // Durable-prefix checkpoint checksum physical open attempts and whole-call
+  // time, including failures and pin acquisition. Disabled staging: zero.
+  uint64_t tier_checkpoint_digest_opens = 0;
+  uint64_t tier_checkpoint_digest_micros = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

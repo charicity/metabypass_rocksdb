@@ -28,6 +28,7 @@ class SeparatedStorage : public FileSystemWrapper {
   TieredStorage* tier() const { return tier_.get(); }
   SstStorage* sst() const { return sst_.get(); }
   Status Persist(const std::map<uint64_t, uint64_t>& lengths);
+  Status DigestBlob(uint64_t number, uint64_t length, uint32_t* crc);
   // Called only after the backup owner has excluded all recovery roots.
   Status ReclaimBlob(uint64_t number, uint64_t* bytes);
   std::string BlobPath(uint64_t number) const;

@@ -11314,6 +11314,13 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, tier_extent_fsync_micros);
     MB_NODE_FIELD(b, tier_commit_dir_syncs);
     MB_NODE_FIELD(b, tier_commit_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_persist_skips);
+    MB_NODE_FIELD(b, tier_commit_skips);
+    MB_NODE_FIELD(b, tier_append_tasks);
+    MB_NODE_FIELD(b, tier_append_wait_micros);
+    MB_NODE_FIELD(b, tier_switch_wait_micros);
+    MB_NODE_FIELD(b, tier_checkpoint_digest_opens);
+    MB_NODE_FIELD(b, tier_checkpoint_digest_micros);
     MB_NODE_FIELD(b, sync_write_micros);
     MB_NODE_FIELD(b, queued_bytes);
     MB_NODE_FIELD(b, peak_queued_bytes);
@@ -12148,6 +12155,15 @@ static int RunMetaBypassBenchmark() {
          stats.tier_task_wait_micros, stats.tier_extent_fsyncs,
          stats.tier_extent_fsync_micros, stats.tier_commit_dir_syncs,
          stats.tier_commit_dir_sync_micros);
+  printf("metabypass tier_persist_skips=%" PRIu64 " tier_commit_skips=%" PRIu64
+         " tier_append_tasks=%" PRIu64 " tier_append_wait_micros=%" PRIu64
+         " tier_switch_wait_micros=%" PRIu64
+         " tier_checkpoint_digest_opens=%" PRIu64
+         " tier_checkpoint_digest_micros=%" PRIu64 "\n",
+         stats.tier_persist_skips, stats.tier_commit_skips,
+         stats.tier_append_tasks, stats.tier_append_wait_micros,
+         stats.tier_switch_wait_micros, stats.tier_checkpoint_digest_opens,
+         stats.tier_checkpoint_digest_micros);
   return s.ok() ? 0 : 1;
 }
 

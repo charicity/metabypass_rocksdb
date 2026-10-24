@@ -626,8 +626,7 @@ Status Backup::Publish(const Candidate& candidate) {
   for (const auto& blob : blobs) {
     auto& digest = blob_cache_[blob.first];
     if (digest.length != blob.second) {
-      s = Digest(storage_->target(), storage_->BlobPath(blob.first),
-                 blob.second, &digest.crc);
+      s = storage_->DigestBlob(blob.first, blob.second, &digest.crc);
       if (!s.ok()) return s;
       digest.length = blob.second;
     }

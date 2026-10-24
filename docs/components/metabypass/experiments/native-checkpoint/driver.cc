@@ -534,6 +534,13 @@ class Database {
       FIELD(tier_extent_fsync_micros);
       FIELD(tier_commit_dir_syncs);
       FIELD(tier_commit_dir_sync_micros);
+      FIELD(tier_persist_skips);
+      FIELD(tier_commit_skips);
+      FIELD(tier_append_tasks);
+      FIELD(tier_append_wait_micros);
+      FIELD(tier_switch_wait_micros);
+      FIELD(tier_checkpoint_digest_opens);
+      FIELD(tier_checkpoint_digest_micros);
       FIELD(sync_write_micros);
       FIELD(queued_bytes);
       FIELD(peak_queued_bytes);

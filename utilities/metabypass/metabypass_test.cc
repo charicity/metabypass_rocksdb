@@ -4510,9 +4510,9 @@ TEST_F(TieredStorageTest,
   ASSERT_TRUE(storage_->Stop().IsIOError());
   ASSERT_TRUE(ExtentLengths(true).empty());
   ASSERT_OK(LocalExists());
-  MetaBypassStats after;
-  storage_->AddStats(&after);
-  ASSERT_TRUE(after.error.IsIOError());
+  const auto after = TierStats();
+  // AddStats only merges counters; the storage error has its own accessor.
+  ASSERT_TRUE(storage_->Error().IsIOError());
   ASSERT_EQ(after.staging_bytes, before.staging_bytes);
   ASSERT_EQ(after.tier_persist_skips, 0);
   ASSERT_EQ(after.tier_commit_skips, 0);
@@ -4585,7 +4585,15 @@ TEST_F(TieredStorageTest, DurableDigestFailuresReleasePins) {
   ASSERT_TRUE(storage_->DigestDurablePrefix(1, 8, &crc).IsCorruption());
   ASSERT_EQ(RemotePins(), 0);
   ASSERT_OK(fs_->DeleteFile(FirstExtentPath(), IOOptions(), nullptr));
-  ASSERT_TRUE(storage_->DigestDurablePrefix(1, 8, &crc).IsNotFound());
+  // Physical missing-file status is backend-specific (POSIX stat reports
+  // IOError/PathNotFound). Preserve that status rather than translating it.
+  uint64_t missing_size = 0;
+  Status expected =
+      fs_->GetFileSize(FirstExtentPath(), IOOptions(), &missing_size, nullptr);
+  ASSERT_NOK(expected);
+  Status actual = storage_->DigestDurablePrefix(1, 8, &crc);
+  ASSERT_EQ(actual.code(), expected.code());
+  ASSERT_EQ(actual.subcode(), expected.subcode());
   ASSERT_EQ(RemotePins(), 0);
 }
 

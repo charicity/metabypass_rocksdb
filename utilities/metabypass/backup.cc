@@ -573,7 +573,14 @@ Status Backup::Capture(Candidate* candidate) {
     }
     const std::string destination = candidate->path + "/" + file;
     if (!info.replacement_contents.empty()) {
-      s = Write(disk_, destination, info.replacement_contents);
+      // These bytes are private to this candidate. Publish synchronizes and
+      // validates them before making the recovery point visible.
+      std::unique_ptr<FSWritableFile> writer;
+      s = disk_->NewWritableFile(destination, FileOptions(), &writer, nullptr);
+      if (s.ok()) {
+        s = writer->Append(info.replacement_contents, IOOptions(), nullptr);
+        s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
+      }
       candidate->epochs[file] = ++next_epoch_;
     } else {
       uint64_t size = 0;

@@ -82,6 +82,84 @@ class CandidateNoLinkFileSystem : public FileSystemWrapper {
     return target()->NewSequentialFile(path, options, result, dbg);
   }
 };
+// Observe real replacement-file operations, distinguishing capture creation
+// from publication reopening. The hook runs outside the counting mutex.
+class ReplacementFileSystem : public FileSystemWrapper {
+ public:
+  explicit ReplacementFileSystem(const std::shared_ptr<FileSystem>& fs)
+      : FileSystemWrapper(fs) {}
+  const char* Name() const override { return "ReplacementFileSystem"; }
+  std::function<IOStatus(const std::string&)> hook;
+  uint64_t Count(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return counts_[key];
+  }
+  IOStatus Operation(const std::string& key) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      ++counts_[key];
+    }
+    return hook ? hook(key) : IOStatus::OK();
+  }
+  class File : public FSWritableFileWrapper {
+   public:
+    using FSWritableFileWrapper::Append;
+    File(std::unique_ptr<FSWritableFile> file, ReplacementFileSystem* fs,
+         std::string prefix)
+        : FSWritableFileWrapper(file.get()),
+          owned_(std::move(file)),
+          fs_(fs),
+          prefix_(std::move(prefix)) {}
+    IOStatus Append(const Slice& data, const IOOptions& o,
+                    IODebugContext* d) override {
+      IOStatus s = fs_->Operation(prefix_ + ".append");
+      return s.ok() ? target()->Append(data, o, d) : s;
+    }
+    IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+      IOStatus s = fs_->Operation(prefix_ + ".fsync");
+      return s.ok() ? target()->Fsync(o, d) : s;
+    }
+    IOStatus Close(const IOOptions& o, IODebugContext* d) override {
+      IOStatus injected = fs_->Operation(prefix_ + ".close");
+      IOStatus s = target()->Close(o, d);
+      s.UpdateIfOk(injected);
+      return s;
+    }
+
+   private:
+    std::unique_ptr<FSWritableFile> owned_;
+    ReplacementFileSystem* fs_;
+    std::string prefix_;
+  };
+  IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
+                           std::unique_ptr<FSWritableFile>* file,
+                           IODebugContext* d) override {
+    IOStatus s = target()->NewWritableFile(path, o, file, d);
+    if (s.ok()) Wrap(path, "capture", file);
+    return s;
+  }
+  IOStatus ReopenWritableFile(const std::string& path, const FileOptions& o,
+                              std::unique_ptr<FSWritableFile>* file,
+                              IODebugContext* d) override {
+    IOStatus s = target()->ReopenWritableFile(path, o, file, d);
+    if (s.ok()) Wrap(path, "publish", file);
+    return s;
+  }
+
+ private:
+  void Wrap(const std::string& path, const std::string& phase,
+            std::unique_ptr<FSWritableFile>* file) {
+    const auto slash = path.find_last_of('/');
+    const std::string name =
+        path.substr(slash == std::string::npos ? 0 : slash + 1);
+    if ((path.find("/point-") != std::string::npos &&
+         (name == "CURRENT" || name == "IDENTITY")) ||
+        name == "ordinary-write")
+      file->reset(new File(std::move(*file), this, phase + "." + name));
+  }
+  std::mutex mutex_;
+  std::map<std::string, uint64_t> counts_;
+};
 class UnsupportedCompactionService : public CompactionService {
  public:
   const char* Name() const override { return "UnsupportedCompactionService"; }
@@ -2794,6 +2872,170 @@ TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("old", "retained");
   Check(std::string(128, 'k') + "999", std::string(100, 'v'));
+}
+TEST_F(MetaBypassTest, ReplacementCaptureDefersSyncUntilPublication) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  std::atomic<unsigned> captures{0};
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::CandidateCaptured", [&](void*) {
+        for (const auto* name : {"CURRENT", "IDENTITY"}) {
+          const std::string prefix = std::string("capture.") + name;
+          EXPECT_GT(observed->Count(prefix + ".append"), 0U);
+          EXPECT_GT(observed->Count(prefix + ".close"), 0U);
+          EXPECT_EQ(observed->Count(prefix + ".fsync"), 0U);
+        }
+        ++captures;
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_GT(captures.load(), 0U);
+  for (const auto* name : {"CURRENT", "IDENTITY"})
+    EXPECT_GT(observed->Count(std::string("publish.") + name + ".fsync"), 0U);
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+  ASSERT_OK(db_->Close());
+  db_.reset();
+}
+TEST_F(MetaBypassTest, ReplacementFailuresPreservePointAndWakeWaiters) {
+  for (const auto* operation :
+       {"capture.CURRENT.append", "capture.CURRENT.close",
+        "publish.CURRENT.fsync"}) {
+    SCOPED_TRACE(operation);
+    auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+    auto env = NewCompositeEnv(observed);
+    Options options = o_;
+    options.env = env.get();
+    m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+    TestGate failing, waiting;
+    std::atomic<bool> armed{false}, injected{false};
+    observed->hook = [&](const std::string& key) {
+      if (armed.load() && key == operation && !injected.exchange(true)) {
+        failing.Block();
+        return IOStatus::IOError("replacement operation failed");
+      }
+      return IOStatus::OK();
+    };
+    ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+    ASSERT_OK(db_->SyncBackup());
+    std::string before;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "new"));
+    std::atomic<unsigned> waiters{0};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                          [&](void*) {
+                                            if (++waiters == 3) waiting.Block();
+                                          });
+    SyncPoint::GetInstance()->EnableProcessing();
+    const uint64_t closes_before = observed->Count("capture.CURRENT.close");
+    armed = true;
+    std::array<Status, 3> statuses;
+    std::vector<std::thread> threads;
+    threads.emplace_back([&] { statuses[0] = db_->SyncBackup(); });
+    failing.WaitUntilBlocked();
+    for (size_t i = 1; i < statuses.size(); ++i)
+      threads.emplace_back([&, i] { statuses[i] = db_->SyncBackup(); });
+    waiting.WaitUntilBlocked();
+    waiting.Release();
+    failing.Release();
+    for (auto& thread : threads) thread.join();
+    EXPECT_TRUE(injected.load());
+    if (std::string(operation) == "capture.CURRENT.append") {
+      EXPECT_EQ(observed->Count("capture.CURRENT.close"), closes_before + 1);
+    }
+    for (const auto& status : statuses) EXPECT_TRUE(status.IsIOError());
+    EXPECT_TRUE(db_->Close().IsIOError());
+    db_.reset();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    std::string after;
+    ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &after));
+    EXPECT_EQ(after, before);
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("key", "old");
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(root_);
+    ASSERT_OK(fs_->CreateDir(root_, IOOptions(), nullptr));
+  }
+}
+TEST_F(MetaBypassTest, ReplacementPublishSyncAllowsMirrorAndNativeFlush) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  options.enable_blob_direct_write = false;
+  options.write_buffer_size = 4 * 1024 * 1024;
+  m_.queue_capacity = 32768;
+  m_.batch_bytes = 1;
+  m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+  TestGate publishing;
+  std::atomic<bool> armed{false}, blocked{false}, returned{false};
+  observed->hook = [&](const std::string& key) {
+    if (armed.load() && key == "publish.CURRENT.fsync" &&
+        !blocked.exchange(true))
+      publishing.Block();
+    return IOStatus::OK();
+  };
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+  ASSERT_OK(db_->SyncBackup());
+  std::string before;
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &before));
+  ASSERT_OK(db_->Put(WriteOptions(), "candidate", "value"));
+  armed = true;
+  Status synced;
+  std::thread sync([&] {
+    synced = db_->SyncBackup();
+    returned = true;
+  });
+  publishing.WaitUntilBlocked();
+  auto initial = db_->GetBackupStats();
+  EXPECT_OK(initial.error);
+  for (int i = 0; i < 200; ++i)
+    EXPECT_OK(db_->Put(WriteOptions(), "tail" + std::to_string(i),
+                       std::string(1024, 'v')));
+  FlushOptions flush;
+  flush.wait = true;
+  EXPECT_OK(db_->Flush(flush));
+  auto progressed = db_->GetBackupStats();
+  EXPECT_OK(progressed.error);
+  EXPECT_GT(progressed.mirrored_bytes,
+            initial.mirrored_bytes + m_.queue_capacity);
+  EXPECT_FALSE(returned.load());
+  std::string pending;
+  EXPECT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pending));
+  EXPECT_EQ(pending, before);
+  publishing.Release();
+  sync.join();
+  ASSERT_OK(synced);
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("tail199", std::string(1024, 'v'));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+}
+TEST_F(MetaBypassTest, OrdinaryWriteStillSynchronizes) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  const std::string path = root_ + "/ordinary-write";
+  ASSERT_OK(metabypass::Write(observed.get(), path, "durable"));
+  EXPECT_EQ(observed->Count("capture.ordinary-write.append"), 1U);
+  EXPECT_EQ(observed->Count("capture.ordinary-write.fsync"), 1U);
+  EXPECT_EQ(observed->Count("capture.ordinary-write.close"), 1U);
+  std::string contents;
+  ASSERT_OK(metabypass::Read(fs_.get(), path, &contents));
+  EXPECT_EQ(contents, "durable");
 }
 TEST_F(MetaBypassTest, CandidateSyncBlockedMirrorStillDrains) {
   CandidateValidationBlockedScenario("MetaBypass::BeforeCandidateFileSync");

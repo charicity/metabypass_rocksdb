@@ -34,6 +34,104 @@
 #endif
 
 namespace ROCKSDB_NAMESPACE {
+namespace metabypass {
+// Internal protocol tests use the real selector, apply path, and drain loop.
+class BackupTestAccess {
+ public:
+  struct Input {
+    std::string name = "000001.log";
+    std::string bytes = "x";
+    char operation = 'a';
+  };
+  struct RecordingFile : FSWritableFile {
+    std::vector<std::string>* calls;
+    std::string* content;
+    bool partial;
+    RecordingFile(std::vector<std::string>* c, std::string* b, bool p)
+        : calls(c), content(b), partial(p) {}
+    using FSWritableFile::Append;
+    IOStatus Append(const Slice& data, const IOOptions&,
+                    IODebugContext*) override {
+      calls->push_back(data.ToString());
+      content->append(data.data(), partial ? data.size() / 2 : data.size());
+      return partial ? IOStatus::IOError("partial batch write")
+                     : IOStatus::OK();
+    }
+    uint64_t GetFileSize(const IOOptions&, IODebugContext*) override {
+      return content->size();
+    }
+    IOStatus Close(const IOOptions&, IODebugContext*) override {
+      return IOStatus::OK();
+    }
+    IOStatus Flush(const IOOptions&, IODebugContext*) override {
+      return IOStatus::OK();
+    }
+    IOStatus Sync(const IOOptions&, IODebugContext*) override {
+      return IOStatus::OK();
+    }
+  };
+  static void Load(Backup* backup, const std::vector<Input>& input) {
+    for (const auto& item : input) {
+      Backup::Kind kind =
+          item.operation == 'a' ? Backup::Kind::kAppend : Backup::Kind::kClose;
+      Backup::Event event{kind, item.name, {}, item.bytes};
+      event.seq = ++backup->accepted_;
+      event.charge = sizeof(event) + event.name.size() + event.bytes.size();
+      backup->stats_.queued_bytes += event.charge;
+      backup->ChannelFor(event.name).queue.push_back(std::move(event));
+    }
+  }
+  static std::vector<size_t> Select(Backup* backup,
+                                    const std::vector<Input>& input,
+                                    uint64_t boundary, uint64_t capture) {
+    Load(backup, input);
+    if (capture != 0) {
+      backup->candidate_ = std::make_unique<Backup::Candidate>();
+      backup->candidate_->seq = capture;
+    }
+    std::vector<Backup::Event> batch;
+    batch.reserve(64);
+    std::vector<size_t> sizes;
+    while (auto* channel = backup->NextChannel()) {
+      if (channel->queue.front().seq > boundary) break;
+      backup->TakeBatch(channel, boundary, &batch);
+      sizes.push_back(batch.size());
+    }
+    backup->wal_channel_.queue.clear();
+    backup->metadata_channel_.queue.clear();
+    backup->candidate_.reset();
+    backup->stats_.queued_bytes = 0;
+    return sizes;
+  }
+  static void Drain(Backup* backup, const std::vector<Input>& input,
+                    bool partial, size_t successful,
+                    const std::vector<std::string>& expected_calls) {
+    Load(backup, input);
+    std::vector<std::string> calls;
+    std::string bytes;
+    backup->writers_["000001.log"] =
+        std::make_unique<RecordingFile>(&calls, &bytes, partial);
+    // Stop drains the queued work through the same production Run loop.
+    backup->stopping_ = true;
+    backup->Run();
+    EXPECT_EQ(backup->applied_, successful);
+    EXPECT_EQ(backup->stats_.queued_bytes, 0U);
+    EXPECT_EQ(calls, expected_calls);
+    if (partial) {
+      EXPECT_EQ(backup->stats_.error, Status::IOError("partial batch write"));
+      ASSERT_EQ(calls.size(), 1U);
+      EXPECT_EQ(bytes, calls.front().substr(0, calls.front().size() / 2));
+    } else if (successful != input.size()) {
+      EXPECT_TRUE(backup->stats_.error.IsIOError());
+    } else {
+      EXPECT_OK(backup->stats_.error);
+      std::string expected;
+      for (const auto& item : input) expected += item.bytes;
+      EXPECT_EQ(bytes, expected);
+    }
+  }
+};
+}  // namespace metabypass
 namespace {
 std::string executable;
 // Fail after truncation to expose destructive rewrites of protocol markers.
@@ -159,6 +257,54 @@ class ReplacementFileSystem : public FileSystemWrapper {
   }
   std::mutex mutex_;
   std::map<std::string, uint64_t> counts_;
+};
+class PartialWalFileSystem : public FileSystemWrapper {
+ public:
+  explicit PartialWalFileSystem(std::shared_ptr<FileSystem> fs)
+      : FileSystemWrapper(std::move(fs)) {}
+  const char* Name() const override { return "PartialWalFileSystem"; }
+  std::atomic<bool> fail{false};
+  std::atomic<size_t> partial_calls{0};
+  class File : public FSWritableFileOwnerWrapper {
+   public:
+    File(std::unique_ptr<FSWritableFile> file, PartialWalFileSystem* owner)
+        : FSWritableFileOwnerWrapper(std::move(file)), owner_(owner) {}
+    using FSWritableFileOwnerWrapper::Append;
+    IOStatus Append(const Slice& data, const IOOptions& options,
+                    IODebugContext* dbg) override {
+      if (!owner_->fail) return target()->Append(data, options, dbg);
+      ++owner_->partial_calls;
+      IOStatus s =
+          target()->Append(Slice(data.data(), data.size() / 2), options, dbg);
+      if (!s.ok()) return s;
+      return IOStatus::IOError("partial mirror WAL write");
+    }
+
+   private:
+    PartialWalFileSystem* owner_;
+  };
+  IOStatus NewWritableFile(const std::string& path, const FileOptions& options,
+                           std::unique_ptr<FSWritableFile>* file,
+                           IODebugContext* dbg) override {
+    IOStatus s = target()->NewWritableFile(path, options, file, dbg);
+    if (s.ok()) Wrap(path, file);
+    return s;
+  }
+  IOStatus ReopenWritableFile(const std::string& path,
+                              const FileOptions& options,
+                              std::unique_ptr<FSWritableFile>* file,
+                              IODebugContext* dbg) override {
+    IOStatus s = target()->ReopenWritableFile(path, options, file, dbg);
+    if (s.ok()) Wrap(path, file);
+    return s;
+  }
+
+ private:
+  void Wrap(const std::string& path, std::unique_ptr<FSWritableFile>* file) {
+    if (path.find("/work/") != std::string::npos && path.size() >= 4 &&
+        path.substr(path.size() - 4) == ".log")
+      file->reset(new File(std::move(*file), this));
+  }
 };
 class UnsupportedCompactionService : public CompactionService {
  public:
@@ -641,6 +787,109 @@ class MetaBypassTest : public testing::Test {
     ASSERT_OK(fs_->CreateDir(index_, IOOptions(), nullptr));
     *backup = std::make_unique<metabypass::Backup>(storage, index_, m_);
     ASSERT_OK((*backup)->Start(false));
+  }
+  void CoalescePressureScenario(bool fail) {
+    m_.queue_capacity = 32768;
+    m_.batch_bytes = 1;
+    m_.checkpoint_interval_ms = 60000;
+    o_.write_buffer_size = 4 * 1024 * 1024;
+    auto partial = std::make_shared<PartialWalFileSystem>(fs_);
+    auto env = NewCompositeEnv(partial);
+    Options options = o_;
+    options.env = env.get();
+    ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+    ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+    ASSERT_OK(db_->SyncBackup());
+    const std::string old_point = PublishedPoint();
+    TestGate first, batch, pressure;
+    BlockFirstApply(&first);
+    bool first_batch = true;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::WalAppendBatch", [&](void* arg) {
+          if (!first_batch) return;
+          first_batch = false;
+          const auto& info = *static_cast<std::array<uint64_t, 3>*>(arg);
+          EXPECT_GT(info[1], 1U);
+          auto stats = db_->GetBackupStats();
+          EXPECT_OK(stats.error);
+          EXPECT_GE(stats.queued_bytes, info[2]);
+          batch.Block();
+          partial->fail = fail;
+        });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure",
+                                          [&](void*) { pressure.Block(); });
+    SyncPoint::GetInstance()->EnableProcessing();
+    EXPECT_OK(db_->Put(WriteOptions(), "first", "value"));
+    first.WaitUntilBlocked();
+    for (int i = 0; i < 8; ++i)
+      EXPECT_OK(db_->Put(WriteOptions(), "queued" + std::to_string(i),
+                         std::string(1024, 'q')));
+    first.Release();
+    batch.WaitUntilBlocked();
+    Status produced;
+    std::thread producer([&] {
+      for (int i = 0; i < 128; ++i) {
+        produced = db_->Put(WriteOptions(), "tail" + std::to_string(i),
+                            std::string(1024, 't'));
+        if (!produced.ok()) break;
+      }
+    });
+    pressure.WaitUntilBlocked();
+    pressure.Release();
+    std::array<Status, 2> synced;
+    std::thread sync1([&] { synced[0] = db_->SyncBackup(); });
+    std::thread sync2([&] { synced[1] = db_->SyncBackup(); });
+    batch.Release();
+    producer.join();
+    sync1.join();
+    sync2.join();
+    if (fail) {
+      EXPECT_TRUE(produced.IsIOError());
+      for (const auto& s : synced) EXPECT_TRUE(s.IsIOError());
+      EXPECT_EQ(partial->partial_calls.load(), 1U);
+      EXPECT_EQ(PublishedPoint(), old_point);
+      EXPECT_TRUE(db_->Close().IsIOError());
+    } else {
+      EXPECT_OK(produced);
+      for (const auto& s : synced) EXPECT_OK(s);
+      EXPECT_OK(db_->SyncBackup());
+      EXPECT_OK(db_->Close());
+    }
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    db_.reset();
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("old", "retained");
+    if (!fail) Check("tail127", std::string(1024, 't'));
+  }
+  void CoalesceSelector(
+      const std::vector<metabypass::BackupTestAccess::Input>& input,
+      const std::vector<size_t>& expected, uint64_t boundary = UINT64_MAX,
+      uint64_t capture = 0) {
+    auto storage = std::make_shared<metabypass::SeparatedStorage>(fs_, index_,
+                                                                  m_.data_dir);
+    metabypass::Backup backup(storage, index_, m_);
+    EXPECT_EQ(
+        metabypass::BackupTestAccess::Select(&backup, input, boundary, capture),
+        expected);
+  }
+  void CoalesceDrain(
+      const std::vector<metabypass::BackupTestAccess::Input>& input,
+      bool partial, size_t successful, const std::vector<std::string>& calls) {
+    auto storage = std::make_shared<metabypass::SeparatedStorage>(fs_, index_,
+                                                                  m_.data_dir);
+    metabypass::Backup backup(storage, index_, m_);
+    const auto charge = input.size() * (sizeof(std::string) * 3 + 1);
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::WalAppendBatch", [&](void*) {
+          // A lock-free stats call proves I/O hooks run outside the queue lock;
+          // all batch reservations are still retained before physical Append.
+          auto stats = backup.Stats();
+          EXPECT_OK(stats.error);
+          EXPECT_GE(stats.queued_bytes, charge);
+        });
+    metabypass::BackupTestAccess::Drain(&backup, input, partial, successful,
+                                        calls);
   }
   void BlockFirstApply(TestGate* gate) {
     // Only the single mirror thread invokes this callback.
@@ -3461,6 +3710,112 @@ TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
   db_.reset();
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("key", "old");
+}
+
+TEST_F(MetaBypassTest, WalCoalescingControlsAndRecreatedFile) {
+  m_.batch_bytes = 1;
+  TestGate applying;
+  BlockFirstApply(&applying);
+  size_t groups = 0;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::WalAppendBatch",
+                                        [&](void*) { ++groups; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, sst;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  applying.WaitUntilBlocked();
+  EXPECT_OK(wal->Append("a", IOOptions(), nullptr));
+  EXPECT_OK(wal->Append("b", IOOptions(), nullptr));
+  EXPECT_OK(sst->Append("metadata", IOOptions(), nullptr));
+  EXPECT_OK(wal->Close(IOOptions(), nullptr));
+  EXPECT_OK(backup->NewWritableFile(index_ + "/000001.log", FileOptions(), &wal,
+                                    nullptr));
+  EXPECT_OK(wal->Append("c", IOOptions(), nullptr));
+  EXPECT_OK(wal->Append("d", IOOptions(), nullptr));
+  EXPECT_OK(wal->Close(IOOptions(), nullptr));
+  EXPECT_OK(sst->Close(IOOptions(), nullptr));
+  applying.Release();
+  EXPECT_OK(backup->Stop());
+  SyncPoint::GetInstance()->DisableProcessing();
+  EXPECT_EQ(groups, 2U);
+  std::string bytes;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
+  EXPECT_EQ(bytes, "cd");
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  EXPECT_EQ(bytes, "metadata");
+}
+TEST_F(MetaBypassTest, WalCoalescingBackpressureAndRecovery) {
+  CoalescePressureScenario(false);
+}
+TEST_F(MetaBypassTest,
+       WalCoalescingPartialFailureWakesWaitersAndRestoresOldPoint) {
+  CoalescePressureScenario(true);
+}
+TEST_F(MetaBypassTest, WalCoalescingSelectionBoundaries) {
+  using Input = metabypass::BackupTestAccess::Input;
+  CoalesceSelector(std::vector<Input>(65), {64, 1});
+  CoalesceSelector(
+      std::vector<Input>(3, Input{"000001.log", std::string(32768, 'a')}),
+      {2, 1});
+  CoalesceSelector({Input{}, Input{"000001.log", ""}, Input{}}, {1, 1, 1});
+  CoalesceSelector({Input{"000001.log", ""}, Input{}, Input{}}, {1, 2});
+  CoalesceSelector(
+      {Input{}, Input{"000001.log", std::string(65537, 'a')}, Input{}},
+      {1, 1, 1});
+  CoalesceSelector({Input{}, Input{"000002.log"}, Input{}}, {1, 1, 1});
+  CoalesceSelector({Input{}, Input{"000002.sst"}, Input{}, Input{}}, {1, 1, 2});
+  CoalesceSelector({Input{}, Input{"000001.log", "", 'c'}, Input{}, Input{}},
+                   {1, 1, 2});
+  CoalesceSelector(std::vector<Input>(6), {3}, 3);
+  CoalesceSelector(std::vector<Input>(6), {3, 3}, UINT64_MAX, 3);
+}
+TEST_F(MetaBypassTest, WalCoalescingContentAndLogicalHooks) {
+  std::vector<uint64_t> sequences;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplySequence",
+      [&](void* p) { sequences.push_back(*static_cast<uint64_t*>(p)); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  CoalesceDrain(
+      {{"000001.log", "ab"}, {"000001.log", "cd"}, {"000001.log", "ef"}}, false,
+      3, {"abcdef"});
+  EXPECT_EQ(sequences, (std::vector<uint64_t>{1, 2, 3}));
+}
+TEST_F(MetaBypassTest, WalCoalescingLogicalFailuresPreservePrefix) {
+  for (size_t fail_at : {1U, 2U, 3U}) {
+    SCOPED_TRACE(fail_at);
+    size_t seen = 0;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::ApplyStatus", [&](void* p) {
+          if (++seen == fail_at)
+            *static_cast<Status*>(p) = Status::IOError("logical event fault");
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    std::vector<std::string> calls;
+    if (fail_at > 1) calls.push_back(std::string(fail_at - 1, 'x'));
+    CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(3), false,
+                  fail_at - 1, calls);
+    EXPECT_EQ(seen, fail_at);
+    SyncPoint::GetInstance()->DisableProcessing();
+  }
+}
+TEST_F(MetaBypassTest, WalCoalescingPrefixIOErrorPrecedesLogicalFailure) {
+  size_t seen = 0;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplyStatus", [&](void* p) {
+        if (++seen == 3)
+          *static_cast<Status*>(p) = Status::IOError("later logical fault");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(4), true, 0,
+                {"xx"});
+  EXPECT_EQ(seen, 3U);
+}
+TEST_F(MetaBypassTest, WalCoalescingPartialWriteIsNotAcknowledgedOrRetried) {
+  SyncPoint::GetInstance()->EnableProcessing();
+  CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(4), true, 0,
+                {"xxxx"});
 }
 
 TEST_F(MetaBypassTest, ChannelMetadataOnlyDrainsOnTimer) {

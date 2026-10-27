@@ -104,7 +104,7 @@ class TieredStorage : public FileSystemWrapper {
    public:
     Pin() = default;
     ~Pin();
-    Status Open(TieredStorage*, uint64_t);
+    Status Open(TieredStorage*, uint64_t, bool read_only = false);
     void Ranges(const Version&);  // mutex_ held by caller
     std::shared_ptr<Blob> blob;
 

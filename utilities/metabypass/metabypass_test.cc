@@ -1185,12 +1185,13 @@ TEST_F(MetaBypassTest, BlobGCCancelWaitsForPhysicalDeletionBeforeCapture) {
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(db_->SyncBackup());
   TestGate deleting, cancelled;
-  std::atomic<unsigned> captures{0};
+  std::atomic<unsigned> captures{0}, reclaimed{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BlobReclaimed",
+                                        [&](void*) { ++reclaimed; });
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::BlobDescriptorRemoved",
                                         [&](void*) { deleting.Block(); });
-  SyncPoint::GetInstance()->SetCallBack(
-      "MetaBypass::TierReclaimAwaitingCompletion",
-      [&](void*) { cancelled.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierCancelled",
+                                        [&](void*) { cancelled.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   ASSERT_OK(db_->Delete(WriteOptions(), "old"));
   ASSERT_OK(db_->Put(WriteOptions(), "live", "readable"));
@@ -1200,8 +1201,8 @@ TEST_F(MetaBypassTest, BlobGCCancelWaitsForPhysicalDeletionBeforeCapture) {
   deleting.WaitUntilBlocked();
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureFiles",
                                         [&](void*) { ++captures; });
-  // An unrelated mirror error cancels tier work after the worker has started
-  // deleting. The backup owner must keep its gate until that worker returns.
+  // An unrelated mirror error cancels tier work while the GC owner is deleting.
+  // It must keep its capture gate until physical deletion and dirsync finish.
   SyncPoint::GetInstance()->SetCallBack(
       "MetaBypass::ApplyStatus", [](void* arg) {
         *static_cast<Status*>(arg) =
@@ -1210,6 +1211,7 @@ TEST_F(MetaBypassTest, BlobGCCancelWaitsForPhysicalDeletionBeforeCapture) {
   EXPECT_OK(db_->Put(WriteOptions(), "unpublished", "value"));
   cancelled.WaitUntilBlocked();
   cancelled.Release();
+  EXPECT_EQ(reclaimed.load(), 0U);
   EXPECT_EQ(captures.load(), 0U);
   Check("live", "readable");
   deleting.Release();
@@ -5416,6 +5418,99 @@ TEST_F(TieredStorageTest, SimulatedPowerLossDropsOnlyUnsyncedRegisteredTail) {
   ASSERT_EQ(actual, "durable");
   storage_->Start();
   ASSERT_OK(storage_->Persist({{1, 7}}));
+  ASSERT_OK(storage_->Stop());
+}
+
+TEST_F(TieredStorageTest,
+       MigrationFailureKeepsDurablePrefixAndFlushedTailReadable) {
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("durable", &writer));
+  ASSERT_OK(writer->Sync(IOOptions(), nullptr));
+  ASSERT_OK(writer->Append("tail", IOOptions(), nullptr));
+  ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+  TestGate failed;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierExtentSynced", [](void* arg) {
+        *static_cast<Status*>(arg) = Status::IOError("background seal failure");
+      });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationComplete",
+                                        [&](void*) { failed.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  storage_->Start();
+  failed.WaitUntilBlocked();
+  std::string actual;
+  EXPECT_OK(ReadBytes(0, 11, &actual));
+  EXPECT_EQ(actual, "durabletail");
+  EXPECT_TRUE(writer->Append("rejected", IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(writer->Sync(IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(storage_->Persist({{1, 11}}).IsIOError());
+  uint64_t reclaimed = 0;
+  EXPECT_TRUE(storage_->ReclaimBlob(1, &reclaimed).IsIOError());
+  EXPECT_EQ(reclaimed, 0);
+  EXPECT_EQ(HddEnd(), 0);
+  EXPECT_EQ(TierStats().staging_bytes, 11);
+  EXPECT_OK(LocalExists());
+  failed.Release();
+  ASSERT_TRUE(storage_->Stop().IsIOError());
+  ASSERT_FALSE(ReadBytes(0, 11, &actual).ok());
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+
+TEST_F(TieredStorageTest, LocalSealFailurePreservesRegisteredTailAndQuota) {
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("durable", &writer));
+  ASSERT_OK(writer->Sync(IOOptions(), nullptr));
+  ASSERT_OK(writer->Append("tail", IOOptions(), nullptr));
+  ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+  const std::string descriptor = BlobFileName(m_.data_dir, 1);
+  std::string before, after;
+  ASSERT_OK(Read(fs_.get(), descriptor, &before));
+  unsigned local_seals = 0, hdd_seals = 0;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierLocalExtentSynced", [&](void* arg) {
+        ++local_seals;
+        *static_cast<Status*>(arg) = Status::IOError("local seal failure");
+      });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierExtentSynced",
+                                        [&](void*) { ++hdd_seals; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_TRUE(writer->Sync(IOOptions(), nullptr).IsIOError());
+  ASSERT_EQ(local_seals, 1U);
+  ASSERT_EQ(hdd_seals, 0U);
+  ASSERT_OK(Read(fs_.get(), descriptor, &after));
+  ASSERT_EQ(before, after);  // No durable watermark or range publication.
+  ASSERT_EQ(HddEnd(), 0);
+  ASSERT_EQ(RemoteSize(), 11);
+  ASSERT_EQ(TierStats().staging_bytes, 11);
+  ASSERT_OK(LocalExists());
+  std::string actual;
+  ASSERT_OK(ReadBytes(0, 11, &actual));
+  ASSERT_EQ(actual, "durabletail");
+  ASSERT_TRUE(writer->Append("rejected", IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(writer->Sync(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(storage_->Persist({{1, 11}}).IsIOError());
+  uint64_t reclaimed = 0;
+  ASSERT_TRUE(storage_->ReclaimBlob(1, &reclaimed).IsIOError());
+  ASSERT_EQ(reclaimed, 0);
+  ASSERT_OK(LocalExists());
+  ASSERT_TRUE(writer->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(storage_->Stop().IsIOError());
+  ASSERT_FALSE(ReadBytes(0, 11, &actual).ok());
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+  writer.reset();
+  storage_.reset();
+  storage_.reset(new TieredStorage(fs_, m_));
+  ASSERT_OK(storage_->Initialize(false));
+  ASSERT_OK(ReadBytes(0, 11, &actual));
+  ASSERT_EQ(actual, "durabletail");
+  ASSERT_EQ(HddEnd(), 0);
+  ASSERT_EQ(TierStats().staging_bytes, 11);
+  storage_->Start();
+  ASSERT_OK(storage_->Persist({{1, 11}}));
   ASSERT_OK(storage_->Stop());
 }
 

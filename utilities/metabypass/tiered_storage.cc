@@ -322,9 +322,10 @@ TieredStorage::Pin::~Pin() {
   storage_->progress_.notify_all();
   storage_->work_.notify_one();
 }
-Status TieredStorage::Pin::Open(TieredStorage* storage, uint64_t n) {
+Status TieredStorage::Pin::Open(TieredStorage* storage, uint64_t n,
+                                bool read_only) {
   std::lock_guard<std::mutex> lock(storage->mutex_);
-  if (!storage->error_.ok()) return storage->error_;
+  if (!read_only && !storage->error_.ok()) return storage->error_;
   if (storage->stopping_) return Status::ShutdownInProgress();
   auto it = storage->blobs_.find(n);
   if (it == storage->blobs_.end() || it->second->retiring)
@@ -553,7 +554,11 @@ Status TieredStorage::Seal(ActiveExtent* active) {
     active->extent.crc = active->crc;
     active->extent.frozen_at = Micros();
   }
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierExtentSynced", &s);
+  if (active->extent.local) {
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::TierLocalExtentSynced", &s);
+  } else {
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::TierExtentSynced", &s);
+  }
   return s;
 }
 Status TieredStorage::Freeze(uint64_t n, const std::shared_ptr<Blob>& blob) {
@@ -704,10 +709,13 @@ void TieredStorage::SetFailureHandler(std::function<void(const Status&)> f) {
   failure_ = std::move(f);
 }
 void TieredStorage::Cancel(const Status& s) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (error_.ok()) error_ = s;
-  progress_.notify_all();
-  work_.notify_all();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (error_.ok()) error_ = s;
+    progress_.notify_all();
+    work_.notify_all();
+  }
+  TEST_SYNC_POINT("MetaBypass::TierCancelled");
 }
 void TieredStorage::Fail(const Status& s) {
   std::function<void(const Status&)> f;
@@ -856,7 +864,8 @@ IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
                                  const IOOptions& o, Slice* out, char* scratch,
                                  IODebugContext* d) {
   Pin pin;
-  Status s = pin.Open(this, n);
+  // A background persistence failure must not hide the readable live view.
+  Status s = pin.Open(this, n, true /* read_only */);
   if (!s.ok()) return IO(s);
   Version version;
   bool local = false;

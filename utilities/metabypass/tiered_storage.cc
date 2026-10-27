@@ -147,7 +147,9 @@ class TierWriter : public FSWritableFile {
             TEST_SYNC_POINT("MetaBypass::TierSuffixRegistered");
           }
         }
-        if (local) TEST_SYNC_POINT("MetaBypass::TierQuotaReserved");
+        if (local) {
+          TEST_SYNC_POINT("MetaBypass::TierQuotaReserved");
+        }
         Status st;
         if (!active.file) st = storage_->Register(number_, blob, local);
         const auto started = Micros();
@@ -484,7 +486,9 @@ Status TieredStorage::Commit(uint64_t n, const std::shared_ptr<Blob>& blob,
     std::lock_guard<std::mutex> lock(mutex_);
     metadata_us_ += Micros() - start;
   }
-  if (s.ok()) TEST_SYNC_POINT("MetaBypass::TierRouteDurable");
+  if (s.ok()) {
+    TEST_SYNC_POINT("MetaBypass::TierRouteDurable");
+  }
   return s;
 }
 Status TieredStorage::Register(uint64_t n, const std::shared_ptr<Blob>& blob,
@@ -878,10 +882,11 @@ IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
     // publication. A point read is O(log N), not a copy/pin of the whole blob.
     pin.Ranges(version);
   }
-  if (local)
+  if (local) {
     TEST_SYNC_POINT("MetaBypass::TierLocalReadPinned");
-  else
+  } else {
     TEST_SYNC_POINT("MetaBypass::TierRemoteReadPinned");
+  }
   return ReadVersion(version, offset, size, o, out, scratch, d);
 }
 Status TieredStorage::DigestDurablePrefix(uint64_t n, uint64_t length,

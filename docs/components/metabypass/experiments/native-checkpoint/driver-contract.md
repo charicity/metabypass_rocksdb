@@ -208,3 +208,12 @@ The staging redundancy diagnostics additionally emit `tier_persist_skips`,
 `tier_checkpoint_digest_micros`. Append/Switch waits are subsets of total task
 wait, not additive wall time. Cross-version adapters must report unsupported
 fields as null; they must not synthesize zero measurements for old binaries.
+
+The segmented pipeline additionally emits `tier_suffix_appends`,
+`tier_migration_starts`, `tier_migration_start_delay_micros`,
+`tier_prefix_write_micros`, `tier_suffix_write_micros`,
+`tier_barrier_wait_micros`, `tier_metadata_commit_micros`, and
+`tier_quota_admission_micros`. Quota admission is a computation/reservation time,
+not a wait: insufficient capacity starts an independent HDD suffix. The legacy
+Append/Switch task counters are zero for this implementation. Unsupported fields
+in older binaries remain null. All timing fields are cumulative and overlap.

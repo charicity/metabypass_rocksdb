@@ -1,98 +1,112 @@
-# Bounded blob staging and HDD spill
+# Bounded segmented staging and independent HDD suffixes
 
-Ordinary Integrated BlobDB creates blob files during native memtable flush and
-compaction. Foreground Put/Write stores the full value in WAL and memtable;
-staging admission is performed by blob file Append, including background flush
-and compaction writers.
+Ordinary Integrated BlobDB produces blobs in native flush and compaction.
+Direct Write produces blob records in the foreground and keeps its per-record
+Flush contract. Staging changes physical blob storage, not native record or
+checkpoint boundaries.
 
-Enable staging with a disjoint `staging_dir` and positive `staging_capacity`.
-The capacity is a hard bound on logical SSD blob bytes plus outstanding local
-append reservations. Reservation and capacity accounting share a mutex, so
-multiple blob writers cannot each spend the same free bytes. File system
-allocation overhead, WAL/index space, memory and HDD capacity are separate.
+Enable staging with disjoint `staging_dir` and positive `staging_capacity`.
+Physical SSD payload segments are at most 32 MiB. Admission reserves payload
+bytes under the accounting mutex before writing; retained, migrating and
+read-pinned SSD segments stay charged. Filesystem block rounding, metadata,
+WAL/index space and HDD space are separate. Insufficient admission permanently
+switches that blob to an HDD suffix beginning at its current logical length.
+Large Appends split into bounded chunks and do not require the whole record to
+fit in staging.
 
-When the next append cannot fit, that file switches once to HDD. Its existing
-SSD prefix becomes immutable. An independent worker copies and fsyncs that
-prefix, persists a versioned descriptor and switches new reads to HDD. The
-current file then sends subsequent appends through the worker's bounded queue.
-It never returns to SSD. A value or batch larger than the staging cap succeeds
-without requiring the entire record to fit locally. No DB write-side staging
-reservation or forced memtable flush is used to obtain capacity.
+A full SSD segment is flushed, synced and closed, and its frozen range is
+published. The worker can migrate it while the logical blob remains open and
+the caller writes another segment. The worker yields after each 4 MiB copy
+quantum, alternating explicit-barrier priority with round-robin blob service.
+Its one data buffer is at most 4 MiB, below the fixed 16 MiB limit; queued work
+contains metadata only. A yield does not seal or publish a partial extent.
 
-The worker schedules and buffers at most 4 MiB per chunk, with a fixed 16 MiB
-remote queue. It aggregates writes into fixed 32 MiB physical extents across
-migration yields; no new configuration is required. A full extent is fsynced,
-verified with a whole-extent CRC, and closed. Every descriptor commit first
-seals the remaining tail, syncs the data directory if new extents were added,
-then fsyncs the temporary descriptor, renames it, and syncs the directory before
-publishing the durable route. Committed extents are never appended again.
-File Sync/Close establishes
-a durable descriptor boundary; crash recovery uses only committed descriptor
-prefixes and ignores uncommitted tail extents. Flush must make its blob payload
-durable before native RocksDB installs an SST referencing it. Worker operations
-do not wait for themselves, so background flush and compaction do not require a
-foreground thread to free staging capacity.
+After spilling, the caller writes and flushes independent HDD suffix extents
+directly. It never waits for prefix migration just to Append, and it never
+sends a per-record Append task to the worker. The worker and caller own distinct
+physical writers and CRC accumulators. Full HDD extents and Sync/Close tails
+still require Fsync, whole-extent CRC readback and Close. These real I/O costs
+remain possible on the foreground path.
 
-A physical SSD read pins its opened handle. After the route switches, new reads
-use HDD immediately; an older pinned read may finish using SSD. That pin delays
-SSD unlink and quota reclamation but does not block later HDD appends. Remote
-reads hold an immutable mapping version until completion. Whole-file deletion
-waits for both read lifetimes.
+## Publication and lifetime
 
-`SyncBackup` and synchronous writes publish native recovery points on HDD.
-For a WAL-only point no blob migration is needed: its full-value WAL is sufficient.
-For points containing blob references, required closed blob files and descriptors
-are persisted before publication. Restore can lose both index and staging while
-retaining HDD data/backup. It verifies the published mapping and uses native
-RocksDB recovery; it does not scan records, seal blobs or repair MANIFESTs.
+Each blob has an append mutex, a descriptor commit mutex and state protected by
+the global accounting mutex, acquired in that order. The worker never takes the
+append mutex. No payload copying, Fsync/readback, worker wait or pin drain occurs
+under the descriptor commit mutex. The global mutex never covers physical I/O.
 
-Formats are `MBN2` (database/backup), `MBI2` (inventory) and `MBT2` (mapping).
-Older formats are rejected before modifying the source directories. There is no
-compatibility migration path. MBT2 already supports variable extent lengths;
-existing 4 MiB extents and new 32 MiB extents can coexist without a format change.
+A new caller-owned segment is created and its empty identity synced before its
+identity, logical start and maximum length are durably registered. Only then
+may it accept bytes. Metadata commits merge an identity-checked range delta
+into the latest generation, retaining concurrent unrelated tail changes.
 
-Observe `peak_staging_bytes`, `staging_spill_files`, `staging_spill_bytes`,
-`tier_queued_bytes`, `peak_tier_queued_bytes`, `hdd_extents`, migration bytes and
-sync latency together. `mirrored_wal_bytes` isolates WAL append traffic from
-`mirrored_bytes`, which includes SST and metadata append traffic as well.
-Full-value WAL increases mirror traffic; HDD service time
-can increase flush latency even while staging stays below its hard cap. Current
-behavior is summarized in the [component entry point](index.md).
+Migration copies a frozen SSD segment, checks its expected CRC, Fsyncs and
+rereads the entire HDD extent, closes it and syncs its dependency directory.
+It then Fsyncs a temporary descriptor, renames it, and syncs the publication
+directory before changing the readable route. Existing snapshot readers keep
+physical source pins; new readers use the published route. SSD unlink and
+staging-directory sync must both succeed before quota is released. Uncertain
+publication preserves source and destination files.
 
-Staging persistence counters are cumulative since open and default to zero when
-staging is disabled. `tier_task_wait_micros` measures time from queue admission
-to task completion or interruption; `staging_backpressure_micros` continues to
-measure admission wait only. `tier_extent_fsyncs` and
-`tier_extent_fsync_micros` count physical extent Fsync attempts and time, excluding
-CRC verification and Close. `tier_commit_dir_syncs` and
-`tier_commit_dir_sync_micros` count Commit dependency/publication directory sync
-attempts and time, excluding eviction and GC. Counts include failed attempts.
-The native-checkpoint driver and db_bench emit all five fields. An uninterrupted
-256 MiB migration uses eight data Fsync calls and two Commit directory syncs;
-explicit intermediate barriers can create shorter extents.
+Every operation pins its logical blob; reads and checkpoint digests additionally
+pin the physical identities in their fixed snapshot. Whole-blob retirement
+rejects new operations, cancels dependent barrier waits and drains existing
+operations before deletion. Stop waits for in-flight physical operations.
+The first I/O error is sticky and wakes all waiters.
 
-### Redundant persistence and checkpoint reads
+## Durability and recovery
 
-Persist still validates local closure and exact local length before omitting
-already durable blob entries from the work queue. Every caller waits for its
-own requested lengths; a smaller satisfied caller cannot remove another
-caller's larger request. Commit omits I/O only for identical length, sealed
-state, and extent names/lengths, with no open extent writer. Sealing and changed
-mappings retain payload Fsync/readback/Close, dependency directory sync,
-descriptor Fsync/rename, and publication directory sync ordering.
+`V` is the completed Append/Flush-visible end. `D` is the contiguous durable end
+across SSD and HDD. `H` is the contiguous sealed HDD end; a durable HDD suffix
+cannot advance `H` over an SSD prefix. Each barrier captures its own target.
+SSD-mode Sync/Fsync establishes `D`; spilled-mode Sync/Fsync waits for `H`.
+SSD-mode Close freezes the tail and publishes logical closure without waiting
+for migration. Spilled Close additionally waits for all data on HDD and a
+closed, fully sealed descriptor.
 
-Checkpoint CRC computation pins a fixed durable version for the entire call,
-including gaps between extents. It reads the requested prefix sequentially,
-opening each needed physical extent once. The pin excludes GC until all handles
-are closed, including error paths. This does not replace extent seal readback
-or change the backup cache's length-based verification trigger.
+Persist and checkpoints require closed blobs with exact lengths and fully
+durable HDD mappings. Synchronous writes and SyncBackup retain their native
+recovery-point publication barriers. Restore can lose both index and SSD
+staging, relying only on HDD data and backup. It validates the selected mapping
+and all HDD dependencies before publishing descriptors; later mixed descriptors
+are removed without deleting their HDD payloads. The existing durable RESTORING
+marker prevents Open from observing partial restore publication and permits
+idempotent retries. Historical points retain their own mappings and extents.
 
-`tier_persist_skips` counts satisfied blob entries, `tier_commit_skips` counts
-identical commits, and `tier_append_tasks` counts admitted Append tasks.
-`tier_append_wait_micros` and `tier_switch_wait_micros` are subsets of
-`tier_task_wait_micros`, with the same enqueue-to-completion/interruption scope.
-`tier_checkpoint_digest_opens` counts physical reader open attempts and
-`tier_checkpoint_digest_micros` covers entire durable-prefix checksum calls,
-including failures and pin acquisition. These counters are zero with staging
-disabled. Version-comparison adapters emit null for unavailable fields.
-Cumulative waits overlap background I/O and do not represent additive savings.
+The new formats are MBN3 (roots), MBI3 (inventory), MBT3 (range descriptor) and
+MBTC3 (checkpoint map). Old formats are rejected before destructive changes;
+there is no legacy decoder or conversion path. MBT3 contains a CRC-protected
+generation, logical state and explicit contiguous ranges. Each range records
+its tier, unique file identity, valid length, durable length, maximum size,
+open/frozen state and sealed CRC. Only the last range may be open.
+
+On process-crash recovery, the registered open tail's physical length determines
+candidate visible bytes, bounded by its registered maximum and durable minimum.
+File length alone never establishes durability or validates a CRC. Recovery
+performs real synchronization/sealing before promoting these bytes. Closed
+ranges must have their exact registered physical length; truncation or invalid
+coverage is corruption. Recovery does not interpret blob records or repair
+native MANIFESTs.
+
+## Diagnostics
+
+Existing staging usage and peak counters include retained payload; the peak
+also includes outstanding reservations. Migration bytes count actual copies.
+`tier_suffix_appends` counts direct HDD Append attempts, and
+`staging_spill_bytes` counts their successful payload bytes. The former worker
+Append/Switch task and task-wait counters are zero in the pipeline.
+
+`tier_migration_starts` counts segments whose first copy begins.
+`tier_migration_start_delay_micros` sums freeze-to-first-copy delay.
+`tier_prefix_write_micros` and `tier_suffix_write_micros` sum caller SSD/HDD
+Append/Flush time. `tier_barrier_wait_micros` measures HDD barrier waits;
+`tier_metadata_commit_micros` includes commit-lock acquisition and descriptor
+publication. `tier_quota_admission_micros` measures quota checks/reservations,
+not backpressure waiting: unsuccessful admission spills immediately.
+
+Extent Fsync and metadata directory-sync counters include failed attempts.
+Satisfied Persist requests and identical commits skip redundant persistence.
+Checkpoint CRC reads retain one fixed mapping/pin for the complete call and
+open each needed extent once. This does not replace extent seal readback.
+All cumulative times can overlap; do not add them as exclusive wall-time phases.
+Cross-version adapters report unsupported statistics as null.

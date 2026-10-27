@@ -536,6 +536,14 @@ class Database {
       FIELD(tier_commit_dir_sync_micros);
       FIELD(tier_persist_skips);
       FIELD(tier_commit_skips);
+      FIELD(tier_suffix_appends);
+      FIELD(tier_migration_starts);
+      FIELD(tier_migration_start_delay_micros);
+      FIELD(tier_prefix_write_micros);
+      FIELD(tier_suffix_write_micros);
+      FIELD(tier_barrier_wait_micros);
+      FIELD(tier_metadata_commit_micros);
+      FIELD(tier_quota_admission_micros);
       FIELD(tier_append_tasks);
       FIELD(tier_append_wait_micros);
       FIELD(tier_switch_wait_micros);

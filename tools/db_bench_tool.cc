@@ -11316,6 +11316,14 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, tier_commit_dir_sync_micros);
     MB_NODE_FIELD(b, tier_persist_skips);
     MB_NODE_FIELD(b, tier_commit_skips);
+    MB_NODE_FIELD(b, tier_suffix_appends);
+    MB_NODE_FIELD(b, tier_migration_starts);
+    MB_NODE_FIELD(b, tier_migration_start_delay_micros);
+    MB_NODE_FIELD(b, tier_prefix_write_micros);
+    MB_NODE_FIELD(b, tier_suffix_write_micros);
+    MB_NODE_FIELD(b, tier_barrier_wait_micros);
+    MB_NODE_FIELD(b, tier_metadata_commit_micros);
+    MB_NODE_FIELD(b, tier_quota_admission_micros);
     MB_NODE_FIELD(b, tier_append_tasks);
     MB_NODE_FIELD(b, tier_append_wait_micros);
     MB_NODE_FIELD(b, tier_switch_wait_micros);
@@ -12164,6 +12172,18 @@ static int RunMetaBypassBenchmark() {
          stats.tier_append_tasks, stats.tier_append_wait_micros,
          stats.tier_switch_wait_micros, stats.tier_checkpoint_digest_opens,
          stats.tier_checkpoint_digest_micros);
+  printf(
+      "metabypass tier_suffix_appends=%" PRIu64
+      " tier_migration_starts=%" PRIu64
+      " tier_migration_start_delay_micros=%" PRIu64
+      " tier_prefix_write_micros=%" PRIu64 " tier_suffix_write_micros=%" PRIu64
+      " tier_barrier_wait_micros=%" PRIu64
+      " tier_metadata_commit_micros=%" PRIu64
+      " tier_quota_admission_micros=%" PRIu64 "\n",
+      stats.tier_suffix_appends, stats.tier_migration_starts,
+      stats.tier_migration_start_delay_micros, stats.tier_prefix_write_micros,
+      stats.tier_suffix_write_micros, stats.tier_barrier_wait_micros,
+      stats.tier_metadata_commit_micros, stats.tier_quota_admission_micros);
   return s.ok() ? 0 : 1;
 }
 

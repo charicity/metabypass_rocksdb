@@ -51,7 +51,7 @@ Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
   if (!s.ok()) return s;
   if (crc32c::Value(inventory->data(), inventory->size()) != inventory_crc)
     return Status::Corruption("published inventory checksum");
-  if (inventory->compare(0, 5, "MBI2\n") != 0)
+  if (inventory->compare(0, 5, "MBI3\n") != 0)
     return Status::NotSupported("Metabypass inventory format");
   return Status::OK();
 }
@@ -213,7 +213,7 @@ Status Backup::Start(bool existing) {
       if (!s.ok()) return s;
       if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
         return Status::Corruption("published inventory checksum");
-      if (inventory.compare(0, 5, "MBI2\n") != 0)
+      if (inventory.compare(0, 5, "MBI3\n") != 0)
         return Status::NotSupported("Metabypass inventory format");
       std::istringstream entries(inventory.substr(5));
       std::string kind, file;
@@ -640,7 +640,7 @@ Status Backup::Publish(const Candidate& candidate) {
   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
   if (!s.ok()) return s;
   std::ostringstream inventory;
-  inventory << "MBI2\n";
+  inventory << "MBI3\n";
   uint64_t total = 0;
   for (const auto& f : files) {
     uint64_t number;

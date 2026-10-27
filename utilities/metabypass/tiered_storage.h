@@ -19,7 +19,7 @@
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
 // Routes logical data-dir blobs to bounded local staging or immutable remote
-// extents. Only the migration worker writes remote extents during normal use.
+// extents. Frozen prefixes migrate independently of caller-owned HDD suffixes.
 class TieredStorage : public FileSystemWrapper {
  public:
   TieredStorage(std::shared_ptr<FileSystem>, const MetaBypassOptions&);
@@ -67,123 +67,94 @@ class TieredStorage : public FileSystemWrapper {
   friend class TieredStorageTest;
   friend class TierWriter;
   friend class TierReader;
-  struct Extent {
-    uint64_t length;
-    std::string name;
-  };
-  struct Version {
-    uint64_t size = 0;
-    bool sealed = false;
-    std::vector<Extent> extents;
-    // Exclusive logical end of each extent, built before publication.
-    std::vector<uint64_t> ends;
-  };
-  struct Local {
-    uint64_t size = 0;
-    bool closed = false;
-    // Physical local I/O pins, not the lifetime of logical TierReaders.
-    uint64_t readers = 0;
-    bool evicting = false;
-    // The physical prefix is closed while the logical writer continues on HDD.
-    bool switching = false;
-  };
-  // Stack-owned per-I/O pin. Open requires mutex_; destruction must not hold
-  // it.
-  class LocalReadPin {
-   public:
-    LocalReadPin() = default;
-    ~LocalReadPin();
-    LocalReadPin(const LocalReadPin&) = delete;
-    LocalReadPin& operator=(const LocalReadPin&) = delete;
-    IOStatus Open(TieredStorage*, uint64_t, IODebugContext*);
-    FSRandomAccessFile* file() const { return file_.get(); }
-
-   private:
-    TieredStorage* storage_ = nullptr;
-    uint64_t number_ = 0;
-    std::unique_ptr<FSRandomAccessFile> file_;
-  };
-  class RemoteReadPin {
-   public:
-    RemoteReadPin() = default;
-    ~RemoteReadPin();
-    RemoteReadPin(const RemoteReadPin&) = delete;
-    RemoteReadPin& operator=(const RemoteReadPin&) = delete;
-    void Pin(TieredStorage* storage, uint64_t number);
-
-   private:
-    TieredStorage* storage_ = nullptr;
-    uint64_t number_ = 0;
-  };
-  Status DeleteRetiredBlob(uint64_t number, uint64_t* bytes);
-  static std::string Encode(const Version&);
-  static Status Decode(const std::string&, Version*);
-  std::string LocalPath(uint64_t) const;
-  std::string Descriptor(uint64_t) const;
-  static std::shared_ptr<const Version> Snapshot(Version);
-  Status Commit(uint64_t, Version);
-  Status SyncCommitDirectory();
-  Status Migrate(uint64_t, uint64_t, bool background);
-  Status AppendExtent(uint64_t, const Slice&, Version*);
-  enum class TaskKind { kAppend, kBarrier, kClose, kSwitch };
-  struct Task {
-    uint64_t number;
-    TaskKind kind;
-    std::string bytes;
-    bool done = false;
-  };
-  Status Submit(uint64_t, TaskKind, const Slice& = Slice());
-  Status Execute(const Task&);
-  Status AppendRemote(uint64_t, const Slice&);
-  Status Barrier(uint64_t, bool close);
-  struct ActiveExtent {
-    std::unique_ptr<FSWritableFile> file;
-    std::string name;
-    uint64_t size = 0;
-    uint32_t crc = 0;
-  };
-  Status SealExtent(ActiveExtent*);
-  // Worker-owned physical writers. Runtime versions may include unsynced tails.
-  std::map<uint64_t, ActiveExtent> active_;
-  std::map<uint64_t, std::shared_ptr<const Version>> durable_;
-  std::deque<std::shared_ptr<Task>> tasks_;
-  uint64_t queued_bytes_ = 0, peak_queued_bytes_ = 0;
-  uint64_t spill_files_ = 0, spill_bytes_ = 0;
   static constexpr uint64_t kChunkSize = 4 * 1024 * 1024;
   static constexpr uint64_t kExtentSize = 32 * 1024 * 1024;
   static constexpr uint64_t kQueueLimit = 16 * 1024 * 1024;
+  struct Extent {
+    uint64_t start = 0, length = 0, durable = 0;
+    std::string name;
+    bool local = false, open = true;
+    uint32_t crc = 0;
+    uint64_t frozen_at = 0;  // Runtime scheduling diagnostic only.
+  };
+  struct Version {
+    uint64_t size = 0, generation = 0, boundary = 0;
+    bool closed = false, spilled = false;
+    std::vector<Extent> extents;
+  };
+  struct ActiveExtent {
+    std::unique_ptr<FSWritableFile> file;
+    Extent extent;
+    uint32_t crc = 0;
+  };
+  struct Blob {
+    // Lock order: append -> commit -> mutex_. Worker never takes append.
+    std::mutex append, commit;
+    Version live, durable;
+    FileOptions file_options;
+    ActiveExtent caller;     // Serialized by append.
+    ActiveExtent migration;  // Sole migration worker.
+    std::string migration_source;
+    uint64_t operations = 0;
+    bool retiring = false, closing = false;
+  };
+  // A whole logical operation pins its Blob. Reads additionally pin the exact
+  // physical identities selected by their fixed snapshot.
+  class Pin {
+   public:
+    Pin() = default;
+    ~Pin();
+    Status Open(TieredStorage*, uint64_t);
+    void Ranges(const Version&);  // mutex_ held by caller
+    std::shared_ptr<Blob> blob;
+
+   private:
+    TieredStorage* storage_ = nullptr;
+    std::vector<std::string> names_;
+  };
+  using Patch = std::function<Status(Version*)>;
+  static std::string Encode(const Version&);
+  static Status Decode(const std::string&, Version*);
+  static uint64_t DurableEnd(const Version&, bool hdd);
+  static bool Equal(const Version&, const Version&);
+  static bool Complete(const Version&);
+  std::string Descriptor(uint64_t) const;
+  std::string Path(const Extent&) const;
+  std::string NewName(uint64_t);
+  Status Commit(uint64_t, const std::shared_ptr<Blob>&, const Patch&);
+  Status Register(uint64_t, const std::shared_ptr<Blob>&, bool local);
+  Status Freeze(uint64_t, const std::shared_ptr<Blob>&);
+  Status Seal(ActiveExtent*);
+  Status Wait(uint64_t, const std::shared_ptr<Blob>&, uint64_t, bool closed);
+  Status Migrate(uint64_t, const std::shared_ptr<Blob>&);
+  Status ReclaimLocal();
+  Status DeleteRetiredBlob(uint64_t, const std::shared_ptr<Blob>&, uint64_t*);
+  Status SyncCommitDirectory();
   void Run();
   void Fail(const Status&);
   IOStatus ReadBlob(uint64_t, uint64_t, size_t, const IOOptions&, Slice*, char*,
                     IODebugContext*);
   IOStatus ReadVersion(const Version&, uint64_t, size_t, const IOOptions&,
                        Slice*, char*, IODebugContext*);
-  void Closed(uint64_t);
-  // Single migration worker, or exclusive offline recovery, only. Both stages
-  // acquire mutex_ internally; callers must release it first.
-  Status SwitchReadsToRemote(uint64_t);
-  Status ReclaimLocalAfterReads(uint64_t);
   const MetaBypassOptions options_;
   mutable std::mutex mutex_;
+  std::mutex reclamation_;
   std::condition_variable work_, progress_;
-  std::map<uint64_t, Local> local_;
-  std::map<uint64_t, std::shared_ptr<const Version>> versions_;
+  std::map<uint64_t, std::shared_ptr<Blob>> blobs_;
+  std::map<std::string, uint64_t> readers_;
+  // Published-away SSD sources remain charged until unlink AND dirsync.
+  std::map<std::string, uint64_t> retired_local_;
   std::map<uint64_t, uint64_t> requests_;
-  struct ReclaimRequest {
-    uint64_t bytes = 0;
-    bool started = false;
-    bool done = false;
-  };
-  std::map<uint64_t, std::shared_ptr<ReclaimRequest>> reclaim_;
-  std::set<uint64_t> retiring_;
-  std::map<uint64_t, uint64_t> remote_readers_;
-  uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0, wait_us_ = 0;
-  uint64_t task_wait_us_ = 0, extent_fsyncs_ = 0, extent_fsync_us_ = 0;
+  uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0;
+  uint64_t extent_id_ = 0, queued_bytes_ = 0, peak_queued_bytes_ = 0;
+  uint64_t spill_files_ = 0, spill_bytes_ = 0;
+  uint64_t extent_fsyncs_ = 0, extent_fsync_us_ = 0;
   uint64_t commit_dir_syncs_ = 0, commit_dir_sync_us_ = 0;
   uint64_t persist_skips_ = 0, commit_skips_ = 0;
-  uint64_t append_tasks_ = 0, append_wait_us_ = 0, switch_wait_us_ = 0;
   uint64_t digest_opens_ = 0, digest_us_ = 0;
-  uint64_t extent_id_ = 0;
+  uint64_t migration_starts_ = 0, migration_delay_us_ = 0;
+  uint64_t prefix_write_us_ = 0, suffix_write_us_ = 0, suffix_appends_ = 0;
+  uint64_t barrier_us_ = 0, metadata_us_ = 0, quota_us_ = 0;
   bool stopping_ = false, restoring_ = false;
   Status error_;
   std::function<void(const Status&)> failure_;

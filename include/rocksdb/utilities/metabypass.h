@@ -144,6 +144,15 @@ struct MetaBypassStats {
   // time, including failures and pin acquisition. Disabled staging: zero.
   uint64_t tier_checkpoint_digest_opens = 0;
   uint64_t tier_checkpoint_digest_micros = 0;
+  // Pipeline diagnostics. Cumulative times overlap and are not wall time.
+  uint64_t tier_suffix_appends = 0;
+  uint64_t tier_migration_starts = 0;
+  uint64_t tier_migration_start_delay_micros = 0;
+  uint64_t tier_prefix_write_micros = 0, tier_suffix_write_micros = 0;
+  uint64_t tier_barrier_wait_micros = 0;
+  uint64_t tier_metadata_commit_micros = 0;
+  // Admission computation only: insufficient quota spills without waiting.
+  uint64_t tier_quota_admission_micros = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

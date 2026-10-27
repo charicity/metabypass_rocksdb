@@ -17,7 +17,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
-constexpr char kFormat[] = "MBN2\n";
+constexpr char kFormat[] = "MBN3\n";
 // Refuse legacy directories before taking locks or initializing storage.
 Status CheckFormat(FileSystem* fs, const std::string& path, bool required) {
   std::string version;
@@ -44,7 +44,7 @@ Status CheckStorageLayout(FileSystem* fs, const MetaBypassOptions& options) {
   const bool tiered = s.ok();
   if (tiered != !options.staging_dir.empty())
     return Status::InvalidArgument("cannot change Metabypass storage format");
-  if (tiered && version != "MBT2\n")
+  if (tiered && version != "MBT3\n")
     return Status::NotSupported("tiered storage format");
   return Status::OK();
 }
@@ -296,7 +296,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     s = impl->tier->Initialize(false);
     if (!s.ok()) return s;
     if (!existing) {
-      s = metabypass::Write(fs.get(), format_path, "MBT2\n");
+      s = metabypass::Write(fs.get(), format_path, "MBT3\n");
       if (s.ok()) s = metabypass::SyncDir(fs.get(), m.data_dir);
       if (!s.ok()) return s;
     }

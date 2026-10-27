@@ -130,6 +130,63 @@ class BackupTestAccess {
       EXPECT_EQ(bytes, expected);
     }
   }
+
+  struct Readiness {
+    uint64_t published, requested, applied, accepted;
+    bool ready, capture, capacity, size, empty, stopping, error;
+  };
+  static void CheckIndependentReasons(Backup* backup) {
+    EXPECT_FALSE(backup->MirrorReady());
+    backup->requested_ = 1;
+    // A request without events must not spin; Capture is a separate trigger.
+    EXPECT_FALSE(backup->MirrorReady());
+    Backup::Event event{Backup::Kind::kAppend, "000001.log", {}, "x"};
+    backup->wal_channel_.queue.push_back(std::move(event));
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->applied_ = 1;
+    // Directly distinguish the old and new request predicates.
+    EXPECT_GT(backup->requested_, backup->published_);
+    EXPECT_FALSE(backup->requested_ > backup->applied_);
+    EXPECT_FALSE(backup->MirrorReady());
+    backup->published_ = 1;
+    EXPECT_FALSE(backup->MirrorReady());
+    for (auto* channel : {&backup->wal_channel_, &backup->metadata_channel_}) {
+      channel->waiting_charge = 1;
+      EXPECT_TRUE(backup->MirrorReady());
+      channel->waiting_charge = 0;
+    }
+    backup->stats_.queued_bytes = backup->options_.batch_bytes;
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->stats_.queued_bytes = 0;
+    backup->wal_channel_.queue.clear();
+    backup->candidate_ = std::make_unique<Backup::Candidate>();
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->capture_done_ = true;
+    EXPECT_FALSE(backup->MirrorReady());
+    backup->candidate_.reset();
+    backup->stopping_ = true;
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->stopping_ = false;
+    backup->stats_.error = Status::IOError("injected");
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->stats_.error = Status::OK();
+  }
+  // Called by MirrorReadyProbe with the queue mutex held. Never waits or does
+  // I/O.
+  static Readiness Observe(Backup* backup) {
+    return {backup->published_,
+            backup->requested_,
+            backup->applied_,
+            backup->accepted_,
+            backup->MirrorReady(),
+            backup->candidate_ && !backup->capture_done_,
+            backup->wal_channel_.waiting_charge != 0 ||
+                backup->metadata_channel_.waiting_charge != 0,
+            backup->stats_.queued_bytes >= backup->options_.batch_bytes,
+            backup->QueuesEmpty(),
+            backup->stopping_,
+            !backup->stats_.error.ok()};
+  }
 };
 }  // namespace metabypass
 namespace {
@@ -3090,6 +3147,76 @@ TEST_F(MetaBypassTest, BackgroundBlockedDoesNotBlockSmallForegroundWrite) {
   sync.join();
   SyncPoint::GetInstance()->DisableProcessing();
   ASSERT_OK(db_->SyncBackup());
+}
+TEST_F(MetaBypassTest, MirrorReadinessIndependentProgressReasons) {
+  auto storage =
+      std::make_shared<metabypass::SeparatedStorage>(fs_, index_, m_.data_dir);
+  metabypass::Backup backup(storage, index_, m_, o_);
+  metabypass::BackupTestAccess::CheckIndependentReasons(&backup);
+}
+TEST_F(MetaBypassTest, MirrorReadinessWhilePublicationBlocked) {
+  m_.interval_ms = m_.checkpoint_interval_ms = 60000;
+  m_.batch_bytes = 256 * 1024;
+  o_.write_buffer_size = 4 * 1024 * 1024;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+  ASSERT_OK(db_->SyncBackup());
+  TestGate publishing;
+  std::atomic<bool> observe{false}, returned{false};
+  std::atomic<unsigned> applied_only{0}, pending{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) { publishing.Block(); });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::MirrorReadyProbe", [&](void* arg) {
+        if (!observe.load()) return;
+        auto state = metabypass::BackupTestAccess::Observe(
+            static_cast<metabypass::Backup*>(arg));
+        if (state.empty || state.capture || state.capacity || state.size ||
+            state.stopping || state.error)
+          return;
+        if (state.requested > state.applied) {
+          EXPECT_TRUE(state.ready);
+          ++pending;
+        } else if (state.published < state.requested) {
+          // No other predicate is true: this is solely the already-applied,
+          // not-yet-published request. Record the predicate, not elapsed time.
+          EXPECT_FALSE(state.ready);
+          ++applied_only;
+        }
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "candidate", "value"));
+  std::thread first([&] {
+    EXPECT_OK(db_->SyncBackup());
+    returned = true;
+  });
+  publishing.WaitUntilBlocked();
+  observe = true;
+  EXPECT_OK(db_->Put(WriteOptions(), "tail", "value"));
+  EXPECT_GT(applied_only.load(), 0U);
+  EXPECT_FALSE(returned.load());
+  // A higher explicit target must resume immediate catch-up even while the
+  // first candidate's publication remains blocked.
+  TestGate requested;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
+                                        [&](void*) { requested.Block(); });
+  std::thread second([&] { EXPECT_OK(db_->SyncBackup()); });
+  requested.WaitUntilBlocked();
+  EXPECT_GT(pending.load(), 0U);
+  EXPECT_FALSE(returned.load());
+  requested.Release();
+  publishing.Release();
+  first.join();
+  second.join();
+  observe = false;
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("old", "retained");
+  Check("candidate", "value");
+  Check("tail", "value");
 }
 TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
   m_.queue_capacity = 32768;

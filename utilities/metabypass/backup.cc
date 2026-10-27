@@ -805,10 +805,11 @@ bool Backup::MirrorReady() const {
   return stopping_ || !stats_.error.ok() || (candidate_ && !capture_done_) ||
          (!QueuesEmpty() &&
           (wal_channel_.waiting_charge != 0 ||
-           metadata_channel_.waiting_charge != 0 || requested_ > published_ ||
+           metadata_channel_.waiting_charge != 0 || requested_ > applied_ ||
            stats_.queued_bytes >= options_.batch_bytes));
 }
 void Backup::WakeMirror() {
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::MirrorReadyProbe", this);
   if (mirror_waiting_ && MirrorReady()) {
     TEST_SYNC_POINT("MetaBypass::MirrorNotified");
     mirror_cv_.notify_one();

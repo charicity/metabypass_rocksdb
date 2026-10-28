@@ -9,6 +9,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -4454,9 +4455,12 @@ TEST_F(TieredStorageTest, ExtentBoundariesCheckpointAndPinnedVersion) {
   const uint32_t seed = Env::Default()->NowMicros() & 0xffffffffU;
   SCOPED_TRACE("seed=" + std::to_string(seed));
   Random random(seed);
+  ASSERT_LT(expected.size(),
+            lossless_cast<size_t>(std::numeric_limits<int>::max()));
+  const int bound = static_cast<int>(expected.size()) + 1;
   for (int i = 0; i < 100; ++i) {
-    const size_t offset = random.Uniform(expected.size() + 1);
-    const size_t length = random.Uniform(expected.size() + 1);
+    const size_t offset = random.Uniform(bound);
+    const size_t length = random.Uniform(bound);
     std::string bytes;
     ASSERT_OK(ReadBytes(offset, length, &bytes));
     ASSERT_EQ(bytes, expected.substr(offset, length));

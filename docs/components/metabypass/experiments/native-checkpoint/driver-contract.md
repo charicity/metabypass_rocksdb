@@ -217,3 +217,32 @@ The segmented pipeline additionally emits `tier_suffix_appends`,
 not a wait: insufficient capacity starts an independent HDD suffix. The legacy
 Append/Switch task counters are zero for this implementation. Unsupported fields
 in older binaries remain null. All timing fields are cumulative and overlap.
+
+## V4 metadata telemetry
+
+The V4 candidate appends 110 numeric fields to the existing stats object;
+adapters for older candidates emit null for unsupported fields. No configuration
+or workload parameter is added.
+
+For each medium local/remote, commit fields include attempts, successes, skips,
+micros and lock_wait_micros. Reason counters use
+tier_<medium>_commit_<reason>, where reason is register, freeze, close, spill,
+migration, finalize, recovery or gc. Each reason also appends micros,
+lock_wait_micros, fsync_micros and dir_sync_micros suffixes. Counts and times
+include failures; no-op commits retain their actual lock-wait/elapsed time.
+Metadata Fsync counters exclude payload data Fsync. Remote dependency directory
+sync is attributed to the publication or registration reason.
+
+Full tier_<medium>_<register|freeze>_{calls,micros} and
+tier_migration_publish_{calls,micros} describe phase costs. The migration publish
+phase starts after data sealing and covers HDD publication plus SSD local merge.
+tier_local_metadata_bytes and peak_tier_local_metadata_bytes count canonical
+and temporary MBL4 logical file lengths, separately from payload quota and block
+allocation. The normal path updates an in-memory per-file ledger; only recovery
+scans the namespace, and failure reconciliation stats the affected files.
+These concurrent timings overlap and must not be added as recoverable wall time.
+
+GC commit fields measure the durable HDD tombstone snapshot; subsequent
+payload/descriptor deletion remains part of existing GC operation totals.
+It does not represent an SSD snapshot commit. Finalize separately measures its
+local snapshot cleanup because completion barriers wait for that phase.

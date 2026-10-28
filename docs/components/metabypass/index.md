@@ -37,7 +37,7 @@ are outside this API.
 
 Use absolute normalized disjoint index, data, backup, and optional staging
 directories with exclusive ownership. The current database/backup format marker
-is `MBN3`, inventory version is `MBI3`, and tier mapping version is `MBT3`.
+is `MBN4`, inventory version is `MBI4`, and tier mapping version is `MBT4`.
 Open and Restore reject older or unmarked nonempty directories before modifying
 them. There is no automatic migration or old-format recovery path.
 

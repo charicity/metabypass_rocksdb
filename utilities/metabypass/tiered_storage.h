@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #pragma once
 
+#include <array>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -22,7 +23,11 @@ namespace metabypass {
 // extents. Frozen prefixes migrate independently of caller-owned HDD suffixes.
 class TieredStorage : public FileSystemWrapper {
  public:
-  TieredStorage(std::shared_ptr<FileSystem>, const MetaBypassOptions&);
+  TieredStorage(std::shared_ptr<FileSystem>, const MetaBypassOptions&,
+                const std::string& identity = {});
+  void SetIdentity(const std::string&);
+  Status Preflight(bool restore);
+  Status PreflightCheckpoint(const std::string&);
   ~TieredStorage() override;
   const char* Name() const override { return "MetaBypassTieredStorage"; }
   Status Initialize(bool restore);
@@ -65,6 +70,7 @@ class TieredStorage : public FileSystemWrapper {
 
  private:
   friend class TieredStorageTest;
+  friend class Backup;
   friend class TierWriter;
   friend class TierReader;
   static constexpr uint64_t kChunkSize = 4 * 1024 * 1024;
@@ -72,13 +78,15 @@ class TieredStorage : public FileSystemWrapper {
   static constexpr uint64_t kQueueLimit = 16 * 1024 * 1024;
   struct Extent {
     uint64_t start = 0, length = 0, durable = 0;
-    std::string name;
+    std::string name, origin;
     bool local = false, open = true;
     uint32_t crc = 0;
     uint64_t frozen_at = 0;  // Runtime scheduling diagnostic only.
   };
   struct Version {
-    uint64_t size = 0, generation = 0, boundary = 0;
+    uint64_t size = 0, generation = 0, boundary = 0, number = 0;
+    std::string identity, incarnation;
+    bool retired = false;
     bool closed = false, spilled = false;
     std::vector<Extent> extents;
   };
@@ -88,9 +96,11 @@ class TieredStorage : public FileSystemWrapper {
     uint32_t crc = 0;
   };
   struct Blob {
-    // Lock order: append -> commit -> mutex_. Worker never takes append.
-    std::mutex append, commit;
-    Version live, durable;
+    // Media commit locks never nest. Neither holds mutex_ across I/O.
+    // Worker never takes append or holds commit across HDD I/O.
+    std::mutex append, commit, remote_commit;
+    Version live, durable, remote;
+    bool complete_ready = false, local_present = false;
     FileOptions file_options;
     ActiveExtent caller;     // Serialized by append.
     ActiveExtent migration;  // Sole migration worker.
@@ -113,15 +123,52 @@ class TieredStorage : public FileSystemWrapper {
     std::vector<std::string> names_;
   };
   using Patch = std::function<Status(Version*)>;
-  static std::string Encode(const Version&);
-  static Status Decode(const std::string&, Version*);
+  static std::string Encode(const Version&, bool local = true);
+  static Status Decode(const std::string&, Version*, bool local = true);
   static uint64_t DurableEnd(const Version&, bool hdd);
   static bool Equal(const Version&, const Version&);
   static bool Complete(const Version&);
   std::string Descriptor(uint64_t) const;
+  std::string LocalDescriptor(uint64_t) const;
+  std::string Tombstone(uint64_t, const Version&) const;
+  enum class Reason {
+    kRegister,
+    kFreeze,
+    kClose,
+    kSpill,
+    kMigration,
+    kFinalize,
+    kRecovery,
+    kGC,
+    kCount
+  };
+  struct MetadataCounters {
+    uint64_t attempts = 0, successes = 0, skips = 0, micros = 0, wait = 0;
+    uint64_t fsyncs = 0, fsync_us = 0, dirsyncs = 0, dirsync_us = 0;
+    uint64_t registers = 0, register_us = 0, freezes = 0, freeze_us = 0;
+    std::array<uint64_t, 8> reasons{}, reason_us{}, reason_wait{},
+        reason_fsync_us{}, reason_dirsync_us{};
+  };
+  Status StoreSnapshot(const std::string&, const Version&, bool, Reason);
+  Status Publish(uint64_t, const std::shared_ptr<Blob>&, const Extent&);
+  Status Finalize(uint64_t, const std::shared_ptr<Blob>&);
+  Status Recover(bool restore, bool apply);
+  Status MergeRecovered(uint64_t, const Version*, const Version*, Version*);
+  Status RefreshMetadataBytes();
+  void TrackMetadataBytes(const std::string&, uint64_t,
+                          const std::string& removed = {});
+  void RecheckMetadataBytes(const std::string&);
+  static Status BindCheckpointInventory(const std::string&, const std::string&,
+                                        const std::map<uint64_t, Version>&);
+  Status CheckRetirement(uint64_t);
+  Status CheckpointBlobDigest(const std::string&, uint64_t, uint64_t,
+                              uint32_t*);
+  Status ParseCheckpoint(const std::string&, std::map<uint64_t, Version>*,
+                         bool validate_payload = true);
   std::string Path(const Extent&) const;
   std::string NewName(uint64_t);
-  Status Commit(uint64_t, const std::shared_ptr<Blob>&, const Patch&);
+  Status Commit(uint64_t, const std::shared_ptr<Blob>&, const Patch&,
+                Reason reason = Reason::kRecovery);
   Status Register(uint64_t, const std::shared_ptr<Blob>&, bool local);
   Status Freeze(uint64_t, const std::shared_ptr<Blob>&);
   Status Seal(ActiveExtent*);
@@ -129,7 +176,7 @@ class TieredStorage : public FileSystemWrapper {
   Status Migrate(uint64_t, const std::shared_ptr<Blob>&);
   Status ReclaimLocal();
   Status DeleteRetiredBlob(uint64_t, const std::shared_ptr<Blob>&, uint64_t*);
-  Status SyncCommitDirectory();
+  Status SyncCommitDirectory(Reason reason = Reason::kRegister);
   void Run();
   void Fail(const Status&);
   IOStatus ReadBlob(uint64_t, uint64_t, size_t, const IOOptions&, Slice*, char*,
@@ -137,6 +184,11 @@ class TieredStorage : public FileSystemWrapper {
   IOStatus ReadVersion(const Version&, uint64_t, size_t, const IOOptions&,
                        Slice*, char*, IODebugContext*);
   const MetaBypassOptions options_;
+  std::string identity_;
+  MetadataCounters local_metadata_, remote_metadata_;
+  uint64_t local_metadata_bytes_ = 0, peak_local_metadata_bytes_ = 0;
+  std::map<std::string, uint64_t> local_metadata_files_;
+  uint64_t migration_publish_calls_ = 0, migration_publish_us_ = 0;
   mutable std::mutex mutex_;
   std::mutex reclamation_;
   std::condition_variable work_, progress_;

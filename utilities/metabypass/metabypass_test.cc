@@ -1305,7 +1305,7 @@ TEST_F(MetaBypassTest, BlobGCNativeOpenReclaimsProjectedDebris) {
   ASSERT_OK(db_->Close());
   db_.reset();
   const std::string temporary = BlobFileName(m_.data_dir, 900001) + ".tmp";
-  const std::string segment = m_.data_dir + "/segment-900002-1000000";
+  const std::string segment = m_.data_dir + "/segment-900002-abcd-1000000";
   ASSERT_OK(metabypass::Write(fs_.get(), temporary, "partial descriptor"));
   ASSERT_OK(metabypass::Write(fs_.get(), segment, "orphan extent"));
   // Open's full native obsolete-file scan, not a direct test reclamation call,
@@ -2027,7 +2027,8 @@ TEST_F(MetaBypassTest, TieredReopenArchivesOrphanStaging) {
   ASSERT_OK(db_->Close());
   db_.reset();
   // Simulates a newly allocated file left before its WAL record existed.
-  ASSERT_OK(metabypass::Write(fs_.get(), m_.staging_dir + "/segment-999999-1",
+  ASSERT_OK(metabypass::Write(fs_.get(),
+                              m_.staging_dir + "/segment-999999-abcd-1",
                               std::string(20000, 'x')));
   Open();
   Check("seed", "value");
@@ -2121,7 +2122,7 @@ TEST_F(MetaBypassTest, TieredOpenRejectsForeignStagingBeforeCleanup) {
   std::string descriptor;
   ASSERT_OK(metabypass::Read(
       fs_.get(), m_.data_dir + "/" + *descriptors.begin(), &descriptor));
-  ASSERT_EQ(descriptor.substr(0, 5), "MBT3 ");
+  ASSERT_EQ(descriptor.substr(0, 5), "MBT4 ");
 
   // A different owner's live staging file deliberately reuses the native
   // number of A's durable descriptor. Initialization must not delete it.
@@ -3570,7 +3571,7 @@ TEST_F(MetaBypassTest, RejectLegacyInventoryWithoutChangingPublishedFiles) {
   const std::string inventory = PublishedPoint() + "/INVENTORY";
   std::string original;
   ASSERT_OK(metabypass::Read(fs_.get(), inventory, &original));
-  ASSERT_EQ(original.substr(0, 4), "MBI3");
+  ASSERT_EQ(original.substr(0, 4), "MBI4");
   std::string legacy = original;
   legacy.replace(0, 4, "MBI1");
   ASSERT_OK(metabypass::Write(fs_.get(), inventory, legacy));
@@ -3681,6 +3682,52 @@ TEST_F(MetaBypassTest, SigkillUnflushedBatchRecovery) {
 namespace metabypass {
 class TieredStorageTest : public MetaBypassTest {
  public:
+  class CallerHddTrace : public FileSystemWrapper {
+   public:
+    CallerHddTrace(std::shared_ptr<FileSystem> fs, std::string dir)
+        : FileSystemWrapper(std::move(fs)),
+          dir_(std::move(dir)),
+          caller_(std::this_thread::get_id()) {}
+    const char* Name() const override { return "CallerHddTrace"; }
+    std::atomic<uint64_t> writes{0}, listings{0}, stats{0};
+    IOStatus GetChildren(const std::string& path, const IOOptions& o,
+                         std::vector<std::string>* out,
+                         IODebugContext* d) override {
+      if (std::this_thread::get_id() == caller_) ++listings;
+      return target()->GetChildren(path, o, out, d);
+    }
+    IOStatus GetFileSize(const std::string& path, const IOOptions& o,
+                         uint64_t* size, IODebugContext* d) override {
+      if (std::this_thread::get_id() == caller_) ++stats;
+      return target()->GetFileSize(path, o, size, d);
+    }
+    IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
+                             std::unique_ptr<FSWritableFile>* out,
+                             IODebugContext* d) override {
+      Count(path);
+      return target()->NewWritableFile(path, o, out, d);
+    }
+    IOStatus RenameFile(const std::string& from, const std::string& to,
+                        const IOOptions& o, IODebugContext* d) override {
+      Count(to);
+      return target()->RenameFile(from, to, o, d);
+    }
+    IOStatus NewDirectory(const std::string& path, const IOOptions& o,
+                          std::unique_ptr<FSDirectory>* out,
+                          IODebugContext* d) override {
+      Count(path);
+      return target()->NewDirectory(path, o, out, d);
+    }
+
+   private:
+    void Count(const std::string& path) {
+      if (std::this_thread::get_id() == caller_ &&
+          (path == dir_ || path.compare(0, dir_.size() + 1, dir_ + "/") == 0))
+        ++writes;
+    }
+    const std::string dir_;
+    const std::thread::id caller_;
+  };
   class ExtentFailureFileSystem : public FileSystemWrapper {
    public:
     explicit ExtentFailureFileSystem(std::shared_ptr<FileSystem> fs)
@@ -3782,10 +3829,181 @@ class TieredStorageTest : public MetaBypassTest {
     EXPECT_EQ(blob.size(), BlobLogHeader::kSize + BlobLogFooter::kSize);
     return blob;
   }
+  std::map<std::string, std::string> TierFiles() {
+    std::map<std::string, std::string> files;
+    for (const auto& dir : {m_.data_dir, m_.staging_dir}) {
+      std::vector<std::string> names;
+      EXPECT_OK(fs_->GetChildren(dir, IOOptions(), &names, nullptr));
+      for (const auto& name : names) {
+        if (name == "." || name == "..") continue;
+        std::string bytes;
+        EXPECT_OK(Read(fs_.get(), dir + "/" + name, &bytes));
+        files.emplace(dir + "/" + name, std::move(bytes));
+      }
+    }
+    return files;
+  }
+  uint64_t RemoteGeneration() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->blobs_.at(1)->remote.generation;
+  }
+  void CheckMetadataAccounting() {
+    uint64_t bytes = 0;
+    for (const auto& file : TierFiles()) {
+      if (file.first.compare(0, m_.staging_dir.size() + 1,
+                             m_.staging_dir + "/") == 0 &&
+          file.first.find(".local") != std::string::npos)
+        bytes += file.second.size();
+    }
+    MetaBypassStats stats;
+    storage_->AddStats(&stats);
+    ASSERT_OK(stats.error);
+    ASSERT_EQ(stats.tier_local_metadata_bytes, bytes);
+    ASSERT_GE(stats.peak_tier_local_metadata_bytes, bytes);
+  }
+  Status ProtectedPoint(const std::string& name, bool contains_blob,
+                        std::string* pointer) {
+    const auto point = m_.backup_dir + "/" + name;
+    Status s = EnsureDir(fs_.get(), m_.backup_dir);
+    if (s.ok()) s = EnsureDir(fs_.get(), point);
+    if (s.ok())
+      s = Write(fs_.get(), m_.backup_dir + "/METABYPASS-IDENTITY", "tier-test");
+    if (s.ok()) s = Write(fs_.get(), point + "/IDENTITY", "tier-test");
+    if (s.ok())
+      s = storage_->SaveCheckpoint(point + "/BLOB-MAP",
+                                   contains_blob
+                                       ? std::map<uint64_t, uint64_t>{{1, 7}}
+                                       : std::map<uint64_t, uint64_t>{});
+    std::string map;
+    if (s.ok()) s = Read(fs_.get(), point + "/BLOB-MAP", &map);
+    std::string inventory =
+        "MBI4\nD BLOB-MAP " + std::to_string(map.size()) + " " +
+        std::to_string(crc32c::Value(map.data(), map.size())) + "\n";
+    if (contains_blob)
+      inventory +=
+          "B 1 7 " + std::to_string(crc32c::Value("payload", 7)) + "\n";
+    if (s.ok()) s = Write(fs_.get(), point + "/INVENTORY", inventory);
+    *pointer =
+        name + " " +
+        std::to_string(crc32c::Value(inventory.data(), inventory.size())) +
+        "\n";
+    return s;
+  }
+  Status NativePointPreflight() {
+    std::shared_ptr<TieredStorage> tier(storage_.get(), [](TieredStorage*) {});
+    SeparatedStorage separated(fs_, index_, m_.data_dir, tier);
+    return Backup::RestoreFiles(fs_.get(), m_.backup_dir, index_, separated,
+                                true);
+  }
+  Status MutateLocalDescriptor(const std::string& kind, std::string* bytes) {
+    TieredStorage::Version version;
+    Status st = TieredStorage::Decode(*bytes, &version);
+    if (!st.ok()) return st;
+    if (kind == "identity") version.identity = "deadbeef";
+    if (kind == "incarnation") version.incarnation = "deadbeef";
+    if (kind == "overlap") version.extents.push_back(version.extents.front());
+    if (kind == "generation") version.generation = 0;
+    *bytes = TieredStorage::Encode(version);
+    return Status::OK();
+  }
+  Status RemoveRemoteProof(bool whole_descriptor) {
+    if (whole_descriptor)
+      return fs_->DeleteFile(BlobFileName(m_.data_dir, 1), IOOptions(),
+                             nullptr);
+    auto remote = storage_->blobs_.at(1)->remote;
+    remote.extents.clear();
+    return Write(fs_.get(), BlobFileName(m_.data_dir, 1),
+                 TieredStorage::Encode(remote, false));
+  }
+  void MetadataStatusFailure(const std::string& phase, const char* hook) {
+    SCOPED_TRACE(phase + ":" + hook);
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(LocalWriter(1, &writer));
+    if (phase != "register") {
+      ASSERT_OK(writer->Append("payload", IOOptions(), nullptr));
+      ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+    }
+    if (phase == "migrate" || phase == "gc") {
+      ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    }
+    bool hit = false;
+    SyncPoint::GetInstance()->SetCallBack(hook, [&](void* arg) {
+      if (hit) return;
+      auto* status = static_cast<Status*>(arg);
+      EXPECT_OK(*status);
+      hit = true;
+      *status = Status::IOError("metadata boundary failure");
+    });
+    SyncPoint::GetInstance()->EnableProcessing();
+    Status operation;
+    if (phase == "register")
+      operation = writer->Append("payload", IOOptions(), nullptr);
+    else if (phase == "freeze")
+      operation = writer->Sync(IOOptions(), nullptr);
+    else if (phase == "migrate")
+      operation = Migrate(7);
+    else {
+      uint64_t removed;
+      operation = storage_->ReclaimBlob(1, &removed);
+    }
+    ASSERT_TRUE(hit);
+    ASSERT_TRUE(operation.IsIOError());
+    ASSERT_NO_FATAL_FAILURE(CheckMetadataAccounting());
+    // Manual migration uses the production task body without its Run wrapper.
+    // Apply the same first-error contract before checking waiters and Stop.
+    if (phase == "migrate") storage_->Cancel(operation);
+    ASSERT_TRUE(
+        storage_->Persist({{1, phase == "register" ? 0U : 7U}}).IsIOError());
+    ASSERT_EQ(TierStats().staging_bytes, 7);
+    if (phase == "register" || phase == "freeze") {
+      ASSERT_EQ(HddEnd(), 0);
+    }
+    if (phase == "register") {
+      ASSERT_EQ(RemoteSize(), 0);
+    }
+    if (phase == "freeze" || phase == "migrate") {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 7, &actual));
+      ASSERT_EQ(actual, "payload");
+    }
+    ASSERT_TRUE(storage_->Stop().IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    writer.reset();
+    storage_.reset();
+    // Status failures preserve uncertain publications; recovery must reconcile
+    // them, or replay the tombstone, without losing accepted flushed bytes.
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    if (phase != "gc") {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 7, &actual));
+      ASSERT_EQ(actual, phase == "register" ? "" : "payload");
+    } else {
+      ASSERT_TRUE(
+          storage_
+              ->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+              .IsNotFound());
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+  Status WriteRetirementForTest() {
+    auto tomb = storage_->blobs_.at(1)->remote;
+    tomb.retired = true;
+    tomb.closed = false;
+    tomb.size = 0;
+    tomb.extents.clear();
+    return Write(fs_.get(), storage_->Tombstone(1, tomb),
+                 TieredStorage::Encode(tomb, false));
+  }
   Status ValidateDescriptor(const std::string& body) {
     TieredStorage::Version version;
     return TieredStorage::Decode(
-        "MBT3 " + std::to_string(crc32c::Value(body.data(), body.size())) +
+        "MBL4 " + std::to_string(crc32c::Value(body.data(), body.size())) +
             "\n" + body,
         &version);
   }
@@ -3809,7 +4027,8 @@ class TieredStorageTest : public MetaBypassTest {
           blob->migration_source.empty())
         break;
     }
-    return storage_->TieredStorage::ReclaimLocal();
+    Status st = storage_->TieredStorage::Finalize(1, blob);
+    return st.ok() ? storage_->TieredStorage::ReclaimLocal() : st;
   }
   Status MigrateChunk(uint64_t) {
     Status s = storage_->TieredStorage::Migrate(1, storage_->blobs_.at(1));
@@ -3824,6 +4043,20 @@ class TieredStorageTest : public MetaBypassTest {
       if (!s.ok()) return s;
     }
     auto blob = storage_->blobs_.at(1);
+    // Synthetic extent-layout fixture: reopen its logical version explicitly.
+    // Real closed TierWriters cannot append. Historical encoded maps remain
+    // immutable and their physical extents are never overwritten here.
+    const bool was_complete = blob->remote.closed;
+    blob->remote.closed = false;
+    blob->remote.size = 0;
+    blob->complete_ready = false;
+    if (was_complete) {
+      ++blob->remote.generation;
+      Status rewritten = storage_->TieredStorage::StoreSnapshot(
+          storage_->Descriptor(1), blob->remote, false,
+          TieredStorage::Reason::kRecovery);
+      if (!rewritten.ok()) return rewritten;
+    }
     Status s =
         storage_->TieredStorage::Commit(1, blob, [](TieredStorage::Version* v) {
           v->closed = false;
@@ -3857,14 +4090,29 @@ class TieredStorageTest : public MetaBypassTest {
     return s;
   }
   Status SealPending() {
-    Status s = storage_->TieredStorage::Freeze(1, storage_->blobs_.at(1));
-    return s.ok()
-               ? storage_->TieredStorage::Commit(1, storage_->blobs_.at(1),
-                                                 [](TieredStorage::Version* v) {
-                                                   v->closed = true;
-                                                   return Status::OK();
-                                                 })
-               : s;
+    auto blob = storage_->blobs_.at(1);
+    Status s = storage_->TieredStorage::Freeze(1, blob);
+    if (s.ok())
+      s = storage_->TieredStorage::Commit(1, blob,
+                                          [](TieredStorage::Version* v) {
+                                            v->closed = true;
+                                            return Status::OK();
+                                          });
+    return s.ok() ? storage_->TieredStorage::Finalize(1, blob) : s;
+  }
+  std::string LocalDescriptorPath(uint64_t n = 1) {
+    return storage_->LocalDescriptor(n);
+  }
+  bool FinalPublished(uint64_t n = 1) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->blobs_.at(n)->complete_ready;
+  }
+  bool LogicalClosed(uint64_t n = 1) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->blobs_.at(n)->live.closed;
+  }
+  Status FinalizeBlob(uint64_t n = 1) {
+    return storage_->TieredStorage::Finalize(n, storage_->blobs_.at(n));
   }
   uint64_t RemotePins() {
     std::lock_guard<std::mutex> lock(storage_->mutex_);
@@ -3915,6 +4163,7 @@ class TieredStorageTest : public MetaBypassTest {
   }
   struct TierCounters {
     uint64_t staging_bytes, tier_persist_skips, tier_commit_skips;
+    uint64_t local_commit_successes, local_metadata_dir_syncs;
     uint64_t tier_extent_fsyncs, tier_commit_dir_syncs,
         tier_checkpoint_digest_opens;
   };
@@ -3922,9 +4171,14 @@ class TieredStorageTest : public MetaBypassTest {
     MetaBypassStats stats;
     storage_->AddStats(&stats);
     EXPECT_OK(stats.error);
-    return {stats.staging_bytes,         stats.tier_persist_skips,
-            stats.tier_commit_skips,     stats.tier_extent_fsyncs,
-            stats.tier_commit_dir_syncs, stats.tier_checkpoint_digest_opens};
+    return {stats.staging_bytes,
+            stats.tier_persist_skips,
+            stats.tier_commit_skips,
+            stats.tier_local_commit_successes,
+            stats.tier_local_metadata_dir_syncs,
+            stats.tier_extent_fsyncs,
+            stats.tier_commit_dir_syncs,
+            stats.tier_checkpoint_digest_opens};
   }
   Status CommitPending() {
     auto blob = storage_->blobs_.at(1);
@@ -3990,7 +4244,7 @@ class TieredStorageTest : public MetaBypassTest {
   void Initialize(uint64_t capacity = 1024 * 1024) {
     EnableTier(capacity);
     ASSERT_OK(EnsureDir(fs_.get(), m_.data_dir));
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(false));
   }
   Status Append(const std::string& bytes) {
@@ -4093,19 +4347,148 @@ class TieredStorageTest : public MetaBypassTest {
         fs_->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
             .IsNotFound());
     storage_.reset();
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(false));
     names.clear();
     ASSERT_OK(storage_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
     ASSERT_EQ(
         std::find(names.begin(), names.end(), "000001.blob") != names.end(),
-        payload_remains);
-    storage_->Start();
-    if (payload_remains) {
-      ASSERT_OK(storage_->ReclaimBlob(1, &bytes));
+        false);
+    // V4 replays the durable retirement before exposing any orphan identity.
+    ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
+    for (const auto& name : names) {
+      ASSERT_NE(name.compare(0, 10, "segment-1-"), 0);
+      ASSERT_EQ(name.find(".retired"), std::string::npos);
     }
+    storage_->Start();
     ASSERT_OK(storage_->Stop());
   }
+  void MetadataPowerLoss(const std::string& phase, const char* hook) {
+    SCOPED_TRACE(phase + ":" + hook);
+    auto underlying = fs_;
+    auto fault = std::make_shared<FaultInjectionTestFS>(underlying);
+    fault->SetInjectUnsyncedDataLoss(true);
+    fs_ = fault;
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(LocalWriter(1, &writer));
+    if (phase != "register") {
+      ASSERT_OK(writer->Append("payload", IOOptions(), nullptr));
+      ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+    }
+    if (phase == "migrate" || phase == "gc") {
+      ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    }
+    bool hit = false;
+    SyncPoint::GetInstance()->SetCallBack(hook, [&](void*) {
+      if (hit) return;
+      hit = true;
+      fault->SetFilesystemActive(false);
+      storage_->Cancel(Status::IOError("simulated power loss"));
+    });
+    SyncPoint::GetInstance()->EnableProcessing();
+    Status operation;
+    if (phase == "register")
+      operation = writer->Append("payload", IOOptions(), nullptr);
+    else if (phase == "freeze")
+      operation = writer->Sync(IOOptions(), nullptr);
+    else if (phase == "migrate")
+      operation = Migrate(7);
+    else {
+      uint64_t removed;
+      operation = storage_->ReclaimBlob(1, &removed);
+    }
+    operation.PermitUncheckedError();
+    ASSERT_TRUE(hit);
+    ASSERT_TRUE(storage_->Stop().IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    writer.reset();
+    storage_.reset();
+    fault->SetFilesystemActive(true);
+    ASSERT_OK(fault->DropUnsyncedFileData());
+    ASSERT_OK(fault->DeleteFilesCreatedAfterLastDirSync(IOOptions(), nullptr));
+    fault->ResetState();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    if (phase == "gc") {
+      ASSERT_TRUE(
+          storage_
+              ->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+              .IsNotFound());
+      ASSERT_EQ(TierStats().staging_bytes, 0);
+    } else {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 100, &actual));
+      ASSERT_EQ(actual, phase == "register" ? "" : "payload");
+      ASSERT_TRUE(LogicalClosed());
+      storage_->Start();
+      ASSERT_OK(storage_->Persist({{1, actual.size()}}));
+      ASSERT_TRUE(FinalPublished());
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    if (phase != std::string("gc")) {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 100, &actual));
+      ASSERT_EQ(actual, phase == std::string("register") ? "" : "payload");
+      ASSERT_TRUE(FinalPublished());
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    fs_ = underlying;
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+#ifndef OS_WIN
+  void MetadataProcessCrash(const char* phase, const char* hook) {
+    SCOPED_TRACE(std::string(phase) + ":" + hook);
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+      execl(executable.c_str(), executable.c_str(), "--v4-tier-crash-writer",
+            m_.data_dir.c_str(), (root_ + "/staging").c_str(), phase, hook,
+            nullptr);
+      _exit(127);
+    }
+    int status;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFSIGNALED(status));
+    ASSERT_EQ(WTERMSIG(status), SIGKILL);
+    Initialize(128);
+    if (std::string(phase) == "gc") {
+      ASSERT_TRUE(
+          storage_
+              ->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+              .IsNotFound());
+      ASSERT_EQ(TierStats().staging_bytes, 0);
+    } else {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 100, &actual));
+      ASSERT_EQ(actual, std::string(phase) == "register" ? "" : "payload");
+      ASSERT_TRUE(LogicalClosed());
+      storage_->Start();
+      ASSERT_OK(storage_->Persist({{1, actual.size()}}));
+      ASSERT_TRUE(FinalPublished());
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    if (phase != std::string("gc")) {
+      std::string actual;
+      ASSERT_OK(ReadBytes(0, 100, &actual));
+      ASSERT_EQ(actual, phase == std::string("register") ? "" : "payload");
+      ASSERT_TRUE(FinalPublished());
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+#endif
   std::unique_ptr<TieredStorage> storage_;
 };
 
@@ -4365,13 +4748,16 @@ TEST_F(TieredStorageTest, BlobGCDescriptorFailurePreservesPayloadAndReopens) {
   SyncPoint::GetInstance()->DisableProcessing();
   SyncPoint::GetInstance()->ClearAllCallBacks();
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   names.clear();
   ASSERT_OK(storage_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
-  ASSERT_NE(std::find(names.begin(), names.end(), "000001.blob"), names.end());
+  // The durable tombstone completes deletion on reopen, without resurrection.
+  ASSERT_EQ(std::find(names.begin(), names.end(), "000001.blob"), names.end());
+  ASSERT_TRUE(
+      storage_->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+          .IsNotFound());
   storage_->Start();
-  ASSERT_OK(storage_->ReclaimBlob(1, &bytes));
   ASSERT_OK(storage_->Stop());
   names.clear();
   ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
@@ -4384,7 +4770,7 @@ TEST_F(TieredStorageTest, BlobGCTemporaryOnlyDebrisIsProjectedAndReclaimed) {
   ASSERT_OK(Write(fs_.get(), temporary, "incomplete descriptor"));
   ASSERT_OK(Write(fs_.get(), m_.data_dir + "/unrelated.tmp", "keep"));
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   std::vector<std::string> names;
   ASSERT_OK(storage_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
@@ -4409,7 +4795,7 @@ TEST_F(TieredStorageTest, BlobGCReopenDoesNotReuseRetirementTask) {
   ASSERT_OK(storage_->ReclaimBlob(1, &bytes));
   ASSERT_OK(storage_->Stop());
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   ASSERT_OK(Append("new payload"));  // Same number, new allocation epoch.
   storage_->Start();
@@ -4512,12 +4898,18 @@ TEST_F(TieredStorageTest, CommitSkipRequiresExactMappingAndNoPendingWriter) {
   ASSERT_OK(ReplaceExtent(false));
   auto after = TierStats();
   ASSERT_EQ(after.tier_commit_skips, before.tier_commit_skips);
-  ASSERT_EQ(after.tier_commit_dir_syncs - before.tier_commit_dir_syncs, 2);
+  ASSERT_EQ(after.tier_commit_dir_syncs - before.tier_commit_dir_syncs, 1);
+  ASSERT_EQ(after.local_commit_successes - before.local_commit_successes, 1);
+  ASSERT_EQ(after.local_metadata_dir_syncs - before.local_metadata_dir_syncs,
+            1);
   before = after;
   ASSERT_OK(ReplaceExtent(true));
   after = TierStats();
   ASSERT_EQ(after.tier_commit_skips, before.tier_commit_skips);
-  ASSERT_GT(after.tier_commit_dir_syncs, before.tier_commit_dir_syncs);
+  ASSERT_EQ(after.tier_commit_dir_syncs, before.tier_commit_dir_syncs);
+  ASSERT_EQ(after.local_commit_successes - before.local_commit_successes, 1);
+  ASSERT_EQ(after.local_metadata_dir_syncs - before.local_metadata_dir_syncs,
+            1);
   before = after;
   ASSERT_OK(CommitOldWithPendingTail());
   after = TierStats();
@@ -4794,7 +5186,7 @@ TEST_F(TieredStorageTest, PendingSnapshotsAndMixedExtentLengths) {
   ASSERT_EQ(ExtentLengths(true),
             (std::vector<uint64_t>{old_extent, extent, 1}));
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   std::string bytes;
   ASSERT_OK(ReadBytes(old_extent - 1, 7, &bytes));
@@ -4860,8 +5252,9 @@ TEST_F(TieredStorageTest, CommitFailureOrderKeepsPreviousDurableVersion) {
     storage_.reset();
     ASSERT_EQ(counting->closes.load(), closes);
     Clean(m_.data_dir);
+    Clean(m_.staging_dir);
     ASSERT_OK(EnsureDir(fs_.get(), m_.data_dir));
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(false));
     ASSERT_OK(Append("old"));
   }
@@ -4875,7 +5268,7 @@ TEST_F(TieredStorageTest, CancelClosesPendingTailWithoutPublishing) {
   storage_->Start();
   ASSERT_TRUE(storage_->Stop().IsIOError());
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   std::string bytes;
   ASSERT_OK(ReadBytes(0, 64, &bytes));
@@ -5019,7 +5412,7 @@ TEST_F(TieredStorageTest, DescriptorCommitFailureRetainsValidLocalSource) {
   ASSERT_EQ(bytes, blob);
   ASSERT_EQ(TierStats().staging_bytes, blob.size());
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   ASSERT_OK(Migrate(blob.size()));
   ASSERT_TRUE(LocalExists().IsNotFound());
@@ -5214,7 +5607,7 @@ TEST_F(TieredStorageTest, MigrationPublicationFaultNeverReleasesSourceQuota) {
     SyncPoint::GetInstance()->ClearAllCallBacks();
     writer.reset();
     storage_.reset();
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(false));
     std::string actual;
     ASSERT_OK(ReadBytes(0, 7, &actual));
@@ -5257,14 +5650,14 @@ TEST_F(TieredStorageTest,
   ASSERT_OK(CreateLocalBlob("flushed", &writer));
   ASSERT_OK(writer->Flush(IOOptions(), nullptr));
   ASSERT_EQ(HddEnd(), 0);
-  const auto descriptor = BlobFileName(m_.data_dir, 1);
+  const auto descriptor = LocalDescriptorPath();
   std::string before;
   ASSERT_OK(Read(fs_.get(), descriptor, &before));
   writer.reset();
   ASSERT_OK(storage_->Stop());
   storage_.reset();
   // Reopen performs real synchronization before promoting the recovered tail.
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   std::string actual;
   ASSERT_OK(ReadBytes(0, 7, &actual));
@@ -5283,7 +5676,7 @@ TEST_F(TieredStorageTest, LegacyDescriptorRejectedWithoutChangingFiles) {
   const std::string old = "MBT2 0\nold descriptor";
   ASSERT_OK(Write(fs_.get(), descriptor, old));
   ASSERT_OK(Write(fs_.get(), m_.staging_dir + "/000001.blob", "old payload"));
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
   std::string actual;
   ASSERT_OK(Read(fs_.get(), descriptor, &actual));
@@ -5318,7 +5711,7 @@ TEST_F(TieredStorageTest,
     ASSERT_OK(storage_->Stop());
     storage_.reset();
     Clean(m_.staging_dir);
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(true));
     SyncPoint::GetInstance()->SetCallBack(fault, [](void* arg) {
       *static_cast<Status*>(arg) =
@@ -5334,7 +5727,7 @@ TEST_F(TieredStorageTest,
         fs_->FileExists(BlobFileName(m_.data_dir, 2), IOOptions(), nullptr)
             .IsNotFound());
     storage_.reset();
-    storage_.reset(new TieredStorage(fs_, m_));
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
     ASSERT_OK(storage_->Initialize(false));
     std::string actual;
     ASSERT_OK(ReadBytes(0, 10, &actual));
@@ -5358,17 +5751,26 @@ TEST_F(TieredStorageTest,
 }
 
 TEST_F(TieredStorageTest, DescriptorRejectsInvalidCoverageAndOpenState) {
-  const std::string valid = "1 3 1 0 0 1\n0 3 3 33554432 0 0 0 segment-1-1\n";
+  const std::string valid =
+      "aa 1 bb 1 3 1 0 0 1\n0 3 3 33554432 0 0 0 segment-1-bb-1 "
+      "segment-1-bb-1\n";
   ASSERT_OK(ValidateDescriptor(valid));
   for (const char* body :
-       {"1 3 1 0 0 1\n1 3 3 33554432 0 0 0 segment-1-1\n",
-        "1 3 1 0 0 1\n0 3 4 33554432 0 0 0 segment-1-1\n",
-        "1 3 1 0 0 1\n0 3 3 33554432 0 1 0 segment-1-1\n",
-        "1 3 1 0 0 1\n0 3 3 33554432 0 0 0 ../segment-1-1\n",
-        "1 3 1 1 1 1\n0 3 3 33554432 1 0 0 segment-1-1\n",
-        "1 3 1 0 0 2\n0 2 2 33554432 0 0 0 segment-1-1\n1 1 1 33554432 0 0 0 "
-        "segment-1-2\n",
-        "1 3 1 0 0 1\n0 3 3 33554432 0 0 0 segment-1-1\nextra"}) {
+       {"aa 1 bb 1 3 1 0 0 1\n1 3 3 33554432 0 0 0 segment-1-bb-1 "
+        "segment-1-bb-1\n",
+        "aa 1 bb 1 3 1 0 0 1\n0 3 4 33554432 0 0 0 segment-1-bb-1 "
+        "segment-1-bb-1\n",
+        "aa 1 bb 1 3 1 0 0 1\n0 3 3 33554432 0 1 0 segment-1-bb-1 "
+        "segment-1-bb-1\n",
+        "aa 1 bb 1 3 1 0 0 1\n0 3 3 33554432 0 0 0 ../segment-1-bb-1 "
+        "segment-1-bb-1\n",
+        "aa 1 bb 1 3 1 1 1 1\n0 3 3 33554432 1 0 0 segment-1-bb-1 "
+        "segment-1-bb-1\n",
+        "aa 1 bb 1 3 1 0 0 2\n0 2 2 33554432 0 0 0 segment-1-bb-1 "
+        "segment-1-bb-1\n1 1 1 33554432 0 0 0 "
+        "segment-1-bb-2 segment-1-bb-2\n",
+        "aa 1 bb 1 3 1 0 0 1\n0 3 3 33554432 0 0 0 segment-1-bb-1 "
+        "segment-1-bb-1\nextra"}) {
     SCOPED_TRACE(body);
     ASSERT_TRUE(ValidateDescriptor(body).IsCorruption());
   }
@@ -5392,7 +5794,7 @@ TEST_F(TieredStorageTest, TruncatedDurableRangeRejectedOnReopen) {
   const auto path = FirstExtentPath();
   storage_.reset();
   ASSERT_OK(Write(fs_.get(), path, "short"));
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
   std::string contents;
   ASSERT_OK(Read(fs_.get(), path, &contents));
@@ -5415,7 +5817,7 @@ TEST_F(TieredStorageTest, SimulatedPowerLossDropsOnlyUnsyncedRegisteredTail) {
   ASSERT_OK(fault->DropUnsyncedFileData());
   ASSERT_OK(fault->DeleteFilesCreatedAfterLastDirSync(IOOptions(), nullptr));
   fault->ResetState();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   std::string actual;
   ASSERT_OK(ReadBytes(0, 100, &actual));
@@ -5469,7 +5871,7 @@ TEST_F(TieredStorageTest, LocalSealFailurePreservesRegisteredTailAndQuota) {
   ASSERT_OK(writer->Sync(IOOptions(), nullptr));
   ASSERT_OK(writer->Append("tail", IOOptions(), nullptr));
   ASSERT_OK(writer->Flush(IOOptions(), nullptr));
-  const std::string descriptor = BlobFileName(m_.data_dir, 1);
+  const std::string descriptor = LocalDescriptorPath();
   std::string before, after;
   ASSERT_OK(Read(fs_.get(), descriptor, &before));
   unsigned local_seals = 0, hdd_seals = 0;
@@ -5507,7 +5909,7 @@ TEST_F(TieredStorageTest, LocalSealFailurePreservesRegisteredTailAndQuota) {
   SyncPoint::GetInstance()->ClearAllCallBacks();
   writer.reset();
   storage_.reset();
-  storage_.reset(new TieredStorage(fs_, m_));
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
   ASSERT_OK(storage_->Initialize(false));
   ASSERT_OK(ReadBytes(0, 11, &actual));
   ASSERT_EQ(actual, "durabletail");
@@ -5536,6 +5938,651 @@ TEST_F(TieredStorageTest, TailRegistrationFailureNeverAcceptsPayload) {
   ASSERT_EQ(TierStats().staging_bytes, 7);  // Failed admission remains charged.
   ASSERT_TRUE(storage_->Stop().IsIOError());
 }
+
+TEST_F(TieredStorageTest, SsdOperationsDoNotWaitForHddDataOrMetadata) {
+  const uint64_t segment = 32 * 1024 * 1024;
+  for (const char* point : {"MetaBypass::TierBeforeHddExtentFsync",
+                            "MetaBypass::TierDescriptorSynced"}) {
+    SCOPED_TRACE(point);
+    auto traced = std::make_shared<CallerHddTrace>(fs_, m_.data_dir);
+    fs_ = traced;
+    Initialize(3 * segment);
+    const auto initial_hdd_operations = traced->writes.load();
+    const auto initial_listings = traced->listings.load();
+    const auto initial_stats = traced->stats.load();
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(CreateLocalBlob(std::string(segment, 'a'), &writer));
+    ASSERT_TRUE(
+        fs_->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+            .IsNotFound());
+    TestGate hdd;
+    SyncPoint::GetInstance()->SetCallBack(point, [&](void*) { hdd.Block(); });
+    const auto caller = std::this_thread::get_id();
+    std::atomic<unsigned> caller_hdd_commits{0};
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::TierDependenciesSynced", [&](void*) {
+          if (std::this_thread::get_id() == caller) ++caller_hdd_commits;
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    storage_->Start();
+    hdd.WaitUntilBlocked();
+    // These operations must finish before the HDD owner is allowed to resume.
+    EXPECT_OK(
+        writer->Append(std::string(segment + 7, 'b'), IOOptions(), nullptr));
+    EXPECT_OK(writer->Sync(IOOptions(), nullptr));
+    EXPECT_OK(writer->Close(IOOptions(), nullptr));
+    EXPECT_EQ(caller_hdd_commits.load(), 0U);
+    EXPECT_EQ(traced->writes.load(), initial_hdd_operations);
+    EXPECT_EQ(traced->listings.load(), initial_listings);
+    EXPECT_EQ(traced->stats.load(), initial_stats);
+    EXPECT_EQ(RemoteSize(), 2 * segment + 7);
+    EXPECT_TRUE(LogicalClosed());
+    hdd.Release();
+    ASSERT_OK(storage_->Persist({{1, 2 * segment + 7}}));
+    ASSERT_TRUE(FinalPublished());
+    ASSERT_OK(storage_->Stop());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    writer.reset();
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, RecoveryClosesEveryAbandonedLogicalWriter) {
+  for (const std::string state : {"open", "frozen", "migrated", "empty"}) {
+    SCOPED_TRACE(state);
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(LocalWriter(1, &writer));
+    const std::string value = state == "empty" ? "" : "payload";
+    ASSERT_OK(writer->Append(value, IOOptions(), nullptr));
+    if (state == "frozen" || state == "migrated") {
+      ASSERT_OK(writer->Sync(IOOptions(), nullptr));
+    }
+    if (state == "migrated") {
+      ASSERT_OK(Migrate(value.size()));
+    }
+    EXPECT_FALSE(LogicalClosed());
+    if (state != "migrated") {
+      ASSERT_TRUE(
+          fs_->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr)
+              .IsNotFound());
+    }
+    writer.reset();
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    ASSERT_TRUE(LogicalClosed());
+    ASSERT_EQ(RemoteSize(), value.size());
+    std::string actual;
+    ASSERT_OK(ReadBytes(0, value.size() + 1, &actual));
+    ASSERT_EQ(actual, value);
+    storage_->Start();
+    ASSERT_OK(storage_->Persist({{1, value.size()}}));
+    ASSERT_TRUE(FinalPublished());
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, RemotePublicationLocalFailureRecoversBothVersions) {
+  for (const char* point : {"MetaBypass::TierLocalDescriptorSynced",
+                            "MetaBypass::TierLocalDescriptorRenamed",
+                            "MetaBypass::TierLocalPublicationSynced"}) {
+    SCOPED_TRACE(point);
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(CreateLocalBlob("payload", &writer));
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    TestGate failed;
+    SyncPoint::GetInstance()->SetCallBack(point, [](void* arg) {
+      *static_cast<Status*>(arg) =
+          Status::IOError("local reconciliation failure");
+    });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationComplete",
+                                          [&](void*) { failed.Block(); });
+    SyncPoint::GetInstance()->EnableProcessing();
+    storage_->Start();
+    failed.WaitUntilBlocked();
+    EXPECT_EQ(HddEnd(), 0);
+    EXPECT_EQ(TierStats().staging_bytes, 7);
+    EXPECT_OK(LocalExists());
+    EXPECT_OK(
+        fs_->FileExists(BlobFileName(m_.data_dir, 1), IOOptions(), nullptr));
+    EXPECT_TRUE(storage_->Persist({{1, 7}}).IsIOError());
+    failed.Release();
+    ASSERT_TRUE(storage_->Stop().IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    writer.reset();
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    std::string actual;
+    ASSERT_OK(ReadBytes(0, 7, &actual));
+    ASSERT_EQ(actual, "payload");
+    storage_->Start();
+    ASSERT_OK(storage_->Persist({{1, 7}}));
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, PublishedHddDoesNotHideCorruptRetainedSsd) {
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("payload", &writer));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierLocalDescriptorSynced", [](void* arg) {
+        *static_cast<Status*>(arg) = Status::IOError("retain old local view");
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_TRUE(Migrate(7).IsIOError());
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+  ASSERT_OK(Write(fs_.get(), FirstLocalPath(), "corrupt"));
+  writer.reset();
+  ASSERT_OK(storage_->Stop());
+  storage_.reset();
+  const auto before = TierFiles();
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+  ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
+  ASSERT_EQ(TierFiles(), before);
+}
+
+TEST_F(TieredStorageTest, FinalMapDoesNotSatisfyPersistBeforeLocalCleanup) {
+  for (bool empty : {false, true}) {
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    const std::string value = empty ? "" : "payload";
+    ASSERT_OK(CreateLocalBlob(value, &writer));
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::TierFinalLocalSynced", [](void* arg) {
+          *static_cast<Status*>(arg) = Status::IOError("local cleanup failed");
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    storage_->Start();
+    ASSERT_TRUE(storage_->Persist({{1, value.size()}}).IsIOError());
+    ASSERT_FALSE(FinalPublished());
+    ASSERT_TRUE(storage_->Stop().IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    writer.reset();
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    ASSERT_TRUE(FinalPublished());
+    ASSERT_OK(storage_->Persist({{1, value.size()}}));
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, SuffixCanApplyBeforeEarlierPrefixPublication) {
+  Initialize(4);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("pref", &writer));
+  ASSERT_OK(writer->Append("suffix", IOOptions(), nullptr));
+  TestGate prefix, suffix_wait;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationSealed",
+                                        [&](void*) { prefix.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierBarrierWaiting",
+                                        [&](void*) { suffix_wait.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  storage_->Start();
+  prefix.WaitUntilBlocked();
+  Status synced;
+  std::thread suffix([&] { synced = writer->Sync(IOOptions(), nullptr); });
+  suffix_wait.WaitUntilBlocked();
+  suffix_wait.Release();
+  EXPECT_GE(RemoteGeneration(), 2);
+  std::string actual;
+  EXPECT_OK(ReadBytes(0, 10, &actual));
+  EXPECT_EQ(actual, "prefsuffix");
+  prefix.Release();
+  suffix.join();
+  ASSERT_OK(synced);
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  ASSERT_OK(storage_->Persist({{1, 10}}));
+  ASSERT_OK(ReadBytes(0, 10, &actual));
+  ASSERT_EQ(actual, "prefsuffix");
+  ASSERT_OK(storage_->Stop());
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+
+TEST_F(TieredStorageTest, DurableRetirementReplaysEveryDeletionBoundary) {
+  for (const char* point :
+       {"MetaBypass::TierRetirementSynced", "MetaBypass::BlobDescriptorRemoved",
+        "MetaBypass::BlobPayloadDeleteStatus",
+        "MetaBypass::BlobFinalDirSyncStatus",
+        "MetaBypass::TierRetirementRemoved"}) {
+    SCOPED_TRACE(point);
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(CreateLocalBlob("payload", &writer));
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    SyncPoint::GetInstance()->SetCallBack(point, [](void* arg) {
+      *static_cast<Status*>(arg) = Status::IOError("retirement injection");
+    });
+    SyncPoint::GetInstance()->EnableProcessing();
+    uint64_t reclaimed;
+    ASSERT_TRUE(storage_->ReclaimBlob(1, &reclaimed).IsIOError());
+    ASSERT_TRUE(storage_->Stop().IsIOError());
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    std::vector<std::string> names;
+    ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
+    for (const auto& name : names) {
+      if (name.size() > 8 && name.substr(name.size() - 8) == ".retired") {
+        std::string marker;
+        ASSERT_OK(Read(fs_.get(), m_.data_dir + "/" + name, &marker));
+        ASSERT_OK(Write(fs_.get(), m_.data_dir + "/" + name + ".tmp", marker));
+      }
+    }
+    writer.reset();
+    storage_.reset();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_OK(storage_->Initialize(false));
+    uint64_t size;
+    ASSERT_TRUE(storage_
+                    ->GetFileSize(BlobFileName(m_.data_dir, 1), IOOptions(),
+                                  &size, nullptr)
+                    .IsPathNotFound());
+    ASSERT_EQ(TierStats().staging_bytes, 0);
+    ASSERT_OK(fs_->GetChildren(m_.data_dir, IOOptions(), &names, nullptr));
+    for (const auto& name : names) {
+      ASSERT_EQ(name.find(".retired"), std::string::npos);
+    }
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, InvalidLocalRecoveryNeverChangesEitherNamespace) {
+  for (const std::string kind :
+       {"checksum", "truncation", "identity", "incarnation", "overlap",
+        "generation", "missing", "length", "payload_crc", "legacy"}) {
+    SCOPED_TRACE(kind);
+    Initialize(128);
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_OK(CreateLocalBlob("payload", &writer));
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    const auto descriptor = LocalDescriptorPath();
+    const auto payload = FirstLocalPath();
+    std::string bytes;
+    ASSERT_OK(Read(fs_.get(), descriptor, &bytes));
+    writer.reset();
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+
+    if (kind == "checksum") bytes.back() = 'x';
+    if (kind == "truncation") bytes.resize(bytes.size() / 2);
+    if (kind == "legacy") bytes.replace(0, 4, "MBL3");
+    if (kind == "identity" || kind == "incarnation" || kind == "overlap" ||
+        kind == "generation") {
+      ASSERT_OK(MutateLocalDescriptor(kind, &bytes));
+    }
+    ASSERT_OK(Write(fs_.get(), descriptor, bytes));
+    if (kind == "missing") {
+      ASSERT_OK(fs_->DeleteFile(payload, IOOptions(), nullptr));
+    }
+    if (kind == "length") {
+      ASSERT_OK(Write(fs_.get(), payload, "short"));
+    }
+    if (kind == "payload_crc") {
+      ASSERT_OK(Write(fs_.get(), payload, "changed"));
+    }
+    ASSERT_OK(Write(fs_.get(), descriptor + ".tmp", "uncommitted debris"));
+    const auto before = TierFiles();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_FALSE(storage_->Initialize(false).ok());
+    ASSERT_EQ(TierFiles(), before);
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, AppliedHddRangesRequireIndependentPublicationProof) {
+  for (const bool whole_descriptor : {false, true}) {
+    for (const std::string state : {"open", "closed", "mixed"}) {
+      SCOPED_TRACE(state +
+                   (whole_descriptor ? ":missing_map" : ":missing_range"));
+      Initialize(128);
+      std::unique_ptr<FSWritableFile> writer;
+      ASSERT_OK(CreateLocalBlob("payload", &writer));
+      ASSERT_OK(writer->Sync(IOOptions(), nullptr));
+      ASSERT_OK(Migrate(7));  // Logical writer is open, so MBT remains PARTIAL.
+      if (state == "closed") {
+        ASSERT_OK(writer->Close(IOOptions(), nullptr));
+      } else if (state == "mixed") {
+        ASSERT_OK(writer->Append("tail", IOOptions(), nullptr));
+        ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+      }
+      ASSERT_OK(RemoveRemoteProof(whole_descriptor));
+      writer.reset();
+      ASSERT_OK(storage_->Stop());
+      storage_.reset();
+      const auto before = TierFiles();
+      storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+      ASSERT_TRUE(storage_->Preflight(false).IsCorruption());
+      ASSERT_EQ(TierFiles(), before);
+      ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
+      ASSERT_EQ(TierFiles(), before);
+      storage_.reset();
+      Clean(m_.data_dir);
+      Clean(m_.staging_dir);
+    }
+  }
+}
+
+TEST_F(TieredStorageTest,
+       NativePreflightRechecksRetiredPointAfterDependencyFailure) {
+  Initialize(128);
+  ASSERT_OK(Append("payload"));
+  std::string current, previous;
+  ASSERT_OK(ProtectedPoint("point-current", true, &current));
+  ASSERT_OK(ProtectedPoint("point-previous", false, &previous));
+  const auto point = m_.backup_dir + "/point-current";
+  std::string inventory;
+  ASSERT_OK(Read(fs_.get(), point + "/INVENTORY", &inventory));
+  inventory += "I missing-native-file 7 0\n";
+  ASSERT_OK(Write(fs_.get(), point + "/INVENTORY", inventory));
+  current = "point-current " +
+            std::to_string(crc32c::Value(inventory.data(), inventory.size())) +
+            "\n";
+  ASSERT_OK(Write(fs_.get(), m_.backup_dir + "/LATEST", current + previous));
+  const auto before = TierFiles();
+  // A stable missing dependency is still an error, with no writes.
+  uint64_t missing_size;
+  Status expected_missing = fs_->GetFileSize(
+      point + "/missing-native-file", IOOptions(), &missing_size, nullptr);
+  ASSERT_FALSE(expected_missing.ok());
+  ASSERT_EQ(NativePointPreflight(), expected_missing);
+  ASSERT_EQ(TierFiles(), before);
+  TestGate checked;
+  std::atomic<unsigned> attempts{0};
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::RestorePreflightValidated", [&](void* arg) {
+        if (++attempts == 1) {
+          EXPECT_EQ(*static_cast<Status*>(arg), expected_missing);
+          checked.Block();
+        }
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status validated;
+  std::thread validator([&] { validated = NativePointPreflight(); });
+  checked.WaitUntilBlocked();
+  ASSERT_OK(Write(fs_.get(), m_.backup_dir + "/LATEST", previous));
+  checked.Release();
+  validator.join();
+  ASSERT_OK(validated);
+  ASSERT_EQ(attempts.load(), 2U);
+  ASSERT_EQ(TierFiles(), before);
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+  ASSERT_OK(storage_->Stop());
+}
+
+TEST_F(TieredStorageTest, EveryProtectedMapMustMatchItsOuterInventory) {
+  for (const std::string corrupt :
+       {"map_swap", "missing_D", "duplicate_D", "B_set"}) {
+    SCOPED_TRACE(corrupt);
+    Initialize(128);
+    ASSERT_OK(Append("payload"));
+    std::string current, previous;
+    ASSERT_OK(ProtectedPoint("point-current", true, &current));
+    ASSERT_OK(ProtectedPoint("point-previous", false, &previous));
+    const auto point = m_.backup_dir + "/point-previous";
+    std::string inventory, map;
+    ASSERT_OK(Read(fs_.get(), point + "/INVENTORY", &inventory));
+    if (corrupt == "map_swap") {
+      // Same database, valid internal checksum, wrong protected inventory.
+      ASSERT_OK(
+          Read(fs_.get(), m_.backup_dir + "/point-current/BLOB-MAP", &map));
+      ASSERT_OK(Write(fs_.get(), point + "/BLOB-MAP", map));
+    } else {
+      if (corrupt == "missing_D") inventory = "MBI4\n";
+      if (corrupt == "duplicate_D") inventory += inventory.substr(5);
+      if (corrupt == "B_set") inventory += "B 1 7 0\n";
+      ASSERT_OK(Write(fs_.get(), point + "/INVENTORY", inventory));
+      previous =
+          "point-previous " +
+          std::to_string(crc32c::Value(inventory.data(), inventory.size())) +
+          "\n";
+    }
+    ASSERT_OK(Write(fs_.get(), m_.backup_dir + "/LATEST", current + previous));
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    const auto before = TierFiles();
+    storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+    ASSERT_TRUE(storage_->Preflight(false).IsCorruption());
+    ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
+    ASSERT_EQ(TierFiles(), before);
+    std::string unchanged;
+    ASSERT_OK(Read(fs_.get(), point + "/INVENTORY", &unchanged));
+    ASSERT_EQ(unchanged, inventory);
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+    Clean(m_.backup_dir);
+  }
+}
+
+TEST_F(TieredStorageTest, ProtectedCheckpointPreventsRetirementAndReplay) {
+  Initialize(128);
+  ASSERT_OK(Append("payload"));
+  const auto point = m_.backup_dir + "/point-test";
+  ASSERT_OK(EnsureDir(fs_.get(), m_.backup_dir));
+  ASSERT_OK(EnsureDir(fs_.get(), point));
+  ASSERT_OK(storage_->SaveCheckpoint(point + "/BLOB-MAP", {{1, 7}}));
+  std::string map;
+  ASSERT_OK(Read(fs_.get(), point + "/BLOB-MAP", &map));
+  const std::string inventory =
+      "MBI4\nD BLOB-MAP " + std::to_string(map.size()) + " " +
+      std::to_string(crc32c::Value(map.data(), map.size())) + "\nB 1 7 " +
+      std::to_string(crc32c::Value("payload", 7)) + "\n";
+  ASSERT_OK(Write(fs_.get(), point + "/INVENTORY", inventory));
+  ASSERT_OK(Write(
+      fs_.get(), m_.backup_dir + "/LATEST",
+      "point-test " +
+          std::to_string(crc32c::Value(inventory.data(), inventory.size())) +
+          "\n"));
+  const auto before = TierFiles();
+  uint64_t removed = 0;
+  ASSERT_TRUE(storage_->ReclaimBlob(1, &removed).IsCorruption());
+  ASSERT_EQ(removed, 0);
+  ASSERT_EQ(TierFiles(), before);
+  ASSERT_OK(WriteRetirementForTest());
+  ASSERT_TRUE(storage_->Stop().IsCorruption());
+  storage_.reset();
+  const auto with_tomb = TierFiles();
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+  ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
+  ASSERT_EQ(TierFiles(), with_tomb);
+}
+
+TEST_F(TieredStorageTest, PreflightRetriesDependencyFailureAfterConcurrentGc) {
+  auto failing = std::make_shared<LocalReadFailureFileSystem>(fs_);
+  fs_ = failing;
+  Initialize(128);
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(CreateLocalBlob("payload", &writer));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  failing->local_path = FirstLocalPath();
+  failing->fail_read = true;
+  TieredStorage reopening(fs_, m_, "tier-test");
+  TestGate validated;
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierPreflightDependenciesChecked", [&](void* arg) {
+        if (!static_cast<Status*>(arg)->ok()) validated.Block();
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status opened;
+  std::thread preflight([&] { opened = reopening.Preflight(false); });
+  validated.WaitUntilBlocked();
+  uint64_t reclaimed;
+  EXPECT_OK(storage_->ReclaimBlob(1, &reclaimed));
+  validated.Release();
+  preflight.join();
+  ASSERT_OK(opened);
+  ASSERT_OK(storage_->Stop());
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+
+TEST_F(TieredStorageTest, RegistrationStatusFailureBoundaries) {
+  for (const char* hook :
+       {"MetaBypass::TierTailCreated", "MetaBypass::TierTailIdentitySynced",
+        "MetaBypass::TierBeforeTailRegister",
+        "MetaBypass::TierLocalDescriptorSynced",
+        "MetaBypass::TierLocalDescriptorRenamed",
+        "MetaBypass::TierLocalPublicationSynced"}) {
+    ASSERT_NO_FATAL_FAILURE(MetadataStatusFailure("register", hook));
+  }
+}
+
+TEST_F(TieredStorageTest, FreezeStatusFailureBoundaries) {
+  for (const char* hook :
+       {"MetaBypass::TierPayloadSynced", "MetaBypass::TierLocalExtentSynced",
+        "MetaBypass::TierLocalDescriptorSynced",
+        "MetaBypass::TierLocalDescriptorRenamed",
+        "MetaBypass::TierLocalPublicationSynced"}) {
+    ASSERT_NO_FATAL_FAILURE(MetadataStatusFailure("freeze", hook));
+  }
+}
+
+TEST_F(TieredStorageTest, MigrationStatusFailureBoundaries) {
+  for (const char* hook :
+       {"MetaBypass::TierPayloadSynced", "MetaBypass::TierPayloadVerified",
+        "MetaBypass::TierDependenciesSynced",
+        "MetaBypass::TierDescriptorSynced", "MetaBypass::TierDescriptorRenamed",
+        "MetaBypass::TierPublicationSynced",
+        "MetaBypass::TierLocalDescriptorSynced",
+        "MetaBypass::TierLocalDescriptorRenamed",
+        "MetaBypass::TierLocalPublicationSynced",
+        "MetaBypass::TierLocalUnlinked", "MetaBypass::TierBeforeQuotaRelease",
+        "MetaBypass::TierFinalLocalRemoved",
+        "MetaBypass::TierFinalLocalSynced"}) {
+    ASSERT_NO_FATAL_FAILURE(MetadataStatusFailure("migrate", hook));
+  }
+}
+
+TEST_F(TieredStorageTest, RetirementStatusFailureBoundaries) {
+  for (const char* hook :
+       {"MetaBypass::TierRetirementSynced", "MetaBypass::BlobDescriptorRemoved",
+        "MetaBypass::BlobPayloadDeleteStatus",
+        "MetaBypass::BlobFinalDirSyncStatus",
+        "MetaBypass::TierRetirementRemoved"}) {
+    ASSERT_NO_FATAL_FAILURE(MetadataStatusFailure("gc", hook));
+  }
+}
+
+static const char* const kRegistrationBoundaries[] = {
+    "MetaBypass::TierTailCreated",
+    "MetaBypass::TierTailIdentitySynced",
+    "MetaBypass::TierBeforeTailRegister",
+    "MetaBypass::TierLocalDescriptorSynced",
+    "MetaBypass::TierLocalDescriptorRenamed",
+    "MetaBypass::TierLocalPublicationSynced",
+    "MetaBypass::TierTailRegistered"};
+TEST_F(TieredStorageTest, RegistrationPowerLossBoundaries) {
+  for (const auto* hook : kRegistrationBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataPowerLoss("register", hook));
+  }
+}
+#ifndef OS_WIN
+TEST_F(TieredStorageTest, RegistrationProcessCrashBoundaries) {
+  for (const auto* hook : kRegistrationBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataProcessCrash("register", hook));
+  }
+}
+#endif
+
+static const char* const kFreezeBoundaries[] = {
+    "MetaBypass::TierPayloadSynced",
+    "MetaBypass::TierLocalExtentSynced",
+    "MetaBypass::TierLocalDescriptorSynced",
+    "MetaBypass::TierLocalDescriptorRenamed",
+    "MetaBypass::TierLocalPublicationSynced",
+    "MetaBypass::TierLocalPersistedBeforeRoute",
+    "MetaBypass::TierSegmentFrozen"};
+TEST_F(TieredStorageTest, FreezePowerLossBoundaries) {
+  for (const auto* hook : kFreezeBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataPowerLoss("freeze", hook));
+  }
+}
+#ifndef OS_WIN
+TEST_F(TieredStorageTest, FreezeProcessCrashBoundaries) {
+  for (const auto* hook : kFreezeBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataProcessCrash("freeze", hook));
+  }
+}
+#endif
+
+static const char* const kMigrationBoundaries[] = {
+    "MetaBypass::TierPayloadSynced",
+    "MetaBypass::TierPayloadVerified",
+    "MetaBypass::TierDependenciesSynced",
+    "MetaBypass::TierDescriptorSynced",
+    "MetaBypass::TierDescriptorRenamed",
+    "MetaBypass::TierPublicationSynced",
+    "MetaBypass::TierLocalDescriptorSynced",
+    "MetaBypass::TierLocalDescriptorRenamed",
+    "MetaBypass::TierLocalPublicationSynced",
+    "MetaBypass::TierLocalPersistedBeforeRoute",
+    "MetaBypass::TierRouteDurable",
+    "MetaBypass::TierBeforeEvict",
+    "MetaBypass::TierLocalUnlinked",
+    "MetaBypass::TierBeforeQuotaRelease",
+    "MetaBypass::TierFinalHddPublished",
+    "MetaBypass::TierFinalLocalRemoved",
+    "MetaBypass::TierFinalLocalSynced"};
+TEST_F(TieredStorageTest, MigrationPowerLossBoundaries) {
+  for (const auto* hook : kMigrationBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataPowerLoss("migrate", hook));
+  }
+}
+#ifndef OS_WIN
+TEST_F(TieredStorageTest, MigrationProcessCrashBoundaries) {
+  for (const auto* hook : kMigrationBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataProcessCrash("migrate", hook));
+  }
+}
+#endif
+
+static const char* const kRetirementBoundaries[] = {
+    "MetaBypass::TierRetirementSynced",
+    "MetaBypass::BlobDescriptorRemoved",
+    "MetaBypass::BlobDescriptorSynced",
+    "MetaBypass::BlobPayloadRemoved",
+    "MetaBypass::TierRetirementPayloadSynced",
+    "MetaBypass::TierRetirementRemoved"};
+TEST_F(TieredStorageTest, RetirementPowerLossBoundaries) {
+  for (const auto* hook : kRetirementBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataPowerLoss("gc", hook));
+  }
+}
+#ifndef OS_WIN
+TEST_F(TieredStorageTest, RetirementProcessCrashBoundaries) {
+  for (const auto* hook : kRetirementBoundaries) {
+    ASSERT_NO_FATAL_FAILURE(MetadataProcessCrash("gc", hook));
+  }
+}
+#endif
 
 TEST_F(TieredStorageTest, SuffixPointReadDoesNotPinUnrelatedSsdPrefix) {
   Initialize(128);
@@ -5613,6 +6660,60 @@ int main(int argc, char** argv) {
     }
     return 3;
   }
+  if (argc == 6 && std::string(argv[1]) == "--v4-tier-crash-writer") {
+    using ROCKSDB_NAMESPACE::BlobFileName;
+    using ROCKSDB_NAMESPACE::Env;
+    using ROCKSDB_NAMESPACE::FileOptions;
+    using ROCKSDB_NAMESPACE::FSWritableFile;
+    using ROCKSDB_NAMESPACE::IOOptions;
+    using ROCKSDB_NAMESPACE::metabypass::EnsureDir;
+    using ROCKSDB_NAMESPACE::metabypass::TieredStorage;
+    auto fs = Env::Default()->GetFileSystem();
+    MetaBypassOptions options;
+    options.data_dir = argv[2];
+    options.staging_dir = argv[3];
+    options.staging_capacity = 128;
+    Status s = EnsureDir(fs.get(), options.data_dir);
+    TieredStorage storage(fs, options, "tier-test");
+    if (s.ok()) s = storage.Initialize(false);
+    std::unique_ptr<FSWritableFile> writer;
+    if (s.ok())
+      s = storage.NewWritableFile(BlobFileName(options.data_dir, 1),
+                                  FileOptions(), &writer, nullptr);
+    const std::string phase = argv[4];
+    if (s.ok() && phase != "register")
+      s = writer->Append("payload", IOOptions(), nullptr);
+    if (s.ok() && phase != "register") s = writer->Flush(IOOptions(), nullptr);
+    if (s.ok() && (phase == "migrate" || phase == "gc"))
+      s = writer->Close(IOOptions(), nullptr);
+    SyncPoint::GetInstance()->SetCallBack(
+        argv[5], [](void*) { kill(getpid(), SIGKILL); });
+    SyncPoint::GetInstance()->EnableProcessing();
+    if (s.ok()) {
+      if (phase == "register")
+        s = writer->Append("payload", IOOptions(), nullptr);
+      else if (phase == "freeze")
+        s = writer->Sync(IOOptions(), nullptr);
+      else if (phase == "gc") {
+        uint64_t bytes;
+        s = storage.ReclaimBlob(1, &bytes);
+      } else {
+        storage.Start();
+        s = storage.Persist({{1, 7}});
+        // Reclamation can follow the completed publication barrier.
+        if (s.ok()) {
+          std::mutex mutex;
+          std::condition_variable cv;
+          std::unique_lock<std::mutex> lock(mutex);
+          cv.wait(lock, [] { return false; });
+        }
+      }
+    }
+    fprintf(stderr, "crash boundary not reached (%s): %s\n", argv[5],
+            s.ToString().c_str());
+    storage.Stop().PermitUncheckedError();
+    return 3;
+  }
   if (argc == 5 && std::string(argv[1]) == "--raw-tier-crash-writer") {
     using ROCKSDB_NAMESPACE::FileOptions;
     using ROCKSDB_NAMESPACE::FSWritableFile;
@@ -5625,7 +6726,7 @@ int main(int argc, char** argv) {
     options.staging_dir = argv[3];
     options.staging_capacity = 64;
     Status s = EnsureDir(fs.get(), options.data_dir);
-    TieredStorage storage(fs, options);
+    TieredStorage storage(fs, options, "tier-test");
     if (s.ok()) s = storage.Initialize(false);
     storage.Start();
     std::unique_ptr<FSWritableFile> writer;

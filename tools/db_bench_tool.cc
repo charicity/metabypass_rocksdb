@@ -11324,6 +11324,116 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, tier_barrier_wait_micros);
     MB_NODE_FIELD(b, tier_metadata_commit_micros);
     MB_NODE_FIELD(b, tier_quota_admission_micros);
+    MB_NODE_FIELD(b, tier_local_commit_attempts);
+    MB_NODE_FIELD(b, tier_local_commit_successes);
+    MB_NODE_FIELD(b, tier_local_commit_skips);
+    MB_NODE_FIELD(b, tier_local_commit_micros);
+    MB_NODE_FIELD(b, tier_local_commit_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_register);
+    MB_NODE_FIELD(b, tier_local_commit_freeze);
+    MB_NODE_FIELD(b, tier_local_commit_close);
+    MB_NODE_FIELD(b, tier_local_commit_spill);
+    MB_NODE_FIELD(b, tier_local_commit_migration);
+    MB_NODE_FIELD(b, tier_local_commit_finalize);
+    MB_NODE_FIELD(b, tier_local_commit_recovery);
+    MB_NODE_FIELD(b, tier_local_commit_gc);
+    MB_NODE_FIELD(b, tier_local_metadata_fsyncs);
+    MB_NODE_FIELD(b, tier_local_metadata_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_metadata_dir_syncs);
+    MB_NODE_FIELD(b, tier_local_metadata_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_register_calls);
+    MB_NODE_FIELD(b, tier_local_register_micros);
+    MB_NODE_FIELD(b, tier_local_freeze_calls);
+    MB_NODE_FIELD(b, tier_local_freeze_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_attempts);
+    MB_NODE_FIELD(b, tier_remote_commit_successes);
+    MB_NODE_FIELD(b, tier_remote_commit_skips);
+    MB_NODE_FIELD(b, tier_remote_commit_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_register);
+    MB_NODE_FIELD(b, tier_remote_commit_freeze);
+    MB_NODE_FIELD(b, tier_remote_commit_close);
+    MB_NODE_FIELD(b, tier_remote_commit_spill);
+    MB_NODE_FIELD(b, tier_remote_commit_migration);
+    MB_NODE_FIELD(b, tier_remote_commit_finalize);
+    MB_NODE_FIELD(b, tier_remote_commit_recovery);
+    MB_NODE_FIELD(b, tier_remote_commit_gc);
+    MB_NODE_FIELD(b, tier_remote_metadata_fsyncs);
+    MB_NODE_FIELD(b, tier_remote_metadata_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_metadata_dir_syncs);
+    MB_NODE_FIELD(b, tier_remote_metadata_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_register_calls);
+    MB_NODE_FIELD(b, tier_remote_register_micros);
+    MB_NODE_FIELD(b, tier_remote_freeze_calls);
+    MB_NODE_FIELD(b, tier_remote_freeze_micros);
+    MB_NODE_FIELD(b, tier_migration_publish_calls);
+    MB_NODE_FIELD(b, tier_migration_publish_micros);
+    MB_NODE_FIELD(b, tier_local_metadata_bytes);
+    MB_NODE_FIELD(b, peak_tier_local_metadata_bytes);
+    MB_NODE_FIELD(b, tier_local_commit_register_micros);
+    MB_NODE_FIELD(b, tier_local_commit_register_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_register_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_register_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_freeze_micros);
+    MB_NODE_FIELD(b, tier_local_commit_freeze_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_freeze_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_freeze_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_close_micros);
+    MB_NODE_FIELD(b, tier_local_commit_close_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_close_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_close_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_spill_micros);
+    MB_NODE_FIELD(b, tier_local_commit_spill_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_spill_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_spill_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_migration_micros);
+    MB_NODE_FIELD(b, tier_local_commit_migration_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_migration_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_migration_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_finalize_micros);
+    MB_NODE_FIELD(b, tier_local_commit_finalize_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_finalize_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_finalize_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_recovery_micros);
+    MB_NODE_FIELD(b, tier_local_commit_recovery_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_recovery_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_recovery_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_gc_micros);
+    MB_NODE_FIELD(b, tier_local_commit_gc_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_local_commit_gc_fsync_micros);
+    MB_NODE_FIELD(b, tier_local_commit_gc_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_register_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_register_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_register_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_register_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_freeze_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_freeze_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_freeze_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_freeze_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_close_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_close_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_close_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_close_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_spill_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_spill_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_spill_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_spill_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_migration_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_migration_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_migration_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_migration_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_finalize_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_finalize_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_finalize_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_finalize_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_recovery_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_recovery_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_recovery_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_recovery_dir_sync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_gc_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_gc_lock_wait_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_gc_fsync_micros);
+    MB_NODE_FIELD(b, tier_remote_commit_gc_dir_sync_micros);
     MB_NODE_FIELD(b, tier_append_tasks);
     MB_NODE_FIELD(b, tier_append_wait_micros);
     MB_NODE_FIELD(b, tier_switch_wait_micros);
@@ -12184,6 +12294,226 @@ static int RunMetaBypassBenchmark() {
       stats.tier_migration_start_delay_micros, stats.tier_prefix_write_micros,
       stats.tier_suffix_write_micros, stats.tier_barrier_wait_micros,
       stats.tier_metadata_commit_micros, stats.tier_quota_admission_micros);
+  fprintf(stdout, " tier_local_commit_attempts=%" PRIu64,
+          stats.tier_local_commit_attempts);
+  fprintf(stdout, " tier_local_commit_successes=%" PRIu64,
+          stats.tier_local_commit_successes);
+  fprintf(stdout, " tier_local_commit_skips=%" PRIu64,
+          stats.tier_local_commit_skips);
+  fprintf(stdout, " tier_local_commit_micros=%" PRIu64,
+          stats.tier_local_commit_micros);
+  fprintf(stdout, " tier_local_commit_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_register=%" PRIu64,
+          stats.tier_local_commit_register);
+  fprintf(stdout, " tier_local_commit_freeze=%" PRIu64,
+          stats.tier_local_commit_freeze);
+  fprintf(stdout, " tier_local_commit_close=%" PRIu64,
+          stats.tier_local_commit_close);
+  fprintf(stdout, " tier_local_commit_spill=%" PRIu64,
+          stats.tier_local_commit_spill);
+  fprintf(stdout, " tier_local_commit_migration=%" PRIu64,
+          stats.tier_local_commit_migration);
+  fprintf(stdout, " tier_local_commit_finalize=%" PRIu64,
+          stats.tier_local_commit_finalize);
+  fprintf(stdout, " tier_local_commit_recovery=%" PRIu64,
+          stats.tier_local_commit_recovery);
+  fprintf(stdout, " tier_local_commit_gc=%" PRIu64, stats.tier_local_commit_gc);
+  fprintf(stdout, " tier_local_metadata_fsyncs=%" PRIu64,
+          stats.tier_local_metadata_fsyncs);
+  fprintf(stdout, " tier_local_metadata_fsync_micros=%" PRIu64,
+          stats.tier_local_metadata_fsync_micros);
+  fprintf(stdout, " tier_local_metadata_dir_syncs=%" PRIu64,
+          stats.tier_local_metadata_dir_syncs);
+  fprintf(stdout, " tier_local_metadata_dir_sync_micros=%" PRIu64,
+          stats.tier_local_metadata_dir_sync_micros);
+  fprintf(stdout, " tier_local_register_calls=%" PRIu64,
+          stats.tier_local_register_calls);
+  fprintf(stdout, " tier_local_register_micros=%" PRIu64,
+          stats.tier_local_register_micros);
+  fprintf(stdout, " tier_local_freeze_calls=%" PRIu64,
+          stats.tier_local_freeze_calls);
+  fprintf(stdout, " tier_local_freeze_micros=%" PRIu64,
+          stats.tier_local_freeze_micros);
+  fprintf(stdout, " tier_remote_commit_attempts=%" PRIu64,
+          stats.tier_remote_commit_attempts);
+  fprintf(stdout, " tier_remote_commit_successes=%" PRIu64,
+          stats.tier_remote_commit_successes);
+  fprintf(stdout, " tier_remote_commit_skips=%" PRIu64,
+          stats.tier_remote_commit_skips);
+  fprintf(stdout, " tier_remote_commit_micros=%" PRIu64,
+          stats.tier_remote_commit_micros);
+  fprintf(stdout, " tier_remote_commit_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_register=%" PRIu64,
+          stats.tier_remote_commit_register);
+  fprintf(stdout, " tier_remote_commit_freeze=%" PRIu64,
+          stats.tier_remote_commit_freeze);
+  fprintf(stdout, " tier_remote_commit_close=%" PRIu64,
+          stats.tier_remote_commit_close);
+  fprintf(stdout, " tier_remote_commit_spill=%" PRIu64,
+          stats.tier_remote_commit_spill);
+  fprintf(stdout, " tier_remote_commit_migration=%" PRIu64,
+          stats.tier_remote_commit_migration);
+  fprintf(stdout, " tier_remote_commit_finalize=%" PRIu64,
+          stats.tier_remote_commit_finalize);
+  fprintf(stdout, " tier_remote_commit_recovery=%" PRIu64,
+          stats.tier_remote_commit_recovery);
+  fprintf(stdout, " tier_remote_commit_gc=%" PRIu64,
+          stats.tier_remote_commit_gc);
+  fprintf(stdout, " tier_remote_metadata_fsyncs=%" PRIu64,
+          stats.tier_remote_metadata_fsyncs);
+  fprintf(stdout, " tier_remote_metadata_fsync_micros=%" PRIu64,
+          stats.tier_remote_metadata_fsync_micros);
+  fprintf(stdout, " tier_remote_metadata_dir_syncs=%" PRIu64,
+          stats.tier_remote_metadata_dir_syncs);
+  fprintf(stdout, " tier_remote_metadata_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_metadata_dir_sync_micros);
+  fprintf(stdout, " tier_remote_register_calls=%" PRIu64,
+          stats.tier_remote_register_calls);
+  fprintf(stdout, " tier_remote_register_micros=%" PRIu64,
+          stats.tier_remote_register_micros);
+  fprintf(stdout, " tier_remote_freeze_calls=%" PRIu64,
+          stats.tier_remote_freeze_calls);
+  fprintf(stdout, " tier_remote_freeze_micros=%" PRIu64,
+          stats.tier_remote_freeze_micros);
+  fprintf(stdout, " tier_migration_publish_calls=%" PRIu64,
+          stats.tier_migration_publish_calls);
+  fprintf(stdout, " tier_migration_publish_micros=%" PRIu64,
+          stats.tier_migration_publish_micros);
+  fprintf(stdout, " tier_local_metadata_bytes=%" PRIu64,
+          stats.tier_local_metadata_bytes);
+  fprintf(stdout, " peak_tier_local_metadata_bytes=%" PRIu64,
+          stats.peak_tier_local_metadata_bytes);
+  fprintf(stdout, " tier_local_commit_register_micros=%" PRIu64,
+          stats.tier_local_commit_register_micros);
+  fprintf(stdout, " tier_local_commit_register_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_register_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_register_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_register_fsync_micros);
+  fprintf(stdout, " tier_local_commit_register_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_register_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_freeze_micros=%" PRIu64,
+          stats.tier_local_commit_freeze_micros);
+  fprintf(stdout, " tier_local_commit_freeze_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_freeze_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_freeze_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_freeze_fsync_micros);
+  fprintf(stdout, " tier_local_commit_freeze_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_freeze_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_close_micros=%" PRIu64,
+          stats.tier_local_commit_close_micros);
+  fprintf(stdout, " tier_local_commit_close_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_close_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_close_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_close_fsync_micros);
+  fprintf(stdout, " tier_local_commit_close_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_close_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_spill_micros=%" PRIu64,
+          stats.tier_local_commit_spill_micros);
+  fprintf(stdout, " tier_local_commit_spill_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_spill_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_spill_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_spill_fsync_micros);
+  fprintf(stdout, " tier_local_commit_spill_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_spill_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_migration_micros=%" PRIu64,
+          stats.tier_local_commit_migration_micros);
+  fprintf(stdout, " tier_local_commit_migration_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_migration_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_migration_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_migration_fsync_micros);
+  fprintf(stdout, " tier_local_commit_migration_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_migration_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_finalize_micros=%" PRIu64,
+          stats.tier_local_commit_finalize_micros);
+  fprintf(stdout, " tier_local_commit_finalize_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_finalize_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_finalize_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_finalize_fsync_micros);
+  fprintf(stdout, " tier_local_commit_finalize_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_finalize_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_recovery_micros=%" PRIu64,
+          stats.tier_local_commit_recovery_micros);
+  fprintf(stdout, " tier_local_commit_recovery_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_recovery_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_recovery_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_recovery_fsync_micros);
+  fprintf(stdout, " tier_local_commit_recovery_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_recovery_dir_sync_micros);
+  fprintf(stdout, " tier_local_commit_gc_micros=%" PRIu64,
+          stats.tier_local_commit_gc_micros);
+  fprintf(stdout, " tier_local_commit_gc_lock_wait_micros=%" PRIu64,
+          stats.tier_local_commit_gc_lock_wait_micros);
+  fprintf(stdout, " tier_local_commit_gc_fsync_micros=%" PRIu64,
+          stats.tier_local_commit_gc_fsync_micros);
+  fprintf(stdout, " tier_local_commit_gc_dir_sync_micros=%" PRIu64,
+          stats.tier_local_commit_gc_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_register_micros=%" PRIu64,
+          stats.tier_remote_commit_register_micros);
+  fprintf(stdout, " tier_remote_commit_register_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_register_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_register_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_register_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_register_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_register_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_freeze_micros=%" PRIu64,
+          stats.tier_remote_commit_freeze_micros);
+  fprintf(stdout, " tier_remote_commit_freeze_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_freeze_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_freeze_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_freeze_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_freeze_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_freeze_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_close_micros=%" PRIu64,
+          stats.tier_remote_commit_close_micros);
+  fprintf(stdout, " tier_remote_commit_close_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_close_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_close_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_close_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_close_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_close_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_spill_micros=%" PRIu64,
+          stats.tier_remote_commit_spill_micros);
+  fprintf(stdout, " tier_remote_commit_spill_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_spill_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_spill_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_spill_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_spill_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_spill_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_migration_micros=%" PRIu64,
+          stats.tier_remote_commit_migration_micros);
+  fprintf(stdout, " tier_remote_commit_migration_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_migration_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_migration_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_migration_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_migration_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_migration_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_finalize_micros=%" PRIu64,
+          stats.tier_remote_commit_finalize_micros);
+  fprintf(stdout, " tier_remote_commit_finalize_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_finalize_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_finalize_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_finalize_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_finalize_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_finalize_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_recovery_micros=%" PRIu64,
+          stats.tier_remote_commit_recovery_micros);
+  fprintf(stdout, " tier_remote_commit_recovery_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_recovery_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_recovery_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_recovery_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_recovery_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_recovery_dir_sync_micros);
+  fprintf(stdout, " tier_remote_commit_gc_micros=%" PRIu64,
+          stats.tier_remote_commit_gc_micros);
+  fprintf(stdout, " tier_remote_commit_gc_lock_wait_micros=%" PRIu64,
+          stats.tier_remote_commit_gc_lock_wait_micros);
+  fprintf(stdout, " tier_remote_commit_gc_fsync_micros=%" PRIu64,
+          stats.tier_remote_commit_gc_fsync_micros);
+  fprintf(stdout, " tier_remote_commit_gc_dir_sync_micros=%" PRIu64,
+          stats.tier_remote_commit_gc_dir_sync_micros);
+  fprintf(stdout, "\n");
   return s.ok() ? 0 : 1;
 }
 

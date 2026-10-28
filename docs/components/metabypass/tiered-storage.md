@@ -1,4 +1,4 @@
-# Bounded segmented staging and independent HDD suffixes
+# SSD-local metadata and bounded segmented staging
 
 Ordinary Integrated BlobDB produces blobs in native flush and compaction.
 Direct Write produces blob records in the foreground and keeps its per-record
@@ -30,10 +30,19 @@ remain possible on the foreground path.
 
 ## Publication and lifetime
 
-Each blob has an append mutex, a descriptor commit mutex and state protected by
-the global accounting mutex, acquired in that order. The worker never takes the
-append mutex. No payload copying, Fsync/readback, worker wait or pin drain occurs
-under the descriptor commit mutex. The global mutex never covers physical I/O.
+Each blob has an append mutex, independent SSD and HDD metadata commit mutexes,
+and state protected by the global accounting mutex. A commit acquires only its
+own medium's mutex before the short state lock. The two commit mutexes never
+nest, and the worker never takes the append mutex. Payload copying, Fsync and
+readback take place before metadata commits. Metadata Fsync/rename/dirsync hold
+only that medium's commit mutex. No HDD operation holds the SSD commit mutex;
+the global mutex never covers physical I/O or waits.
+
+A new SSD blob creates only its MBL4 snapshot. Segment registration, freezing,
+SSD-mode Sync/Fsync and writer Close persist SSD metadata without touching or
+waiting for HDD metadata. This guarantee concerns these tier-writer operations:
+native checkpoint publication, synchronous Write, SyncBackup and database Close
+retain their complete HDD barriers.
 
 A new caller-owned segment is created and its empty identity synced before its
 identity, logical start and maximum length are durably registered. Only then
@@ -43,7 +52,11 @@ into the latest generation, retaining concurrent unrelated tail changes.
 Migration copies a frozen SSD segment, checks its expected CRC, Fsyncs and
 rereads the entire HDD extent, closes it and syncs its dependency directory.
 It then Fsyncs a temporary descriptor, renames it, and syncs the publication
-directory before changing the readable route. Existing snapshot readers keep
+directory, then merges the matching range into a new SSD-local snapshot.
+Only successful local publication changes the readable route and applied
+durability watermarks. Prefix and suffix owners merge range deltas against the
+latest local state; an older HDD generation never replaces unrelated changes.
+Existing snapshot readers keep
 physical source pins; new readers use the published route. SSD unlink and
 staging-directory sync must both succeed before quota is released. Uncertain
 publication preserves source and destination files.
@@ -51,7 +64,11 @@ publication preserves source and destination files.
 Every operation pins its logical blob; reads and checkpoint digests additionally
 pin the physical identities in their fixed snapshot. Whole-blob retirement
 rejects new operations, cancels dependent barrier waits and drains existing
-operations before deletion. Stop waits for in-flight physical operations.
+operations before deletion. GC first writes a durable HDD retirement tombstone,
+including for a pure SSD blob. It removes both descriptors, temporary files and
+payloads, syncs both directories, then removes and syncs the tombstone. Recovery
+replays this sequence without resurrecting a half-deleted blob, after checking
+all protected checkpoint references. Stop waits for in-flight physical operations.
 The first I/O error is sticky and wakes all waiters.
 
 ## Durability and recovery
@@ -73,17 +90,43 @@ are removed without deleting their HDD payloads. The existing durable RESTORING
 marker prevents Open from observing partial restore publication and permits
 idempotent retries. Historical points retain their own mappings and extents.
 
-The new formats are MBN3 (roots), MBI3 (inventory), MBT3 (range descriptor) and
-MBTC3 (checkpoint map). Old formats are rejected before destructive changes;
-there is no legacy decoder or conversion path. MBT3 contains a CRC-protected
-generation, logical state and explicit contiguous ranges. Each range records
-its tier, unique file identity, valid length, durable length, maximum size,
-open/frozen state and sealed CRC. Only the last range may be open.
+The formats are MBN4 (roots), MBI4 (inventory), MBL4 (SSD-local recovery),
+MBT4 (HDD publication) and MBTC4 (checkpoint map). Old formats are rejected
+before destructive changes; there is no legacy decoder or conversion path.
+Both snapshots contain a CRC-protected database identity, blob number,
+incarnation and independent generation. MBL4 describes contiguous logical
+ranges, closure/spill state and each physical range's identity, medium,
+durable length, open/frozen state and CRC. Only its last range may be open.
+MBT4 describes only sealed HDD ranges with their original SSD identity (or
+self-identity for caller-owned HDD suffixes). PARTIAL maps may contain holes;
+COMPLETE maps must be closed, contiguous and exact, including empty blobs.
+MBTC4 embeds only COMPLETE maps.
+
+Open validates the union of both descriptor namespaces before recovery writes
+or cleanup, then repeats validation under ownership locks. An SSD range can
+be replaced only by its matching HDD publication proof; an already-applied HDD
+range in MBL4 must still have that independent MBT4 proof. An open registered
+HDD suffix can match a sealed publication of the same physical identity and
+start within its registered bounds. Retained SSD sources are checked even if
+HDD publication supersedes them. Every protected map is bound to its inventory
+by the unique D entry's length/CRC and the exact B entries' lengths/CRCs.
+Namespace changes during dependency validation cause retry rather than treating
+concurrent publication or GC as stable corruption.
+
+Once all closed ranges are on HDD, the finalizer durably publishes COMPLETE,
+removes the local snapshot and syncs the SSD directory before satisfying
+Persist/checkpoint. HDD publication followed by local failure retains the
+relevant files and reports the first error; recovery reconciles the two
+independently numbered generations using exact range/source identity.
 
 On process-crash recovery, the registered open tail's physical length determines
 candidate visible bytes, bounded by its registered maximum and durable minimum.
 File length alone never establishes durability or validates a CRC. Recovery
-performs real synchronization/sealing before promoting these bytes. Closed
+performs real synchronization/sealing before promoting these bytes. It then
+durably closes every abandoned logical writer at its exact recovered length,
+including already-frozen, already-migrated and empty blobs. A registered empty
+physical tail is removed from the logical map rather than published as an
+ambiguous zero-length HDD range. Closed
 ranges must have their exact registered physical length; truncation or invalid
 coverage is corruption. Recovery does not interpret blob records or repair
 native MANIFESTs.
@@ -110,3 +153,28 @@ Checkpoint CRC reads retain one fixed mapping/pin for the complete call and
 open each needed extent once. This does not replace extent seal readback.
 All cumulative times can overlap; do not add them as exclusive wall-time phases.
 Cross-version adapters report unsupported statistics as null.
+
+V4 metadata telemetry adds local/remote commit attempts, successes, skips,
+elapsed time and lock wait. Reasons are register, freeze, close, spill,
+migration, finalize, recovery and gc; each has an attempt count plus elapsed,
+lock-wait, metadata-file Fsync and metadata-directory-sync microseconds.
+No-op attempts include their real lock wait and elapsed time. Failed attempts
+are counted. Direct suffix sealing is a remote freeze; worker publication is
+a remote migration. Finalize includes the independent HDD COMPLETE publication
+and SSD snapshot removal phases. Payload Fsync/readback remains in extent and
+Register/Freeze phase counters, not metadata-file Fsync.
+
+Full Register/Freeze phase and migration-publication times are also exposed.
+The latter starts after extent sealing and includes HDD publication and local
+reconciliation. SSD metadata byte gauges measure logical file lengths of
+canonical and temporary MBL4 files, not allocated blocks or payload quota.
+Normal commits maintain a per-file ledger from successful writes/renames;
+they do not enumerate the SSD namespace or stat unrelated blobs. Recovery scans
+once. A failed partial write uses only that transaction's SSD file stats to
+reconcile the gauge; if stat also fails, the last observed value remains with
+the sticky operation error until recovery. Peaks are observed retained lengths.
+
+GC commit fields measure the durable HDD tombstone snapshot; subsequent
+payload/descriptor deletion remains part of existing GC operation totals.
+It does not represent an SSD snapshot commit. Finalize separately measures its
+local snapshot cleanup because completion barriers wait for that phase.

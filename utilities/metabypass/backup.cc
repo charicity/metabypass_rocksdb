@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #include "utilities/metabypass/backup.h"
 
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <limits>
@@ -478,7 +479,7 @@ IOStatus Backup::LinkFile(const std::string& a, const std::string& b,
     return IOStatus::NotSupported("Metabypass external links");
   return target()->LinkFile(a, b, o, d);
 }
-Status Backup::Apply(const Event& e) {
+Status Backup::BeforeApply([[maybe_unused]] const Event& e) {
   TEST_SYNC_POINT("MetaBypass::Apply");
 #ifndef NDEBUG
   uint64_t sequence = e.seq;
@@ -486,7 +487,22 @@ Status Backup::Apply(const Event& e) {
 #endif
   Status injected;
   TEST_SYNC_POINT_CALLBACK("MetaBypass::ApplyStatus", &injected);
+  return injected;
+}
+Status Backup::Append(const std::string& name, const Slice& bytes) {
+  auto& writer = writers_[name];
+  if (!writer) {
+    Status s = disk_->ReopenWritableFile(work_ + "/" + name, FileOptions(),
+                                         &writer, nullptr);
+    if (!s.ok()) return s;
+  }
+  closed_.erase(name);
+  return writer->Append(bytes, IOOptions(), nullptr);
+}
+Status Backup::Apply(const Event& e) {
+  Status injected = BeforeApply(e);
   if (!injected.ok()) return injected;
+  if (e.kind == Kind::kAppend) return Append(e.name, e.bytes);
   if (e.kind == Kind::kRetireBlob) {
     uint64_t size = 0;
     Status s = storage_->GetFileSize(index_ + "/" + e.name, IOOptions(), &size,
@@ -517,8 +533,8 @@ Status Backup::Apply(const Event& e) {
     return disk_->NewWritableFile(path, FileOptions(), &writers_[e.name],
                                   nullptr);
   }
-  if (e.kind == Kind::kAppend || e.kind == Kind::kTruncate) {
-    if (e.kind == Kind::kTruncate) epochs_[e.name] = ++next_epoch_;
+  if (e.kind == Kind::kTruncate) {
+    epochs_[e.name] = ++next_epoch_;
     auto& writer = writers_[e.name];
     if (!writer) {
       Status s =
@@ -526,9 +542,7 @@ Status Backup::Apply(const Event& e) {
       if (!s.ok()) return s;
     }
     closed_.erase(e.name);
-    return e.kind == Kind::kAppend
-               ? writer->Append(e.bytes, IOOptions(), nullptr)
-               : writer->Truncate(e.size, IOOptions(), nullptr);
+    return writer->Truncate(e.size, IOOptions(), nullptr);
   }
   Status s = close();
   if (!s.ok()) return s;
@@ -573,7 +587,14 @@ Status Backup::Capture(Candidate* candidate) {
     }
     const std::string destination = candidate->path + "/" + file;
     if (!info.replacement_contents.empty()) {
-      s = Write(disk_, destination, info.replacement_contents);
+      // These bytes are private to this candidate. Publish synchronizes and
+      // validates them before making the recovery point visible.
+      std::unique_ptr<FSWritableFile> writer;
+      s = disk_->NewWritableFile(destination, FileOptions(), &writer, nullptr);
+      if (s.ok()) {
+        s = writer->Append(info.replacement_contents, IOOptions(), nullptr);
+        s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
+      }
       candidate->epochs[file] = ++next_epoch_;
     } else {
       uint64_t size = 0;
@@ -783,10 +804,11 @@ bool Backup::MirrorReady() const {
   return stopping_ || !stats_.error.ok() || (candidate_ && !capture_done_) ||
          (!QueuesEmpty() &&
           (wal_channel_.waiting_charge != 0 ||
-           metadata_channel_.waiting_charge != 0 || requested_ > published_ ||
+           metadata_channel_.waiting_charge != 0 || requested_ > applied_ ||
            stats_.queued_bytes >= options_.batch_bytes));
 }
 void Backup::WakeMirror() {
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::MirrorReadyProbe", this);
   if (mirror_waiting_ && MirrorReady()) {
     TEST_SYNC_POINT("MetaBypass::MirrorNotified");
     mirror_cv_.notify_one();
@@ -813,7 +835,68 @@ void Backup::WakeCapacity() {
     }
   }
 }
+void Backup::TakeBatch(Channel* channel, uint64_t boundary,
+                       std::vector<Event>* batch) {
+  batch->clear();
+  batch->push_back(std::move(channel->queue.front()));
+  channel->queue.pop_front();
+  const Event& first = batch->front();
+  constexpr size_t kMaxBytes = 64 * 1024;
+  constexpr size_t kMaxEvents = 64;
+  if (channel != &wal_channel_ || first.kind != Kind::kAppend ||
+      first.bytes.empty() || first.bytes.size() > kMaxBytes)
+    return;
+  // Control events delimit file lifetimes. Global adjacency also excludes
+  // interleaved metadata operations. Capture still runs after the full drain.
+  if (candidate_ && !capture_done_ && first.seq <= candidate_->seq)
+    boundary = std::min(boundary, candidate_->seq);
+  size_t bytes = first.bytes.size();
+  while (batch->size() < kMaxEvents && NextChannel() == channel) {
+    const Event& next = channel->queue.front();
+    if (next.seq > boundary || next.seq != batch->back().seq + 1 ||
+        next.kind != Kind::kAppend || next.name != batch->front().name ||
+        next.bytes.empty() || next.bytes.size() > kMaxBytes - bytes)
+      break;
+    bytes += next.bytes.size();
+    batch->push_back(std::move(channel->queue.front()));
+    channel->queue.pop_front();
+  }
+}
+Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
+                          size_t* completed) {
+  *completed = 0;
+  if (batch.size() == 1) {
+    Status s = Apply(batch.front());
+    if (s.ok()) *completed = 1;
+    return s;
+  }
+  scratch->clear();
+  Status injected;
+  size_t ready = 0;
+  for (const auto& event : batch) {
+    // These are ordered logical preflight hooks. WalAppendBatch marks the
+    // physical batch boundary; later logical hooks do not imply prior I/O.
+    injected = BeforeApply(event);
+    if (!injected.ok()) break;
+    scratch->append(event.bytes);
+    ++ready;
+  }
+  if (ready != 0) {
+#ifndef NDEBUG
+    std::array<uint64_t, 3> info{{batch.front().seq, ready, scratch->size()}};
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::WalAppendBatch", &info);
+#endif
+    Status s = Append(batch.front().name, *scratch);
+    if (!s.ok()) return s;  // Partial writes are never retried or acknowledged.
+    *completed = ready;
+  }
+  return injected;
+}
 void Backup::Run() {
+  std::vector<Event> batch;
+  batch.reserve(64);
+  std::string scratch;
+  scratch.reserve(64 * 1024);
   std::unique_lock<std::mutex> lock(mutex_);
   auto fail = [&](const Status& status) {
     lock.unlock();
@@ -831,18 +914,23 @@ void Backup::Run() {
     const uint64_t before_applied = applied_;
     while (auto* channel = NextChannel()) {
       if (channel->queue.front().seq > boundary) break;
-      Event e = std::move(channel->queue.front());
-      channel->queue.pop_front();
+      TakeBatch(channel, boundary, &batch);
       lock.unlock();
-      Status s = Apply(e);
+      size_t completed = 0;
+      Status s = ApplyBatch(batch, &scratch, &completed);
       lock.lock();
-      assert(stats_.queued_bytes >= e.charge);
-      stats_.queued_bytes -= e.charge;
-      stats_.mirrored_bytes += e.bytes.size();
-      if (channel == &wal_channel_ && e.kind == Kind::kAppend)
-        stats_.mirrored_wal_bytes += e.bytes.size();
-      assert(e.seq == applied_ + 1);
-      applied_ = e.seq;
+      for (size_t i = 0; i < batch.size(); ++i) {
+        const Event& e = batch[i];
+        assert(stats_.queued_bytes >= e.charge);
+        stats_.queued_bytes -= e.charge;
+        if (i < completed) {
+          stats_.mirrored_bytes += e.bytes.size();
+          if (channel == &wal_channel_ && e.kind == Kind::kAppend)
+            stats_.mirrored_wal_bytes += e.bytes.size();
+          assert(e.seq == applied_ + 1);
+          applied_ = e.seq;
+        }
+      }
       if (!s.ok()) {
         fail(s);
         break;

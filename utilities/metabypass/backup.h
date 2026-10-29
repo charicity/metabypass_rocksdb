@@ -63,6 +63,7 @@ class Backup : public FileSystemWrapper {
                                  const std::string&, const SeparatedStorage&,
                                  bool preflight);
   friend class MirrorWriter;
+  friend class BackupTestAccess;
   enum class Kind {
     kCreate,
     kAppend,
@@ -95,6 +96,14 @@ class Backup : public FileSystemWrapper {
   void Fail(const Status& status);
   void Finish(Channel& channel, Event&& event, const Status& primary);
   Status Apply(const Event& event);
+  Status BeforeApply(const Event& event);
+  Status Append(const std::string& name, const Slice& bytes);
+  // mutex_ held; consumes only events within the existing drain window.
+  void TakeBatch(Channel* channel, uint64_t boundary,
+                 std::vector<Event>* batch);
+  // No queue lock. completed counts only successfully written logical events.
+  Status ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
+                    size_t* completed);
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
     uint64_t writes = 0, request = 0, native_changes = 0;

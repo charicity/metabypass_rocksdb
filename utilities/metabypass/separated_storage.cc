@@ -128,6 +128,11 @@ IOStatus SeparatedStorage::GetChildren(const std::string& p, const IOOptions& o,
     if (IsBlob(index_ + "/" + b)) r->push_back(b);
   return s;
 }
+Status SeparatedStorage::DigestBlob(uint64_t number, uint64_t length,
+                                    uint32_t* crc) {
+  if (tier_) return tier_->DigestDurablePrefix(number, length, crc);
+  return Digest(target(), BlobPath(number), length, crc);
+}
 Status SeparatedStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
   if (tier_) return tier_->Persist(lengths);
   for (const auto& blob : lengths) {

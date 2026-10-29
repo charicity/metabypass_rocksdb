@@ -17,7 +17,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
-constexpr char kFormat[] = "MBN2\n";
+constexpr char kFormat[] = "MBN4\n";
 // Refuse legacy directories before taking locks or initializing storage.
 Status CheckFormat(FileSystem* fs, const std::string& path, bool required) {
   std::string version;
@@ -44,7 +44,7 @@ Status CheckStorageLayout(FileSystem* fs, const MetaBypassOptions& options) {
   const bool tiered = s.ok();
   if (tiered != !options.staging_dir.empty())
     return Status::InvalidArgument("cannot change Metabypass storage format");
-  if (tiered && version != "MBT2\n")
+  if (tiered && version != "MBT4\n")
     return Status::NotSupported("tiered storage format");
   return Status::OK();
 }
@@ -273,18 +273,46 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   }
   auto impl = std::make_unique<Impl>();
   if (!m.staging_dir.empty())
-    impl->tier = std::make_shared<metabypass::TieredStorage>(fs, m);
+    impl->tier = std::make_shared<metabypass::TieredStorage>(fs, m, identity);
   if (m.sst_tiering.mode != SstTieringMode::kDisabled)
     impl->sst = std::make_shared<metabypass::SstStorage>(
         impl->tier ? std::shared_ptr<FileSystem>(impl->tier) : fs, index, m);
+  if (impl->tier) {
+    s = impl->tier->Preflight(false);
+    if (!s.ok()) return s;
+  }
   impl->storage = std::make_shared<metabypass::SeparatedStorage>(
       fs, index, m.data_dir, impl->tier, impl->sst);
+  if (existing && impl->tier) {
+    Status pointer =
+        fs->FileExists(m.backup_dir + "/LATEST", IOOptions(), nullptr);
+    if (pointer.ok()) {
+      s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index,
+                                           *impl->storage, true);
+      if (!s.ok()) return s;
+    } else if (!pointer.IsNotFound()) {
+      return pointer;
+    }
+  }
   s = impl->storage->Lock();
   if (!s.ok()) return s;
   impl->backup =
       std::make_shared<metabypass::Backup>(impl->storage, index, m, options);
   s = impl->backup->Lock();
   if (!s.ok()) return s;
+  // Repeat dependency validation under both ownership locks before recovery
+  // can rewrite local state or perform orphan cleanup.
+  if (existing && impl->tier) {
+    Status pointer =
+        fs->FileExists(m.backup_dir + "/LATEST", IOOptions(), nullptr);
+    if (pointer.ok()) {
+      s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index,
+                                           *impl->storage, true);
+      if (!s.ok()) return s;
+    } else if (!pointer.IsNotFound()) {
+      return pointer;
+    }
+  }
   if (!impl->sst) {
     s = fs->FileExists(index + "/SST-PLACEMENT", IOOptions(), nullptr);
     if (s.ok())
@@ -296,7 +324,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     s = impl->tier->Initialize(false);
     if (!s.ok()) return s;
     if (!existing) {
-      s = metabypass::Write(fs.get(), format_path, "MBT2\n");
+      s = metabypass::Write(fs.get(), format_path, "MBT4\n");
       if (s.ok()) s = metabypass::SyncDir(fs.get(), m.data_dir);
       if (!s.ok()) return s;
     }
@@ -347,6 +375,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     if (s.ok() && impl->tier) s = metabypass::SyncDir(fs.get(), m.staging_dir);
     if (s.ok() && impl->sst && !existing)
       s = impl->sst->Initialize(identity, false);
+    if (s.ok() && impl->tier) impl->tier->SetIdentity(identity);
     if (s.ok()) s = impl->backup->Activate(identity, impl->db.get());
     if (s.ok()) s = impl->backup->Sync();
   }
@@ -414,12 +443,19 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
 
   std::shared_ptr<metabypass::TieredStorage> tier;
   if (!m.staging_dir.empty())
-    tier = std::make_shared<metabypass::TieredStorage>(fs, m);
+    tier = std::make_shared<metabypass::TieredStorage>(fs, m, backup_owner);
   std::shared_ptr<metabypass::SstStorage> sst;
   if (m.sst_tiering.mode != SstTieringMode::kDisabled)
     sst = std::make_shared<metabypass::SstStorage>(
         tier ? std::shared_ptr<FileSystem>(tier) : fs, index, m);
+  if (tier) {
+    s = tier->Preflight(true);
+    if (!s.ok()) return s;
+  }
   metabypass::SeparatedStorage storage(fs, index, m.data_dir, tier, sst);
+  s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index, storage,
+                                       true);
+  if (!s.ok()) return s;
   s = storage.Lock();
   if (!s.ok()) return s;
   FileLock* backup_lock = nullptr;
@@ -432,6 +468,9 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
       return s;
     }
   }
+  if (s.ok())
+    s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index, storage,
+                                         true);
   if (s.ok()) s = metabypass::EnsureDir(fs.get(), index);
   std::vector<std::string> children;
   if (s.ok()) s = fs->GetChildren(index, IOOptions(), &children, nullptr);

@@ -5,7 +5,7 @@ switching reads, but have different capacity and writer contracts.
 
 Blob Append atomically reserves from a hard SSD quota. A quota miss freezes the
 current local prefix and permanently switches that file to HDD. A separate
-worker persists the prefix and route, then accepts HDD appends in 4 MiB extents.
+worker persists the prefix and route, then accepts 4 MiB HDD append tasks aggregated into 32 MiB extents.
 Old local read handles pin SSD unlink only; they do not hold the file's HDD
 append path. HDD read pins retain immutable descriptor versions. Sync/Close
 publishes a durable boundary before native RocksDB can reference the blob in an

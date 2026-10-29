@@ -39,7 +39,8 @@ class Backup : public FileSystemWrapper {
   static Status CheckRestoreFormat(FileSystem*, const std::string& backup);
   static Status RestoreFiles(FileSystem*, const std::string& backup,
                              const std::string& destination,
-                             const SeparatedStorage& storage);
+                             const SeparatedStorage& storage,
+                             bool preflight = false);
   IOStatus NewWritableFile(const std::string&, const FileOptions&,
                            std::unique_ptr<FSWritableFile>*,
                            IODebugContext*) override;
@@ -58,6 +59,9 @@ class Backup : public FileSystemWrapper {
                     IODebugContext*) override;
 
  private:
+  static Status RestoreFilesImpl(FileSystem*, const std::string&,
+                                 const std::string&, const SeparatedStorage&,
+                                 bool preflight);
   friend class MirrorWriter;
   enum class Kind {
     kCreate,
@@ -176,7 +180,6 @@ class Backup : public FileSystemWrapper {
   std::set<uint64_t> retiring_blobs_;
   std::map<uint64_t, RetiredBlob> pending_blobs_;
   bool blob_gc_busy_ = false;
-  uint64_t last_capture_micros_ = 0;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

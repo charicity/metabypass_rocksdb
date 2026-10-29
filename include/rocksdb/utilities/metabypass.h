@@ -120,6 +120,154 @@ struct MetaBypassStats {
   // Cumulative successful candidate file copies; hardlinks do not count.
   uint64_t candidate_copied_bytes = 0;
   SstTieringStats sst_tiering;
+  // Cumulative staging task wait from enqueue until completion or interruption.
+  // Excludes queue admission, measured by staging_backpressure_micros.
+  uint64_t tier_task_wait_micros = 0;
+  // Physical staging extent Fsync attempts/time, including failures but not
+  // checksum verification or Close. Disabled staging leaves these at zero.
+  uint64_t tier_extent_fsyncs = 0;
+  uint64_t tier_extent_fsync_micros = 0;
+  // Commit dependency and descriptor publication directory sync attempts/time,
+  // including failures. Excludes staging eviction and garbage collection.
+  uint64_t tier_commit_dir_syncs = 0;
+  uint64_t tier_commit_dir_sync_micros = 0;
+  // Satisfied blob entries omitted from Persist's queue, and identical durable
+  // versions omitted from Commit. Validation and caller watermarks still apply.
+  uint64_t tier_persist_skips = 0;
+  uint64_t tier_commit_skips = 0;
+  // Admitted Append tasks and subsets of tier_task_wait_micros. These waits
+  // overlap background I/O and must not be added to I/O time as wall time.
+  uint64_t tier_append_tasks = 0;
+  uint64_t tier_append_wait_micros = 0;
+  uint64_t tier_switch_wait_micros = 0;
+  // Durable-prefix checkpoint checksum physical open attempts and whole-call
+  // time, including failures and pin acquisition. Disabled staging: zero.
+  uint64_t tier_checkpoint_digest_opens = 0;
+  uint64_t tier_checkpoint_digest_micros = 0;
+  // Pipeline diagnostics. Cumulative times overlap and are not wall time.
+  uint64_t tier_suffix_appends = 0;
+  uint64_t tier_migration_starts = 0;
+  uint64_t tier_migration_start_delay_micros = 0;
+  uint64_t tier_prefix_write_micros = 0, tier_suffix_write_micros = 0;
+  uint64_t tier_barrier_wait_micros = 0;
+  uint64_t tier_metadata_commit_micros = 0;
+  // Admission computation only: insufficient quota spills without waiting.
+  uint64_t tier_quota_admission_micros = 0;
+  // V4 metadata: cumulative attempts/time (including failures); timings
+  // overlap. File byte gauges include canonical and temporary SSD metadata,
+  // not filesystem block allocation or payload quota.
+  uint64_t tier_local_commit_attempts = 0;
+  uint64_t tier_local_commit_successes = 0;
+  uint64_t tier_local_commit_skips = 0;
+  uint64_t tier_local_commit_micros = 0;
+  uint64_t tier_local_commit_lock_wait_micros = 0;
+  uint64_t tier_local_commit_register = 0;
+  uint64_t tier_local_commit_freeze = 0;
+  uint64_t tier_local_commit_close = 0;
+  uint64_t tier_local_commit_spill = 0;
+  uint64_t tier_local_commit_migration = 0;
+  uint64_t tier_local_commit_finalize = 0;
+  uint64_t tier_local_commit_recovery = 0;
+  uint64_t tier_local_commit_gc = 0;
+  uint64_t tier_local_metadata_fsyncs = 0;
+  uint64_t tier_local_metadata_fsync_micros = 0;
+  uint64_t tier_local_metadata_dir_syncs = 0;
+  uint64_t tier_local_metadata_dir_sync_micros = 0;
+  uint64_t tier_local_register_calls = 0;
+  uint64_t tier_local_register_micros = 0;
+  uint64_t tier_local_freeze_calls = 0;
+  uint64_t tier_local_freeze_micros = 0;
+  uint64_t tier_remote_commit_attempts = 0;
+  uint64_t tier_remote_commit_successes = 0;
+  uint64_t tier_remote_commit_skips = 0;
+  uint64_t tier_remote_commit_micros = 0;
+  uint64_t tier_remote_commit_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_register = 0;
+  uint64_t tier_remote_commit_freeze = 0;
+  uint64_t tier_remote_commit_close = 0;
+  uint64_t tier_remote_commit_spill = 0;
+  uint64_t tier_remote_commit_migration = 0;
+  uint64_t tier_remote_commit_finalize = 0;
+  uint64_t tier_remote_commit_recovery = 0;
+  uint64_t tier_remote_commit_gc = 0;
+  uint64_t tier_remote_metadata_fsyncs = 0;
+  uint64_t tier_remote_metadata_fsync_micros = 0;
+  uint64_t tier_remote_metadata_dir_syncs = 0;
+  uint64_t tier_remote_metadata_dir_sync_micros = 0;
+  uint64_t tier_remote_register_calls = 0;
+  uint64_t tier_remote_register_micros = 0;
+  uint64_t tier_remote_freeze_calls = 0;
+  uint64_t tier_remote_freeze_micros = 0;
+  uint64_t tier_migration_publish_calls = 0;
+  uint64_t tier_migration_publish_micros = 0;
+  uint64_t tier_local_metadata_bytes = 0;
+  uint64_t peak_tier_local_metadata_bytes = 0;
+  // Per-reason elapsed times include failed attempts and no-op lock waits.
+  // Timings overlap across threads/phases and are not additive savings.
+  uint64_t tier_local_commit_register_micros = 0;
+  uint64_t tier_local_commit_register_lock_wait_micros = 0;
+  uint64_t tier_local_commit_register_fsync_micros = 0;
+  uint64_t tier_local_commit_register_dir_sync_micros = 0;
+  uint64_t tier_local_commit_freeze_micros = 0;
+  uint64_t tier_local_commit_freeze_lock_wait_micros = 0;
+  uint64_t tier_local_commit_freeze_fsync_micros = 0;
+  uint64_t tier_local_commit_freeze_dir_sync_micros = 0;
+  uint64_t tier_local_commit_close_micros = 0;
+  uint64_t tier_local_commit_close_lock_wait_micros = 0;
+  uint64_t tier_local_commit_close_fsync_micros = 0;
+  uint64_t tier_local_commit_close_dir_sync_micros = 0;
+  uint64_t tier_local_commit_spill_micros = 0;
+  uint64_t tier_local_commit_spill_lock_wait_micros = 0;
+  uint64_t tier_local_commit_spill_fsync_micros = 0;
+  uint64_t tier_local_commit_spill_dir_sync_micros = 0;
+  uint64_t tier_local_commit_migration_micros = 0;
+  uint64_t tier_local_commit_migration_lock_wait_micros = 0;
+  uint64_t tier_local_commit_migration_fsync_micros = 0;
+  uint64_t tier_local_commit_migration_dir_sync_micros = 0;
+  uint64_t tier_local_commit_finalize_micros = 0;
+  uint64_t tier_local_commit_finalize_lock_wait_micros = 0;
+  uint64_t tier_local_commit_finalize_fsync_micros = 0;
+  uint64_t tier_local_commit_finalize_dir_sync_micros = 0;
+  uint64_t tier_local_commit_recovery_micros = 0;
+  uint64_t tier_local_commit_recovery_lock_wait_micros = 0;
+  uint64_t tier_local_commit_recovery_fsync_micros = 0;
+  uint64_t tier_local_commit_recovery_dir_sync_micros = 0;
+  uint64_t tier_local_commit_gc_micros = 0;
+  uint64_t tier_local_commit_gc_lock_wait_micros = 0;
+  uint64_t tier_local_commit_gc_fsync_micros = 0;
+  uint64_t tier_local_commit_gc_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_register_micros = 0;
+  uint64_t tier_remote_commit_register_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_register_fsync_micros = 0;
+  uint64_t tier_remote_commit_register_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_freeze_micros = 0;
+  uint64_t tier_remote_commit_freeze_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_freeze_fsync_micros = 0;
+  uint64_t tier_remote_commit_freeze_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_close_micros = 0;
+  uint64_t tier_remote_commit_close_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_close_fsync_micros = 0;
+  uint64_t tier_remote_commit_close_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_spill_micros = 0;
+  uint64_t tier_remote_commit_spill_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_spill_fsync_micros = 0;
+  uint64_t tier_remote_commit_spill_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_migration_micros = 0;
+  uint64_t tier_remote_commit_migration_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_migration_fsync_micros = 0;
+  uint64_t tier_remote_commit_migration_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_finalize_micros = 0;
+  uint64_t tier_remote_commit_finalize_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_finalize_fsync_micros = 0;
+  uint64_t tier_remote_commit_finalize_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_recovery_micros = 0;
+  uint64_t tier_remote_commit_recovery_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_recovery_fsync_micros = 0;
+  uint64_t tier_remote_commit_recovery_dir_sync_micros = 0;
+  uint64_t tier_remote_commit_gc_micros = 0;
+  uint64_t tier_remote_commit_gc_lock_wait_micros = 0;
+  uint64_t tier_remote_commit_gc_fsync_micros = 0;
+  uint64_t tier_remote_commit_gc_dir_sync_micros = 0;
 };
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before

@@ -32,8 +32,9 @@ Status StageCopy(FileSystem* fs, const std::string& from, const std::string& to,
 Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
               uint32_t* crc);
 // Extend an existing CRC with [begin, end), without rereading its prefix.
+// If provided, increment opens for each physical reader open attempt.
 Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
-                    uint64_t end, uint32_t* crc);
+                    uint64_t end, uint32_t* crc, uint64_t* opens = nullptr);
 Status RemoveDir(FileSystem* fs, const std::string& path);
 // Immutable SST inventory obtained from the engine checkpoint API.
 struct NativeState {

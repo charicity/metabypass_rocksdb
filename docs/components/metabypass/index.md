@@ -51,7 +51,7 @@ are outside this API.
 
 Use absolute normalized disjoint index, data, backup, and optional staging
 directories with exclusive ownership. The current database/backup format marker
-is `MBN2`, inventory version is `MBI2`, and tier mapping version is `MBT2`.
+is `MBN4`, inventory version is `MBI4`, and tier mapping version is `MBT4`.
 Open and Restore reject older or unmarked nonempty directories before modifying
 them. There is no automatic migration or old-format recovery path.
 
@@ -125,7 +125,7 @@ modes. [Migration lifecycle](migration-lifecycle.md) records read pin boundaries
 `mirrored_bytes` counts all mirrored append payloads, including metadata and SSTs;
 `mirrored_wal_bytes` isolates full-value WAL append payloads. `staging_spill_files` and
 `staging_spill_bytes` describe files switched to HDD and their spilled bytes;
-`tier_queued_bytes` / `peak_tier_queued_bytes` describe pending HDD worker payload;
+`tier_queued_bytes` / `peak_tier_queued_bytes` describe the active background migration buffer;
 `hdd_extents` counts HDD extents. Staging peak includes reserved local append
 bytes and must remain within `staging_capacity`. Queue, sync, migration, point
 lag, candidate copy and GC metrics remain separately observable.

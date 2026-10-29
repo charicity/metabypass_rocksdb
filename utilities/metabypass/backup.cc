@@ -51,7 +51,7 @@ Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
   if (!s.ok()) return s;
   if (crc32c::Value(inventory->data(), inventory->size()) != inventory_crc)
     return Status::Corruption("published inventory checksum");
-  if (inventory->compare(0, 5, "MBI2\n") != 0)
+  if (inventory->compare(0, 5, "MBI4\n") != 0)
     return Status::NotSupported("Metabypass inventory format");
   return Status::OK();
 }
@@ -213,7 +213,7 @@ Status Backup::Start(bool existing) {
       if (!s.ok()) return s;
       if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
         return Status::Corruption("published inventory checksum");
-      if (inventory.compare(0, 5, "MBI2\n") != 0)
+      if (inventory.compare(0, 5, "MBI4\n") != 0)
         return Status::NotSupported("Metabypass inventory format");
       std::istringstream entries(inventory.substr(5));
       std::string kind, file;
@@ -626,8 +626,7 @@ Status Backup::Publish(const Candidate& candidate) {
   for (const auto& blob : blobs) {
     auto& digest = blob_cache_[blob.first];
     if (digest.length != blob.second) {
-      s = Digest(storage_->target(), storage_->BlobPath(blob.first),
-                 blob.second, &digest.crc);
+      s = storage_->DigestBlob(blob.first, blob.second, &digest.crc);
       if (!s.ok()) return s;
       digest.length = blob.second;
     }
@@ -641,7 +640,7 @@ Status Backup::Publish(const Candidate& candidate) {
   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
   if (!s.ok()) return s;
   std::ostringstream inventory;
-  inventory << "MBI2\n";
+  inventory << "MBI4\n";
   uint64_t total = 0;
   for (const auto& f : files) {
     uint64_t number;
@@ -1162,7 +1161,37 @@ Status Backup::CheckRestoreFormat(FileSystem* fs, const std::string& backup) {
 }
 Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
                             const std::string& destination,
-                            const SeparatedStorage& storage) {
+                            const SeparatedStorage& storage, bool preflight) {
+  if (!preflight)
+    return RestoreFilesImpl(fs, backup, destination, storage, false);
+  for (unsigned attempt = 0; attempt < 3; ++attempt) {
+    std::string before, after;
+    Status first = Read(fs, backup + "/LATEST", &before);
+    const bool missing = first.IsNotFound() || first.IsPathNotFound();
+    if (!first.ok() && !missing) return first;
+    Status validated =
+        first.ok() ? RestoreFilesImpl(fs, backup, destination, storage, true)
+                   : first;
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::RestorePreflightValidated",
+                             &validated);
+    Status last = Read(fs, backup + "/LATEST", &after);
+    const bool now_missing = last.IsNotFound() || last.IsPathNotFound();
+    if (!last.ok() && !now_missing) {
+      validated.PermitUncheckedError();
+      return last;
+    }
+    if ((missing && now_missing) ||
+        (first.ok() && last.ok() && before == after))
+      return validated;
+    validated.PermitUncheckedError();
+  }
+  return Status::TryAgain("checkpoint changed during restore preflight");
+}
+Status Backup::RestoreFilesImpl(FileSystem* fs, const std::string& backup,
+                                const std::string& destination,
+                                const SeparatedStorage& storage,
+                                bool preflight) {
+  std::map<uint64_t, TieredStorage::Version> parsed;
   std::string point, inventory;
   Status s = ReadPublishedInventory(fs, backup, &point, &inventory);
   if (!s.ok()) return s;
@@ -1182,7 +1211,9 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
       if (bytes.size() != size ||
           crc32c::Value(bytes.data(), bytes.size()) != crc)
         return Status::Corruption("blob map checksum");
-      s = storage.tier()->LoadCheckpoint(point + "/BLOB-MAP");
+      s = preflight
+              ? storage.tier()->ParseCheckpoint(point + "/BLOB-MAP", &parsed)
+              : storage.tier()->LoadCheckpoint(point + "/BLOB-MAP");
       if (!s.ok()) return s;
       found = true;
     }
@@ -1218,13 +1249,28 @@ Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
         return Status::Corruption("published file size", path);
       entries.push_back({file, length});
     }
-    uint32_t crc;
-    s = Digest(fs, path, length, &crc);
+    uint32_t crc = 0;
+    if (preflight && storage.tier() && kind == "B") {
+      uint64_t n;
+      std::istringstream number(file);
+      if (!(number >> n)) return Status::Corruption("blob number");
+      auto found = parsed.find(n);
+      if (found == parsed.end() || found->second.size != length)
+        return Status::Corruption("checkpoint logical length");
+      for (const auto& extent : found->second.extents) {
+        s = ExtendDigest(storage.tier()->target(), storage.tier()->Path(extent),
+                         0, extent.length, &crc);
+        if (!s.ok()) return s;
+      }
+    } else {
+      s = Digest(fs, path, length, &crc);
+    }
     if (!s.ok()) return s;
     if (crc != expected) return Status::Corruption("published checksum", path);
   }
   if (!in.eof() || entries.empty())
     return Status::Corruption("invalid inventory");
+  if (preflight) return Status::OK();
   std::vector<SstStorage::RestoreFile> ssts;
   for (const auto& e : entries) {
     uint64_t number;

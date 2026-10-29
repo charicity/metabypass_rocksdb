@@ -120,7 +120,7 @@ Status Digest(FileSystem* fs, const std::string& path, uint64_t length,
   return ExtendDigest(fs, path, 0, length, crc);
 }
 Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
-                    uint64_t end, uint32_t* crc) {
+                    uint64_t end, uint32_t* crc, uint64_t* opens) {
   if (begin > end) return Status::Corruption("digest prefix shrank", path);
   uint64_t size;
   Status s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
@@ -128,6 +128,7 @@ Status ExtendDigest(FileSystem* fs, const std::string& path, uint64_t begin,
   if (size < end) return Status::Corruption("short file", path);
   if (begin == end) return Status::OK();
   std::unique_ptr<FSRandomAccessFile> in;
+  if (opens) ++*opens;
   s = fs->NewRandomAccessFile(path, FileOptions(), &in, nullptr);
   std::array<char, 65536> buf;
   while (s.ok() && begin < end) {

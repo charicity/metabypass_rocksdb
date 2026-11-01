@@ -6,15 +6,496 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <limits>
 #include <set>
 
+#include "rocksdb/utilities/metabypass.h"
 #include "test_util/sync_point.h"
 #include "util/crc32c.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+namespace {
+thread_local HddPurpose hdd_purpose = HddPurpose::kCaller;
+uint64_t HddNow() {
+  uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::steady_clock::now().time_since_epoch())
+                     .count();
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::HddClock", &now);
+  return now;
+}
+}  // namespace
+HddPurposeScope::HddPurposeScope(HddPurpose purpose) : previous_(hdd_purpose) {
+  hdd_purpose = purpose;
+}
+HddPurposeScope::~HddPurposeScope() { hdd_purpose = previous_; }
+HddPurpose HddPurposeScope::Current() { return hdd_purpose; }
+HddPressure::HddPressure(uint64_t budget_us) : budget_(budget_us) {
+  monitor_ = std::thread([this] { Monitor(); });
+}
+HddPressure::~HddPressure() { Stop(); }
+void HddPressure::Stop() {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stop_ = true;
+    wake_.notify_all();
+  }
+  if (monitor_.joinable()) monitor_.join();
+}
+uint64_t HddPressure::Begin(Kind kind, uint64_t bytes, unsigned area) {
+  const auto purpose = HddPurposeScope::Current();
+  const bool sensitive = ((kind == Kind::kAppend || kind == Kind::kFlush) &&
+                          purpose == HddPurpose::kCaller) ||
+                         ((kind == Kind::kSync || kind == Kind::kDirSync) &&
+                          purpose != HddPurpose::kBulk);
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto now = NowLocked();
+  if (area >= 2 && active_hdd_++ == 0) last_progress_ = now;
+  const auto id = ++next_;
+  active_.emplace(id, Operation{now, bytes, kind, sensitive, area, purpose});
+  wake_.notify_one();
+  return id;
+}
+uint64_t HddPressure::NowLocked() {
+  // Sample only after taking mutex_: another operation may have completed
+  // while this thread was waiting. Clamp injected or platform clock regressions
+  // so every elapsed-time subtraction shares one monotonic timeline.
+  clock_ = std::max(clock_, HddNow());
+  return clock_;
+}
+void HddPressure::Evaluate(uint64_t now, bool new_progress) {
+  const bool stalled = active_hdd_ != 0 && now - last_progress_ >= 1000000;
+  bool latency = false;
+  for (const auto& item : active_)
+    latency |= item.second.area >= 2 && item.second.sensitive &&
+               now - item.second.start >= budget_;
+  if (stalled || latency) {
+    last_bad_ = now;
+    healthy_progress_ = 0;
+    if (!pressure_) {
+      pressure_ = true;
+      entered_at_ = now;
+      ++counters_.entered;
+      if (latency) ++counters_.latency_entries;
+      if (stalled) ++counters_.stall_entries;
+    }
+  }
+  if (new_progress && pressure_ && now - entered_at_ >= 1000000 &&
+      now - last_bad_ >= 2000000 && healthy_progress_ >= 3) {
+    pressure_ = false;
+    ++counters_.recovered;
+    counters_.residence_us += now - entered_at_;
+  }
+}
+void HddPressure::End(uint64_t id, bool success) {
+  TEST_SYNC_POINT("MetaBypass::HddEndBeforeLock");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto now = NowLocked();
+  auto it = active_.find(id);
+  Evaluate(
+      now);  // Detect a slow call even if it completed before a timer tick.
+  const auto& op = it->second;
+  const size_t index = static_cast<size_t>(op.kind);
+  if (op.area >= 2) {
+    ++counters_.calls[index];
+    counters_.micros[index] += now - op.start;
+    --active_hdd_;
+  }
+  if (success) {
+    if (op.area >= 2) {
+      counters_.bytes[index] += op.bytes;
+      last_progress_ = now;
+      ++healthy_progress_;
+    }
+    if (op.kind == Kind::kAppend) {
+      counters_.written_bytes[op.area] += op.bytes;
+      counters_.purpose_write_bytes[static_cast<size_t>(op.purpose)] +=
+          op.bytes;
+    }
+  }
+  if (!success && op.kind == Kind::kAppend) ++counters_.failed_writes;
+  const bool hdd_progress = success && op.area >= 2;
+  active_.erase(it);
+  Evaluate(now, hdd_progress);
+  // Also wake fixture quiescence waiters sharing the observer condition.
+  wake_.notify_all();
+}
+bool HddPressure::Pressured() {
+  TEST_SYNC_POINT("MetaBypass::HddPressureBeforeLock");
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto now = NowLocked();
+  Evaluate(now);
+  return pressure_;
+}
+uint64_t HddPressure::PressureAge() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto now = NowLocked();
+  return pressure_ ? now - entered_at_ : 0;
+}
+HddPressure::Counters HddPressure::Snapshot() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto now = NowLocked();
+  Counters result = counters_;
+  if (pressure_) result.residence_us += now - entered_at_;
+  return result;
+}
+void HddPressure::AddStats(MetaBypassStats* stats) {
+  const auto counters = Snapshot();
+  stats->hdd_append_calls = counters.calls[0];
+  stats->hdd_append_micros = counters.micros[0];
+  stats->hdd_flush_calls = counters.calls[1];
+  stats->hdd_flush_micros = counters.micros[1];
+  stats->hdd_sync_calls = counters.calls[2];
+  stats->hdd_sync_micros = counters.micros[2];
+  stats->hdd_dirsync_calls = counters.calls[3];
+  stats->hdd_dirsync_micros = counters.micros[3];
+  stats->hdd_read_calls = counters.calls[4];
+  stats->hdd_read_micros = counters.micros[4];
+  stats->io_index_write_bytes = counters.written_bytes[0];
+  stats->io_staging_write_bytes = counters.written_bytes[1];
+  stats->io_data_write_bytes = counters.written_bytes[2];
+  stats->io_backup_write_bytes = counters.written_bytes[3];
+  stats->io_caller_write_bytes = counters.purpose_write_bytes[0];
+  stats->io_bulk_write_bytes = counters.purpose_write_bytes[1];
+  stats->io_barrier_write_bytes = counters.purpose_write_bytes[2];
+  stats->io_failed_writes = counters.failed_writes;
+  stats->hdd_pressure_entries = counters.entered;
+  stats->hdd_latency_pressure_entries = counters.latency_entries;
+  stats->hdd_stall_pressure_entries = counters.stall_entries;
+  stats->hdd_pressure_recoveries = counters.recovered;
+  stats->hdd_pressure_residence_micros = counters.residence_us;
+}
+void HddPressure::Monitor() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!stop_) {
+    if (active_hdd_ == 0)
+      wake_.wait(lock, [&] { return stop_ || active_hdd_ != 0; });
+    else
+      wake_.wait_for(lock, std::chrono::milliseconds(5));
+    if (!stop_) Evaluate(NowLocked());
+  }
+}
+namespace {
+class ObservedWrite : public FSWritableFileWrapper {
+ public:
+  ObservedWrite(std::unique_ptr<FSWritableFile> f,
+                std::shared_ptr<HddPressure> p, unsigned area)
+      : FSWritableFileWrapper(f.get()),
+        file_(std::move(f)),
+        pressure_(std::move(p)),
+        area_(area) {}
+  IOStatus Append(const Slice& b, const IOOptions& o,
+                  IODebugContext* d) override {
+    return Call(HddPressure::Kind::kAppend, b.size(),
+                [&] { return target()->Append(b, o, d); });
+  }
+  IOStatus Append(const Slice& b, const IOOptions& o,
+                  const DataVerificationInfo& v, IODebugContext* d) override {
+    return Call(HddPressure::Kind::kAppend, b.size(),
+                [&] { return target()->Append(b, o, v, d); });
+  }
+  IOStatus PositionedAppend(const Slice& b, uint64_t at, const IOOptions& o,
+                            IODebugContext* d) override {
+    return Call(HddPressure::Kind::kAppend, b.size(),
+                [&] { return target()->PositionedAppend(b, at, o, d); });
+  }
+  IOStatus PositionedAppend(const Slice& b, uint64_t at, const IOOptions& o,
+                            const DataVerificationInfo& v,
+                            IODebugContext* d) override {
+    return Call(HddPressure::Kind::kAppend, b.size(),
+                [&] { return target()->PositionedAppend(b, at, o, v, d); });
+  }
+  IOStatus Flush(const IOOptions& o, IODebugContext* d) override {
+    return Call(HddPressure::Kind::kFlush, 0,
+                [&] { return target()->Flush(o, d); });
+  }
+  IOStatus Sync(const IOOptions& o, IODebugContext* d) override {
+    return Call(HddPressure::Kind::kSync, 0,
+                [&] { return target()->Sync(o, d); });
+  }
+  IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+    return Call(HddPressure::Kind::kSync, 0,
+                [&] { return target()->Fsync(o, d); });
+  }
+
+ private:
+  template <class F>
+  IOStatus Call(HddPressure::Kind k, uint64_t bytes, F f) {
+    const auto id = pressure_->Begin(k, bytes, area_);
+    IOStatus s = f();
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  std::unique_ptr<FSWritableFile> file_;
+  std::shared_ptr<HddPressure> pressure_;
+  unsigned area_;
+};
+class ObservedRead : public FSRandomAccessFileWrapper {
+ public:
+  ObservedRead(std::unique_ptr<FSRandomAccessFile> f,
+               std::shared_ptr<HddPressure> p, unsigned area)
+      : FSRandomAccessFileWrapper(f.get()),
+        file_(std::move(f)),
+        pressure_(std::move(p)),
+        area_(area) {}
+  IOStatus Read(uint64_t at, size_t n, const IOOptions& o, Slice* b,
+                char* scratch, IODebugContext* d) const override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kRead, n, area_);
+    IOStatus s = target()->Read(at, n, o, b, scratch, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+
+  IOStatus MultiRead(FSReadRequest* requests, size_t count, const IOOptions& o,
+                     IODebugContext* d) override {
+    uint64_t bytes = 0;
+    for (size_t i = 0; i < count; ++i) bytes += requests[i].len;
+    const auto id = pressure_->Begin(HddPressure::Kind::kRead, bytes, area_);
+    IOStatus s = target()->MultiRead(requests, count, o, d);
+    bool success = s.ok();
+    for (size_t i = 0; i < count; ++i) success &= requests[i].status.ok();
+    pressure_->End(id, success);
+    return s;
+  }
+  IOStatus ReadAsync(FSReadRequest& request, const IOOptions& o,
+                     std::function<void(FSReadRequest&, void*)> callback,
+                     void* arg, void** handle, IOHandleDeleter* deleter,
+                     IODebugContext* d) override {
+    auto pressure = pressure_;
+    const auto id =
+        pressure->Begin(HddPressure::Kind::kRead, request.len, area_);
+    auto finished = std::make_shared<std::atomic<bool>>(false);
+    IOStatus s = target()->ReadAsync(
+        request, o,
+        [pressure, id, finished, callback](FSReadRequest& result,
+                                           void* context) {
+          if (!finished->exchange(true)) pressure->End(id, result.status.ok());
+          callback(result, context);
+        },
+        arg, handle, deleter, d);
+    if (!s.ok() && !finished->exchange(true)) pressure->End(id, false);
+    return s;
+  }
+  bool SubmitReadAsync(FSReadRequest& request, const IOOptions& o,
+                       std::function<void(FSReadRequest&)> callback,
+                       IODebugContext* d) override {
+    auto pressure = pressure_;
+    const auto id =
+        pressure->Begin(HddPressure::Kind::kRead, request.len, area_);
+    return target()->SubmitReadAsync(
+        request, o,
+        [pressure, id, callback](FSReadRequest& result) {
+          pressure->End(id, result.status.ok());
+          callback(result);
+        },
+        d);
+  }
+
+ private:
+  std::unique_ptr<FSRandomAccessFile> file_;
+  std::shared_ptr<HddPressure> pressure_;
+  unsigned area_;
+};
+class ObservedRandomRW : public FSRandomRWFileWrapper {
+ public:
+  ObservedRandomRW(std::unique_ptr<FSRandomRWFile> f,
+                   std::shared_ptr<HddPressure> p, unsigned area)
+      : FSRandomRWFileWrapper(f.get()),
+        file_(std::move(f)),
+        pressure_(std::move(p)),
+        area_(area) {}
+  IOStatus Write(uint64_t at, const Slice& b, const IOOptions& o,
+                 IODebugContext* d) override {
+    const auto id =
+        pressure_->Begin(HddPressure::Kind::kAppend, b.size(), area_);
+    IOStatus s = target()->Write(at, b, o, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus Read(uint64_t at, size_t n, const IOOptions& o, Slice* b,
+                char* scratch, IODebugContext* d) const override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kRead, n, area_);
+    IOStatus s = target()->Read(at, n, o, b, scratch, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus Flush(const IOOptions& o, IODebugContext* d) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kFlush, 0, area_);
+    IOStatus s = target()->Flush(o, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus Sync(const IOOptions& o, IODebugContext* d) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kSync, 0, area_);
+    IOStatus s = target()->Sync(o, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kSync, 0, area_);
+    IOStatus s = target()->Fsync(o, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+
+ private:
+  std::unique_ptr<FSRandomRWFile> file_;
+  std::shared_ptr<HddPressure> pressure_;
+  unsigned area_;
+};
+class ObservedSequential : public FSSequentialFileWrapper {
+ public:
+  ObservedSequential(std::unique_ptr<FSSequentialFile> f,
+                     std::shared_ptr<HddPressure> p, unsigned area)
+      : FSSequentialFileWrapper(f.get()),
+        file_(std::move(f)),
+        pressure_(std::move(p)),
+        area_(area) {}
+  IOStatus Read(size_t n, const IOOptions& o, Slice* b, char* scratch,
+                IODebugContext* d) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kRead, n, area_);
+    IOStatus s = target()->Read(n, o, b, scratch, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+
+ private:
+  std::unique_ptr<FSSequentialFile> file_;
+  std::shared_ptr<HddPressure> pressure_;
+  unsigned area_;
+};
+class ObservedDirectory : public FSDirectoryWrapper {
+ public:
+  ObservedDirectory(std::unique_ptr<FSDirectory> f,
+                    std::shared_ptr<HddPressure> p, unsigned area)
+      : FSDirectoryWrapper(std::move(f)),
+        pressure_(std::move(p)),
+        area_(area) {}
+  IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kDirSync, 0, area_);
+    IOStatus s = FSDirectoryWrapper::Fsync(o, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus FsyncWithDirOptions(const IOOptions& o, IODebugContext* d,
+                               const DirFsyncOptions& opts) override {
+    const auto id = pressure_->Begin(HddPressure::Kind::kDirSync, 0, area_);
+    IOStatus s = FSDirectoryWrapper::FsyncWithDirOptions(o, d, opts);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+
+ private:
+  std::shared_ptr<HddPressure> pressure_;
+  unsigned area_;
+};
+class ObservedFS : public FileSystemWrapper {
+ public:
+  ObservedFS(std::shared_ptr<FileSystem> fs, std::string data,
+             std::string backup, std::shared_ptr<HddPressure> p,
+             std::string index, std::string staging)
+      : FileSystemWrapper(std::move(fs)),
+        data_(std::move(data)),
+        backup_(std::move(backup)),
+        index_(std::move(index)),
+        staging_(std::move(staging)),
+        pressure_(std::move(p)) {}
+  const char* Name() const override { return "MetaBypassObservedHdd"; }
+  IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
+                           std::unique_ptr<FSWritableFile>* out,
+                           IODebugContext* d) override {
+    IOStatus s = target()->NewWritableFile(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedWrite(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus ReuseWritableFile(const std::string& path, const std::string& old,
+                             const FileOptions& o,
+                             std::unique_ptr<FSWritableFile>* out,
+                             IODebugContext* d) override {
+    IOStatus s = target()->ReuseWritableFile(path, old, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedWrite(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus ReopenWritableFile(const std::string& path, const FileOptions& o,
+                              std::unique_ptr<FSWritableFile>* out,
+                              IODebugContext* d) override {
+    IOStatus s = target()->ReopenWritableFile(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedWrite(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus NewRandomAccessFile(const std::string& path, const FileOptions& o,
+                               std::unique_ptr<FSRandomAccessFile>* out,
+                               IODebugContext* d) override {
+    IOStatus s = target()->NewRandomAccessFile(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedRead(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus NewRandomRWFile(const std::string& path, const FileOptions& o,
+                           std::unique_ptr<FSRandomRWFile>* out,
+                           IODebugContext* d) override {
+    IOStatus s = target()->NewRandomRWFile(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedRandomRW(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus NewSequentialFile(const std::string& path, const FileOptions& o,
+                             std::unique_ptr<FSSequentialFile>* out,
+                             IODebugContext* d) override {
+    IOStatus s = target()->NewSequentialFile(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(
+          new ObservedSequential(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+  IOStatus SyncFile(const std::string& path, const FileOptions& f,
+                    const IOOptions& o, bool full, IODebugContext* d) override {
+    if (Area(path) == 4) return target()->SyncFile(path, f, o, full, d);
+    const auto id = pressure_->Begin(HddPressure::Kind::kSync, 0, Area(path));
+    IOStatus s = target()->SyncFile(path, f, o, full, d);
+    pressure_->End(id, s.ok());
+    return s;
+  }
+  IOStatus NewDirectory(const std::string& path, const IOOptions& o,
+                        std::unique_ptr<FSDirectory>* out,
+                        IODebugContext* d) override {
+    IOStatus s = target()->NewDirectory(path, o, out, d);
+    if (s.ok() && Area(path) < 4)
+      out->reset(new ObservedDirectory(std::move(*out), pressure_, Area(path)));
+    return s;
+  }
+
+ private:
+  unsigned Area(const std::string& path) const {
+    const std::array<const std::string*, 4> roots{&index_, &staging_, &data_,
+                                                  &backup_};
+    for (unsigned i = 0; i < roots.size(); ++i) {
+      const auto& root = *roots[i];
+      if (!root.empty() &&
+          (path == root || path.compare(0, root.size() + 1, root + "/") == 0))
+        return i;
+    }
+    return 4;
+  }
+  std::string data_, backup_, index_, staging_;
+  std::shared_ptr<HddPressure> pressure_;
+};
+}  // namespace
+std::shared_ptr<FileSystem> ObserveHdd(std::shared_ptr<FileSystem> fs,
+                                       const std::string& data,
+                                       const std::string& backup,
+                                       std::shared_ptr<HddPressure> p,
+                                       const std::string& index,
+                                       const std::string& staging) {
+  return std::make_shared<ObservedFS>(std::move(fs), data, backup, std::move(p),
+                                      index, staging);
+}
 Status Read(FileSystem* fs, const std::string& path, std::string* data) {
   Status s = fs->FileExists(path, IOOptions(), nullptr);
   if (!s.ok()) return s;

@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -47,6 +48,9 @@ struct SstTieringStats {
   uint64_t over_budget_micros = 0;
   double cutoff_score = 0;
 };
+// Selected before Open; an empty staging_dir disables both policies.
+enum class MetaBypassStagingPolicy { kAlways, kAdaptive };
+
 struct MetaBypassOptions {
   // Absolute, normalized, disjoint directories.
   std::string data_dir;
@@ -65,8 +69,15 @@ struct MetaBypassOptions {
   // With staging enabled, data_dir and backup_dir must survive staging loss.
   std::string staging_dir;
   // Required when staging_dir is set. Logical bytes, excluding filesystem
-  // allocation overhead. Full staging switches the current Blob to HDD.
+  // allocation overhead. Full staging falls back to HDD; kAdaptive may
+  // admit later chunks to SSD again when capacity becomes available.
   uint64_t staging_capacity = 0;
+  // Always stages until quota fallback. Adaptive starts on HDD and routes
+  // subsequent chunks to SSD while observed HDD pressure is high.
+  MetaBypassStagingPolicy staging_policy = MetaBypassStagingPolicy::kAlways;
+  // Caller Append/Flush and explicit durability I/O latency budget. Bulk
+  // background I/O instead uses the fixed one-second no-progress detector.
+  uint64_t staging_latency_budget_us = 20000;
   // Reclaim native obsolete whole blobs after all recovery roots release them.
   // Set before Open. Disabling retains remaining files, not deleted history.
   bool enable_blob_file_gc = true;
@@ -74,6 +85,36 @@ struct MetaBypassOptions {
 };
 struct MetaBypassStats {
   Status error;
+  // Logical blob payload admissions; migration is counted separately below.
+  // Log2 microsecond latency buckets: bucket 0 includes 0/1 us, bucket k
+  // includes [2^k, 2^(k+1)-1] us. Complete API call latency includes admission.
+  std::array<uint64_t, 64> blob_append_latency{}, blob_flush_latency{};
+  uint64_t blob_append_calls = 0, blob_append_micros = 0;
+  uint64_t blob_flush_calls = 0, blob_flush_micros = 0;
+  uint64_t direct_blob_bytes = 0, staged_blob_bytes = 0;
+  uint64_t adaptive_to_ssd = 0, adaptive_to_hdd = 0,
+           adaptive_quota_fallbacks = 0;
+  uint64_t adaptive_pending_seals = 0, adaptive_peak_pending_seals = 0;
+  uint64_t adaptive_pending_wait_micros = 0;
+  uint64_t adaptive_pressure_response_micros = 0,
+           adaptive_max_pressure_response_micros = 0;
+  uint64_t adaptive_throttle_micros = 0;
+  uint64_t tier_barrier_d_debt_bytes = 0, tier_barrier_h_debt_bytes = 0;
+  uint64_t hdd_pressure_entries = 0, hdd_pressure_recoveries = 0;
+  uint64_t hdd_latency_pressure_entries = 0, hdd_stall_pressure_entries = 0;
+  uint64_t hdd_pressure_residence_micros = 0;
+  // Successful filesystem Append/PositionedAppend bytes, not NAND writes.
+  // Failed calls can have an unknown partial write, counted by
+  // io_failed_writes.
+  uint64_t io_index_write_bytes = 0, io_staging_write_bytes = 0;
+  uint64_t io_data_write_bytes = 0, io_backup_write_bytes = 0;
+  uint64_t io_caller_write_bytes = 0, io_bulk_write_bytes = 0,
+           io_barrier_write_bytes = 0;
+  uint64_t io_failed_writes = 0;
+  uint64_t hdd_append_calls = 0, hdd_flush_calls = 0, hdd_sync_calls = 0;
+  uint64_t hdd_dirsync_calls = 0, hdd_read_calls = 0;
+  uint64_t hdd_append_micros = 0, hdd_flush_micros = 0, hdd_sync_micros = 0;
+  uint64_t hdd_dirsync_micros = 0, hdd_read_micros = 0;
   uint64_t staging_bytes = 0;
   uint64_t peak_staging_bytes = 0;
   uint64_t pending_blob_bytes = 0;

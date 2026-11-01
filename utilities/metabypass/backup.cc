@@ -52,7 +52,7 @@ Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
   if (!s.ok()) return s;
   if (crc32c::Value(inventory->data(), inventory->size()) != inventory_crc)
     return Status::Corruption("published inventory checksum");
-  if (inventory->compare(0, 5, "MBI4\n") != 0)
+  if (inventory->compare(0, 5, "MBI5\n") != 0)
     return Status::NotSupported("Metabypass inventory format");
   return Status::OK();
 }
@@ -214,7 +214,7 @@ Status Backup::Start(bool existing) {
       if (!s.ok()) return s;
       if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
         return Status::Corruption("published inventory checksum");
-      if (inventory.compare(0, 5, "MBI4\n") != 0)
+      if (inventory.compare(0, 5, "MBI5\n") != 0)
         return Status::NotSupported("Metabypass inventory format");
       std::istringstream entries(inventory.substr(5));
       std::string kind, file;
@@ -661,7 +661,7 @@ Status Backup::Publish(const Candidate& candidate) {
   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
   if (!s.ok()) return s;
   std::ostringstream inventory;
-  inventory << "MBI4\n";
+  inventory << "MBI5\n";
   uint64_t total = 0;
   for (const auto& f : files) {
     uint64_t number;
@@ -893,6 +893,7 @@ Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
   return injected;
 }
 void Backup::Run() {
+  HddPurposeScope background(HddPurpose::kBulk);
   std::vector<Event> batch;
   batch.reserve(64);
   std::string scratch;
@@ -915,7 +916,10 @@ void Backup::Run() {
     while (auto* channel = NextChannel()) {
       if (channel->queue.front().seq > boundary) break;
       TakeBatch(channel, boundary, &batch);
+      const bool barrier = requested_point_ > published_request_;
       lock.unlock();
+      HddPurposeScope purpose(barrier ? HddPurpose::kBarrier
+                                      : HddPurpose::kBulk);
       size_t completed = 0;
       Status s = ApplyBatch(batch, &scratch, &completed);
       lock.lock();
@@ -1009,6 +1013,8 @@ void Backup::ValidateLoop() {
     candidate->native_changes = native_changes_;
     DB* db = db_;
     lock.unlock();
+    HddPurposeScope purpose(requested ? HddPurpose::kBarrier
+                                      : HddPurpose::kBulk);
     TEST_SYNC_POINT("MetaBypass::CheckpointBoundary");
     Status s = db->DisableFileDeletions();
     const bool pinned = s.ok();
@@ -1100,6 +1106,7 @@ bool Backup::NeedsBlobCheckpoint() const {
   return false;
 }
 void Backup::GarbageCollectLoop() {
+  HddPurposeScope background(HddPurpose::kBulk);
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
     gc_cv_.wait(lock, [&] {

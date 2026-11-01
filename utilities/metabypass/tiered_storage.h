@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -24,7 +25,8 @@ namespace metabypass {
 class TieredStorage : public FileSystemWrapper {
  public:
   TieredStorage(std::shared_ptr<FileSystem>, const MetaBypassOptions&,
-                const std::string& identity = {});
+                const std::string& identity = {},
+                std::shared_ptr<HddPressure> pressure = {});
   void SetIdentity(const std::string&);
   Status Preflight(bool restore);
   Status PreflightCheckpoint(const std::string&);
@@ -80,6 +82,8 @@ class TieredStorage : public FileSystemWrapper {
     uint64_t start = 0, length = 0, durable = 0;
     std::string name, origin;
     bool local = false, open = true;
+    // Non-appendable HDD ownership awaiting real sync/readback/publication.
+    bool pending = false;
     uint32_t crc = 0;
     uint64_t frozen_at = 0;  // Runtime scheduling diagnostic only.
   };
@@ -93,12 +97,14 @@ class TieredStorage : public FileSystemWrapper {
   struct ActiveExtent {
     std::unique_ptr<FSWritableFile> file;
     Extent extent;
-    uint32_t crc = 0;
+    uint32_t crc = 0, readback_crc = 0;
+    uint64_t readback_offset = 0;
+    bool synced = false;
   };
   struct Blob {
     // Media commit locks never nest. Neither holds mutex_ across I/O.
     // Worker never takes append or holds commit across HDD I/O.
-    std::mutex append, commit, remote_commit;
+    std::mutex operation, append, commit, remote_commit;
     Version live, durable, remote;
     bool complete_ready = false, local_present = false;
     FileOptions file_options;
@@ -107,6 +113,16 @@ class TieredStorage : public FileSystemWrapper {
     std::string migration_source;
     uint64_t operations = 0;
     bool retiring = false, closing = false;
+    uint64_t pending_seals = 0;
+    // Caller admission history is independent of migrated physical extents.
+    // Protected by mutex_; only the caller operation gate changes it.
+    bool has_admission = false, last_admission_local = false;
+  };
+  struct PendingSeal {
+    uint64_t number;
+    std::shared_ptr<Blob> blob;
+    ActiveExtent active;
+    bool barrier = false;
   };
   // A whole logical operation pins its Blob. Reads additionally pin the exact
   // physical identities selected by their fixed snapshot.
@@ -171,8 +187,16 @@ class TieredStorage : public FileSystemWrapper {
                 Reason reason = Reason::kRecovery);
   Status Register(uint64_t, const std::shared_ptr<Blob>&, bool local);
   Status Freeze(uint64_t, const std::shared_ptr<Blob>&);
-  Status Seal(ActiveExtent*);
-  Status Wait(uint64_t, const std::shared_ptr<Blob>&, uint64_t, bool closed);
+  Status Seal(ActiveExtent*, bool incremental = false);
+  Status EnqueueSeal(uint64_t, const std::shared_ptr<Blob>&,
+                     bool install_ssd = false);
+  Status FinishSeal(PendingSeal*);
+  void DropPending(const std::shared_ptr<Blob>& = {});
+  bool Adaptive() const {
+    return options_.staging_policy == MetaBypassStagingPolicy::kAdaptive;
+  }
+  Status Wait(uint64_t, const std::shared_ptr<Blob>&, uint64_t, bool closed,
+              bool hdd = true);
   Status Migrate(uint64_t, const std::shared_ptr<Blob>&);
   Status ReclaimLocal();
   Status DeleteRetiredBlob(uint64_t, const std::shared_ptr<Blob>&, uint64_t*);
@@ -184,6 +208,8 @@ class TieredStorage : public FileSystemWrapper {
   IOStatus ReadVersion(const Version&, uint64_t, size_t, const IOOptions&,
                        Slice*, char*, IODebugContext*);
   const MetaBypassOptions options_;
+  std::shared_ptr<HddPressure> pressure_;
+  bool owns_observer_ = false;
   std::string identity_;
   MetadataCounters local_metadata_, remote_metadata_;
   uint64_t local_metadata_bytes_ = 0, peak_local_metadata_bytes_ = 0;
@@ -196,9 +222,25 @@ class TieredStorage : public FileSystemWrapper {
   std::map<std::string, uint64_t> readers_;
   // Published-away SSD sources remain charged until unlink AND dirsync.
   std::map<std::string, uint64_t> retired_local_;
+  struct Barrier {
+    uint64_t number, length;
+    bool hdd, closed;
+  };
+  std::list<Barrier> barriers_;
+  // Advisory maximum for diagnostics; every waiter keeps its own predicate.
   std::map<uint64_t, uint64_t> requests_;
+  bool recovering_ = false;
+  std::list<PendingSeal> pending_seals_;
+  uint64_t pending_count_ = 0, peak_pending_count_ = 0, pending_wait_us_ = 0;
   uint64_t usage_ = 0, reserved_ = 0, peak_ = 0, migrated_ = 0;
   uint64_t extent_id_ = 0, queued_bytes_ = 0, peak_queued_bytes_ = 0;
+  std::array<uint64_t, 64> append_latency_{}, flush_latency_{};
+  uint64_t append_calls_ = 0, append_us_ = 0, flush_calls_ = 0, flush_us_ = 0;
+  uint64_t pressure_response_us_ = 0, max_pressure_response_us_ = 0,
+           throttle_us_ = 0;
+  uint64_t d_debt_ = 0, h_debt_ = 0;
+  uint64_t direct_bytes_ = 0, staged_bytes_ = 0;
+  uint64_t to_ssd_ = 0, to_hdd_ = 0, quota_fallbacks_ = 0;
   uint64_t spill_files_ = 0, spill_bytes_ = 0;
   uint64_t extent_fsyncs_ = 0, extent_fsync_us_ = 0;
   uint64_t commit_dir_syncs_ = 0, commit_dir_sync_us_ = 0;

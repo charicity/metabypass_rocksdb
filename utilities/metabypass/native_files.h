@@ -50,6 +50,8 @@ class HddPressure {
   void Stop();
   uint64_t Begin(Kind, uint64_t bytes, unsigned area = 2);
   void End(uint64_t id, bool success);
+  // SSD writes retain accounting without entering the HDD pressure timeline.
+  void RecordSsdWrite(unsigned area, HddPurpose, uint64_t bytes, bool success);
   bool Pressured();
   uint64_t PressureAge();
   Counters Snapshot();
@@ -67,6 +69,7 @@ class HddPressure {
   void Evaluate(uint64_t now, bool new_progress = false);
   void Monitor();
   std::mutex mutex_;
+  std::mutex ssd_mutex_;
   std::condition_variable wake_;
   std::map<uint64_t, Operation> active_;
   uint64_t active_hdd_ = 0, clock_ = 0;
@@ -74,6 +77,7 @@ class HddPressure {
   uint64_t entered_at_ = 0, healthy_progress_ = 0;
   bool pressure_ = false, stop_ = false;
   Counters counters_;
+  Counters ssd_counters_;  // Only write accounting fields; ssd_mutex_ held.
   std::thread monitor_;
 };
 std::shared_ptr<FileSystem> ObserveHdd(std::shared_ptr<FileSystem>,

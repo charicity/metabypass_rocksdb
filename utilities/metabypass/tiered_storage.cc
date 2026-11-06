@@ -220,6 +220,8 @@ class TierWriter : public FSWritableFile {
         std::unique_lock<std::mutex> physical(blob->append);
         if (st.ok())
           st = active.file->Append(Slice(bytes.data() + offset, take), o, d);
+        // Flush this writer before Freeze can transfer it to the worker. The
+        // outer Flush may already see its successor (or no caller writer).
         if (st.ok()) st = active.file->Flush(o, d);
         {
           std::lock_guard<std::mutex> lock(storage_->mutex_);
@@ -1272,7 +1274,7 @@ Status TieredStorage::Freeze(uint64_t n, const std::shared_ptr<Blob>& blob) {
   auto& active = blob->caller;
   if (!active.file) return Status::OK();
   const bool local = active.extent.local;
-  if (Adaptive() && !recovering_ && !local) return EnqueueSeal(n, blob);
+  if (!recovering_ && !local) return EnqueueSeal(n, blob);
   const auto phase_start = Micros();
   OnExit phase{[&, this] {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -2224,6 +2226,16 @@ void TieredStorage::Run() {
       return false;
     });
     if (stopping_ || !error_.ok()) break;
+    // Return one published-away SSD range's quota before scheduling more HDD
+    // work, even when a barrier is still pending. Keep each turn bounded so
+    // a reclamation backlog cannot drain ahead of that work.
+    if (reclaimable()) {
+      lock.unlock();
+      Status s = ReclaimLocal();
+      if (!s.ok()) Fail(s);
+      lock.lock();
+      if (stopping_ || !error_.ok()) break;
+    }
     // Resolve each independently captured barrier to its earliest unsatisfied
     // range. An H request with an SSD hole must not be delayed by sealing a
     // later HDD range; D may skip an already durable SSD range.
@@ -2295,14 +2307,6 @@ void TieredStorage::Run() {
       --task.blob->pending_seals;
       --pending_count_;
       progress_.notify_all();
-      continue;
-    }
-    // Only this worker reclaims published-away SSD ranges.
-    if (!has_priority && reclaimable()) {
-      lock.unlock();
-      Status s = ReclaimLocal();
-      if (!s.ok()) Fail(s);
-      lock.lock();
       continue;
     }
     auto selected = blobs_.end();

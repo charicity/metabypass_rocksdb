@@ -180,6 +180,9 @@ class BackupListener : public EventListener {
 }  // namespace
 struct MetaBypassDB::Impl {
   std::shared_ptr<metabypass::HddPressure> pressure;
+  mutable std::mutex progress_close_mutex;
+  std::string recovery_identity;
+  std::string recovery_session;
   std::shared_ptr<metabypass::SstStorage> sst;
   std::shared_ptr<metabypass::TieredStorage> tier;
   std::atomic<uint64_t> sync_write_us{0};
@@ -389,6 +392,13 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     if (s.ok()) s = impl->backup->Activate(identity, impl->db.get());
     if (s.ok()) s = impl->backup->Sync();
   }
+  if (s.ok()) s = impl->db->GetDbIdentity(impl->recovery_identity);
+  if (s.ok()) {
+    impl->recovery_session = options.env->GenerateUniqueId();
+    if (impl->recovery_identity.empty() || impl->recovery_session.empty())
+      s = Status::Corruption(
+          "missing Metabypass recovery observation identity");
+  }
   if (!s.ok()) {
     impl->backup->DetachDB();
     if (impl->db) {
@@ -597,7 +607,18 @@ MetaBypassStats MetaBypassDB::GetBackupStats() const {
       impl_->sync_write_us.load(std::memory_order_relaxed);
   return stats;
 }
+Status MetaBypassDB::GetRecoveryProgress(
+    MetaBypassRecoveryProgress* output) const {
+  if (!output) return Status::InvalidArgument("null recovery progress output");
+  std::lock_guard<std::mutex> lock(impl_->progress_close_mutex);
+  if (!impl_->db) return Status::ShutdownInProgress("Metabypass DB closed");
+  output->db_identity = impl_->recovery_identity;
+  output->open_session_id = impl_->recovery_session;
+  output->visible_sequence = impl_->db->GetLatestSequenceNumber();
+  return Status::OK();
+}
 Status MetaBypassDB::Close() {
+  std::lock_guard<std::mutex> lock(impl_->progress_close_mutex);
   if (!impl_->db) return impl_->closed;
   if (impl_->sst) impl_->sst->Stop();
   Status s = impl_->backup->Sync();

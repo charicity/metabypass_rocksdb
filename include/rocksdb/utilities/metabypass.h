@@ -310,10 +310,18 @@ struct MetaBypassStats {
   uint64_t tier_remote_commit_gc_fsync_micros = 0;
   uint64_t tier_remote_commit_gc_dir_sync_micros = 0;
 };
+// An observation of native write visibility, not backup durability or an ACK
+// frontier. Identity is stable for this DB; session changes on every Open.
+struct MetaBypassRecoveryProgress {
+  std::string db_identity;
+  std::string open_session_id;
+  uint64_t visible_sequence = 0;
+};
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before
 // Close. Write/Get/SyncBackup/Flush/CompactRange can be called concurrently.
-// Open, Restore and Close require exclusive application ownership.
+// Open and Restore require exclusive application ownership. Close excludes
+// other operations except GetRecoveryProgress; destruction remains exclusive.
 class MetaBypassDB {
  public:
   // Uses Integrated BlobDB with min_blob_size=0. Direct Write follows
@@ -352,7 +360,15 @@ class MetaBypassDB {
   // Concurrent writes may or may not be included.
   Status SyncBackup();
   MetaBypassStats GetBackupStats() const;
-  // Exclusive with all other operations. Publishes before closing the DB,
+  // Copies the immutable Open identity/session and native visible sequence.
+  // Safe concurrently with writes and Close (but not object destruction).
+  // Does not wait for backup, synchronize files, or alter backup error state.
+  // Null output returns InvalidArgument; a closed DB returns
+  // ShutdownInProgress. On error, output is unchanged. Stop external samplers
+  // before Close.
+  Status GetRecoveryProgress(MetaBypassRecoveryProgress* output) const;
+  // Exclusive with mutation/read operations; progress queries are serialized.
+  // Publishes before closing the DB,
   // then drains mirrored close operations.
   // Destroy this object afterwards to release the directory locks.
   Status Close();

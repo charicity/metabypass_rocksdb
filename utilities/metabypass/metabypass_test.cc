@@ -666,6 +666,63 @@ class MetaBypassTest : public testing::Test {
     }
     ASSERT_OK(snapshot->Close());
   }
+  void AlwaysFullSuffixDbBarrier(const std::string& barrier) {
+    EnableDirectWrite();
+    EnableTier(8192);
+    o_.blob_file_size = 128 * 1024 * 1024;
+    o_.write_buffer_size = 128 * 1024 * 1024;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    TestGate seal;
+    std::atomic<bool> first{true}, done{false};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierSealBeforeRequeue",
+                                          [&](void*) {
+                                            if (first.exchange(false))
+                                              seal.Block();
+                                          });
+    SyncPoint::GetInstance()->LoadDependency(
+        {{"MetaBypass::TierBarrierWaiting", "AlwaysDb::BarrierWaiting"}});
+    SyncPoint::GetInstance()->EnableProcessing();
+    const std::string value(32 * 1024 * 1024, 'v');
+    // DW1 Put must complete its per-record Flush across the full HDD extent.
+    ASSERT_OK(db_->Put(WriteOptions(), "large", value));
+    seal.WaitUntilBlocked();
+    auto stats = db_->GetBackupStats();
+    EXPECT_OK(stats.error);
+    EXPECT_GT(stats.staging_spill_files, 0);
+    EXPECT_GT(stats.adaptive_pending_seals, 0);
+    EXPECT_OK(db_->Put(WriteOptions(), "next", "visible"));
+    Check("next", "visible");
+    Status result;
+    std::thread waiter([&] {
+      if (barrier == "flush")
+        result = db_->Flush(FlushOptions());
+      else if (barrier == "sync") {
+        WriteOptions sync;
+        sync.sync = true;
+        result = db_->Put(sync, "synced", "durable");
+      } else if (barrier == "backup")
+        result = db_->SyncBackup();
+      else
+        result = db_->Close();
+      done = true;
+    });
+    TEST_SYNC_POINT("AlwaysDb::BarrierWaiting");
+    EXPECT_FALSE(done.load());
+    seal.Release();
+    waiter.join();
+    ASSERT_OK(result);
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    if (barrier != "close") {
+      ASSERT_OK(db_->Close());
+    }
+    db_.reset();
+    Clean(m_.staging_dir);
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("large", value);
+    Check("next", "visible");
+    if (barrier == "sync") Check("synced", "durable");
+  }
   void DirectWriteStorageScenario(uint64_t capacity) {
     EnableDirectWrite();
     if (capacity) EnableTier(capacity);
@@ -1283,6 +1340,87 @@ class MetaBypassTest : public testing::Test {
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
+TEST_F(MetaBypassTest, RecoveryProgressIdentityAndClosedState) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  MetaBypassRecoveryProgress before, after;
+  ASSERT_TRUE(db_->GetRecoveryProgress(nullptr).IsInvalidArgument());
+  ASSERT_OK(db_->GetRecoveryProgress(&before));
+  ASSERT_FALSE(before.db_identity.empty());
+  ASSERT_FALSE(before.open_session_id.empty());
+  ASSERT_OK(db_->Put(WriteOptions(), "progress", "value"));
+  ASSERT_OK(db_->GetRecoveryProgress(&after));
+  ASSERT_EQ(before.db_identity, after.db_identity);
+  ASSERT_EQ(before.open_session_id, after.open_session_id);
+  ASSERT_EQ(before.visible_sequence + 1, after.visible_sequence);
+  ASSERT_OK(db_->Close());
+  ASSERT_TRUE(db_->GetRecoveryProgress(&after).IsShutdownInProgress());
+  ASSERT_EQ(before.open_session_id, after.open_session_id);
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->GetRecoveryProgress(&after));
+  ASSERT_EQ(before.db_identity, after.db_identity);
+  ASSERT_NE(before.open_session_id, after.open_session_id);
+}
+TEST_F(MetaBypassTest, RecoveryProgressConcurrentWriters) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  MetaBypassRecoveryProgress initial;
+  ASSERT_OK(db_->GetRecoveryProgress(&initial));
+  std::atomic<bool> start{false};
+  std::atomic<unsigned> failures{0};
+  std::vector<std::thread> writers;
+  for (unsigned writer = 0; writer < 4; ++writer) {
+    writers.emplace_back([&, writer] {
+      while (!start.load()) std::this_thread::yield();
+      for (unsigned operation = 0; operation < 32; ++operation) {
+        auto status = db_->Put(
+            WriteOptions(),
+            std::to_string(writer) + "/" + std::to_string(operation), "value");
+        if (!status.ok()) ++failures;
+      }
+    });
+  }
+  start.store(true);
+  uint64_t last = initial.visible_sequence;
+  for (unsigned observation = 0; observation < 128; ++observation) {
+    MetaBypassRecoveryProgress progress;
+    ASSERT_OK(db_->GetRecoveryProgress(&progress));
+    ASSERT_EQ(initial.open_session_id, progress.open_session_id);
+    ASSERT_GE(progress.visible_sequence, last);
+    last = progress.visible_sequence;
+  }
+  for (auto& writer : writers) writer.join();
+  ASSERT_EQ(failures.load(), 0U);
+  MetaBypassRecoveryProgress final;
+  ASSERT_OK(db_->GetRecoveryProgress(&final));
+  ASSERT_EQ(final.visible_sequence, initial.visible_sequence + 128);
+}
+TEST_F(MetaBypassTest, RecoveryProgressCloseSerialization) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool start = false;
+  std::atomic<unsigned> failures{0};
+  std::thread observer([&] {
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      cv.wait(lock, [&] { return start; });
+    }
+    for (unsigned i = 0; i < 1000; ++i) {
+      MetaBypassRecoveryProgress progress;
+      auto status = db_->GetRecoveryProgress(&progress);
+      if (!status.ok() && !status.IsShutdownInProgress()) ++failures;
+    }
+  });
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    start = true;
+    cv.notify_all();
+  }
+  auto closed = db_->Close();
+  observer.join();
+  ASSERT_OK(closed);
+  ASSERT_EQ(failures.load(), 0U);
+}
 TEST_F(MetaBypassTest, BlobGCWholeFileAndRestore) {
   BlobGCScenario(false, false, true);
 }
@@ -1737,6 +1875,18 @@ TEST_F(MetaBypassTest, DirectWriteAdaptiveBlobGcAndRestore) {
   m_.staging_policy = MetaBypassStagingPolicy::kAdaptive;
   EnableDirectWrite();
   BlobGCScenario(true, false, true);
+}
+TEST_F(MetaBypassTest, AlwaysFullSuffixDw1FlushWaitsForSeal) {
+  AlwaysFullSuffixDbBarrier("flush");
+}
+TEST_F(MetaBypassTest, AlwaysFullSuffixDw1SyncWriteWaitsForSeal) {
+  AlwaysFullSuffixDbBarrier("sync");
+}
+TEST_F(MetaBypassTest, AlwaysFullSuffixDw1SyncBackupWaitsForSeal) {
+  AlwaysFullSuffixDbBarrier("backup");
+}
+TEST_F(MetaBypassTest, AlwaysFullSuffixDw1CloseWaitsForSeal) {
+  AlwaysFullSuffixDbBarrier("close");
 }
 TEST_F(MetaBypassTest, DirectWriteWithStagingSpill) {
   DirectWriteStorageScenario(8192);
@@ -4438,6 +4588,191 @@ TEST_F(MetaBypassTest, SigkillUnflushedBatchRecovery) {
 namespace metabypass {
 class TieredStorageTest : public MetaBypassTest {
  public:
+  // Probe the physical boundary without involving staging or DB metadata I/O.
+  class ObserverProbe : public FileSystemWrapper {
+   public:
+    enum Op {
+      kWrite,
+      kFlush,
+      kSync,
+      kFsync,
+      kRead,
+      kDirectory,
+      kSyncFile,
+      kCount
+    };
+    explicit ObserverProbe(std::shared_ptr<FileSystem> fs)
+        : FileSystemWrapper(std::move(fs)) {}
+    const char* Name() const override { return "ObserverProbe"; }
+    std::array<uint64_t, kCount> calls{};
+    bool fail = false;
+    std::function<void(Op)> before;
+    IOStatus Call(Op op) {
+      if (before) before(op);
+      ++calls[op];
+      return fail ? IOStatus::IOError("observer probe failure")
+                  : IOStatus::OK();
+    }
+    IOStatus Get(size_t n, Slice* out) {
+      IOStatus s = Call(kRead);
+      *out = s.ok() ? Slice("abc", std::min(n, size_t{3})) : Slice();
+      return s;
+    }
+    IOStatus NewWritableFile(const std::string&, const FileOptions&,
+                             std::unique_ptr<FSWritableFile>* out,
+                             IODebugContext*) override {
+      out->reset(new Writer(this));
+      return IOStatus::OK();
+    }
+    IOStatus ReopenWritableFile(const std::string& p, const FileOptions& o,
+                                std::unique_ptr<FSWritableFile>* out,
+                                IODebugContext* d) override {
+      return NewWritableFile(p, o, out, d);
+    }
+    IOStatus ReuseWritableFile(const std::string& p, const std::string&,
+                               const FileOptions& o,
+                               std::unique_ptr<FSWritableFile>* out,
+                               IODebugContext* d) override {
+      return NewWritableFile(p, o, out, d);
+    }
+    IOStatus NewRandomRWFile(const std::string&, const FileOptions&,
+                             std::unique_ptr<FSRandomRWFile>* out,
+                             IODebugContext*) override {
+      out->reset(new RandomRW(this));
+      return IOStatus::OK();
+    }
+    IOStatus NewRandomAccessFile(const std::string&, const FileOptions&,
+                                 std::unique_ptr<FSRandomAccessFile>* out,
+                                 IODebugContext*) override {
+      out->reset(new Reader(this));
+      return IOStatus::OK();
+    }
+    IOStatus NewSequentialFile(const std::string&, const FileOptions&,
+                               std::unique_ptr<FSSequentialFile>* out,
+                               IODebugContext*) override {
+      out->reset(new Sequential(this));
+      return IOStatus::OK();
+    }
+    IOStatus NewDirectory(const std::string&, const IOOptions&,
+                          std::unique_ptr<FSDirectory>* out,
+                          IODebugContext*) override {
+      out->reset(new Directory(this));
+      return IOStatus::OK();
+    }
+    IOStatus SyncFile(const std::string&, const FileOptions&, const IOOptions&,
+                      bool, IODebugContext*) override {
+      return Call(kSyncFile);
+    }
+
+   private:
+    class Writer : public FSWritableFile {
+     public:
+      explicit Writer(ObserverProbe* p) : probe_(p) {}
+      IOStatus Append(const Slice&, const IOOptions&,
+                      IODebugContext*) override {
+        return probe_->Call(kWrite);
+      }
+      IOStatus Append(const Slice&, const IOOptions&,
+                      const DataVerificationInfo&, IODebugContext*) override {
+        return probe_->Call(kWrite);
+      }
+      IOStatus PositionedAppend(const Slice&, uint64_t, const IOOptions&,
+                                IODebugContext*) override {
+        return probe_->Call(kWrite);
+      }
+      IOStatus PositionedAppend(const Slice&, uint64_t, const IOOptions&,
+                                const DataVerificationInfo&,
+                                IODebugContext*) override {
+        return probe_->Call(kWrite);
+      }
+      IOStatus Flush(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kFlush);
+      }
+      IOStatus Sync(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kSync);
+      }
+      IOStatus Fsync(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kFsync);
+      }
+      uint64_t GetFileSize(const IOOptions&, IODebugContext*) override {
+        return 0;  // This probe records calls rather than storing file
+                   // contents.
+      }
+      IOStatus Close(const IOOptions&, IODebugContext*) override {
+        return IOStatus::OK();
+      }
+
+     private:
+      ObserverProbe* probe_;
+    };
+    class RandomRW : public FSRandomRWFile {
+     public:
+      explicit RandomRW(ObserverProbe* p) : probe_(p) {}
+      IOStatus Write(uint64_t, const Slice&, const IOOptions&,
+                     IODebugContext*) override {
+        return probe_->Call(kWrite);
+      }
+      IOStatus Read(uint64_t, size_t n, const IOOptions&, Slice* out, char*,
+                    IODebugContext*) const override {
+        return probe_->Get(n, out);
+      }
+      IOStatus Flush(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kFlush);
+      }
+      IOStatus Sync(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kSync);
+      }
+      IOStatus Fsync(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kFsync);
+      }
+      IOStatus Close(const IOOptions&, IODebugContext*) override {
+        return IOStatus::OK();
+      }
+
+     private:
+      ObserverProbe* probe_;
+    };
+    class Reader : public FSRandomAccessFile {
+     public:
+      explicit Reader(ObserverProbe* p) : probe_(p) {}
+      IOStatus Read(uint64_t, size_t n, const IOOptions&, Slice* out, char*,
+                    IODebugContext*) const override {
+        return probe_->Get(n, out);
+      }
+
+     private:
+      ObserverProbe* probe_;
+    };
+    class Sequential : public FSSequentialFile {
+     public:
+      explicit Sequential(ObserverProbe* p) : probe_(p) {}
+      IOStatus Read(size_t n, const IOOptions&, Slice* out, char*,
+                    IODebugContext*) override {
+        return probe_->Get(n, out);
+      }
+      IOStatus Skip(uint64_t) override { return IOStatus::OK(); }
+
+     private:
+      ObserverProbe* probe_;
+    };
+    class Directory : public FSDirectory {
+     public:
+      explicit Directory(ObserverProbe* p) : probe_(p) {}
+      IOStatus Fsync(const IOOptions&, IODebugContext*) override {
+        return probe_->Call(kDirectory);
+      }
+
+     private:
+      ObserverProbe* probe_;
+    };
+  };
+  void WithObserverLock(HddPressure* pressure,
+                        const std::function<void()>& op) {
+    std::lock_guard<std::mutex> lock(pressure->mutex_);
+    op();
+    EXPECT_TRUE(pressure->active_.empty());
+    EXPECT_EQ(pressure->next_, 0);
+  }
   class CallerHddTrace : public FileSystemWrapper {
    public:
     CallerHddTrace(std::shared_ptr<FileSystem> fs, std::string dir)
@@ -4490,7 +4825,7 @@ class TieredStorageTest : public MetaBypassTest {
         : FileSystemWrapper(std::move(fs)) {}
     const char* Name() const override { return "ExtentFailureFileSystem"; }
     std::atomic<bool> fail_fsync{false}, fail_close{false};
-    std::atomic<uint64_t> closes{0};
+    std::atomic<uint64_t> closes{0}, flushes{0};
     IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
                              std::unique_ptr<FSWritableFile>* out,
                              IODebugContext* d) override {
@@ -4505,6 +4840,10 @@ class TieredStorageTest : public MetaBypassTest {
      public:
       Writer(std::unique_ptr<FSWritableFile> file, ExtentFailureFileSystem* fs)
           : FSWritableFileOwnerWrapper(std::move(file)), fs_(fs) {}
+      IOStatus Flush(const IOOptions& o, IODebugContext* d) override {
+        ++fs_->flushes;
+        return target()->Flush(o, d);
+      }
       IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
         TEST_SYNC_POINT("MetaBypassTest::ExtentFsyncInFlight");
         if (fs_->fail_fsync.exchange(false))
@@ -4520,6 +4859,54 @@ class TieredStorageTest : public MetaBypassTest {
 
      private:
       ExtentFailureFileSystem* fs_;
+    };
+  };
+  class LocalReclaimFailureFileSystem : public FileSystemWrapper {
+   public:
+    explicit LocalReclaimFailureFileSystem(std::shared_ptr<FileSystem> fs)
+        : FileSystemWrapper(std::move(fs)) {}
+    const char* Name() const override {
+      return "LocalReclaimFailureFileSystem";
+    }
+    std::string local_path, staging_dir;
+    bool fail_delete = false;
+    std::atomic<bool> deleted{false};
+    std::atomic<unsigned> delete_failures{0}, dirsync_failures{0};
+    IOStatus DeleteFile(const std::string& path, const IOOptions& o,
+                        IODebugContext* d) override {
+      if (path == local_path && fail_delete) {
+        ++delete_failures;
+        return IOStatus::IOError("SSD source delete failure");
+      }
+      IOStatus s = target()->DeleteFile(path, o, d);
+      if (s.ok() && path == local_path) deleted = true;
+      return s;
+    }
+    IOStatus NewDirectory(const std::string& path, const IOOptions& o,
+                          std::unique_ptr<FSDirectory>* out,
+                          IODebugContext* d) override {
+      IOStatus s = target()->NewDirectory(path, o, out, d);
+      if (s.ok() && path == staging_dir)
+        out->reset(new Directory(std::move(*out), this));
+      return s;
+    }
+
+   private:
+    class Directory : public FSDirectoryWrapper {
+     public:
+      Directory(std::unique_ptr<FSDirectory> dir,
+                LocalReclaimFailureFileSystem* fs)
+          : FSDirectoryWrapper(std::move(dir)), fs_(fs) {}
+      IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
+        if (fs_->deleted.load()) {
+          ++fs_->dirsync_failures;
+          return IOStatus::IOError("SSD source dirsync failure");
+        }
+        return FSDirectoryWrapper::Fsync(o, d);
+      }
+
+     private:
+      LocalReclaimFailureFileSystem* fs_;
     };
   };
   class LocalReadFailureFileSystem : public FileSystemWrapper {
@@ -4572,6 +4959,115 @@ class TieredStorageTest : public MetaBypassTest {
       LocalReadFailureFileSystem* fs_;
     };
   };
+  void PrepareAlwaysSpilled(std::unique_ptr<FSWritableFile>* writer) {
+    Initialize(1);
+    ASSERT_OK(CreateLocalBlob("s", writer));
+    ASSERT_OK((*writer)->Append("h", IOOptions(), nullptr));
+    ASSERT_EQ(AdaptiveStat(&MetaBypassStats::staging_spill_files), 1);
+    // Finish the SSD prefix first so gates below refer only to suffix sealing.
+    ASSERT_OK(Migrate(1));
+    ASSERT_EQ(HddEnd(), 1);
+  }
+  void CheckAlwaysBlockedSeal(const char* hook) {
+    auto physical = std::make_shared<ExtentFailureFileSystem>(fs_);
+    fs_ = physical;
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_NO_FATAL_FAILURE(PrepareAlwaysSpilled(&writer));
+    constexpr uint64_t extent = 32 * 1024 * 1024;
+    TestGate seal;
+    std::atomic<bool> first{true};
+    SyncPoint::GetInstance()->SetCallBack(hook, [&](void*) {
+      if (first.exchange(false)) seal.Block();
+    });
+    SyncPoint::GetInstance()->EnableProcessing();
+    storage_->Start();
+    const auto before = physical->flushes.load();
+    ASSERT_OK(
+        writer->Append(std::string(extent - 1, 'h'), IOOptions(), nullptr));
+    seal.WaitUntilBlocked();
+    // The boundary Append itself flushed every chunk on the old writer before
+    // moving it. An outer Flush with no successor must not wait for HDD sync.
+    EXPECT_EQ(physical->flushes.load() - before, 8);
+    EXPECT_OK(writer->Flush(IOOptions(), nullptr));
+    EXPECT_OK(writer->Append("tail", IOOptions(), nullptr));
+    EXPECT_OK(writer->Flush(IOOptions(), nullptr));
+    EXPECT_EQ(physical->flushes.load() - before, 10);
+    EXPECT_EQ(HddEnd(), 1);
+    std::string actual;
+    EXPECT_OK(ReadBytes(0, 2, &actual));
+    EXPECT_EQ(actual, "sh");
+    EXPECT_OK(ReadBytes(extent - 1, 6, &actual));
+    EXPECT_EQ(actual, "hhtail");
+    EXPECT_EQ(AdaptiveStat(&MetaBypassStats::adaptive_pending_seals), 1);
+    seal.Release();
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    ASSERT_OK(storage_->Persist({{1, extent + 5}}));
+    ASSERT_OK(storage_->Stop());
+  }
+  void CheckAlwaysQueueWake(const std::string& reason) {
+    std::unique_ptr<FSWritableFile> writer;
+    ASSERT_NO_FATAL_FAILURE(PrepareAlwaysSpilled(&writer));
+    constexpr size_t extent = 32 * 1024 * 1024;
+    TestGate inflight;
+    std::atomic<bool> first{true};
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::TierBeforeHddExtentFsync", [&](void*) {
+          if (first.exchange(false)) inflight.Block();
+        });
+    SyncPoint::GetInstance()->LoadDependency(
+        {{"MetaBypass::TierSealQueueWaiting", "AlwaysQueue::Waiting"},
+         {"MetaBypass::TierBlobRetiring", "AlwaysQueue::Retiring"},
+         {"MetaBypass::TierStopping", "AlwaysQueue::Stopping"}});
+    SyncPoint::GetInstance()->EnableProcessing();
+    storage_->Start();
+    ASSERT_OK(
+        writer->Append(std::string(extent - 1, 'h'), IOOptions(), nullptr));
+    inflight.WaitUntilBlocked();
+    ASSERT_OK(writer->Append(std::string(extent, 'i'), IOOptions(), nullptr));
+    EXPECT_EQ(AdaptiveStat(&MetaBypassStats::adaptive_pending_seals), 2);
+    Status appended, drained;
+    std::thread caller([&] {
+      appended = writer->Append(std::string(extent, 'j'), IOOptions(), nullptr);
+    });
+    TEST_SYNC_POINT("AlwaysQueue::Waiting");
+    uint64_t removed = 0;
+    std::thread drain;
+    if (reason == "error") {
+      const Status first_error = Status::IOError("first seal error");
+      const Status later_error = Status::IOError("later error");
+      EXPECT_TRUE(first_error.IsIOError());
+      EXPECT_TRUE(later_error.IsIOError());
+      storage_->Cancel(first_error);
+      storage_->Cancel(later_error);
+    } else if (reason == "gc") {
+      drain =
+          std::thread([&] { drained = storage_->ReclaimBlob(1, &removed); });
+      TEST_SYNC_POINT("AlwaysQueue::Retiring");
+    } else {
+      drain = std::thread([&] { drained = storage_->Stop(); });
+      TEST_SYNC_POINT("AlwaysQueue::Stopping");
+    }
+    caller.join();  // Admission wakes while the physical worker is still held.
+    if (reason == "gc") {
+      EXPECT_TRUE(appended.IsAborted());
+    } else {
+      EXPECT_TRUE(appended.IsIOError());
+      if (reason == "error") {
+        EXPECT_NE(appended.ToString().find("first seal error"),
+                  std::string::npos);
+      }
+    }
+    inflight.Release();
+    if (drain.joinable()) drain.join();
+    EXPECT_OK(drained);
+    if (reason == "error") {
+      EXPECT_TRUE(storage_->Stop().IsIOError());
+    } else {
+      EXPECT_OK(storage_->Stop());
+    }
+    EXPECT_EQ(AdaptiveStat(&MetaBypassStats::adaptive_pending_seals), 0);
+    EXPECT_EQ(AdaptiveStat(&MetaBypassStats::adaptive_peak_pending_seals), 2);
+  }
   void CheckAdaptiveBlockedSeal(const char* hook) {
     InitializeAdaptive();
     std::unique_ptr<FSWritableFile> writer;
@@ -5184,9 +5680,108 @@ class TieredStorageTest : public MetaBypassTest {
     Status st = storage_->TieredStorage::Finalize(1, blob);
     return st.ok() ? storage_->TieredStorage::ReclaimLocal() : st;
   }
+  Status CreateClosedLocalSegments(size_t count) {
+    std::unique_ptr<FSWritableFile> writer;
+    Status s = LocalWriter(1, &writer);
+    for (size_t i = 0; s.ok() && i < count; ++i) {
+      s = writer->Append("payload", IOOptions(), nullptr);
+      if (s.ok())
+        s = i + 1 == count ? writer->Close(IOOptions(), nullptr)
+                           : writer->Sync(IOOptions(), nullptr);
+    }
+    return s;
+  }
+  std::thread StartWorkerWithPersist(uint64_t length, Status* result) {
+    SyncPoint::GetInstance()->LoadDependency(
+        {{"MetaBypass::TierPersistRequested",
+          "TierReclaimTest::PersistQueued"}});
+    SyncPoint::GetInstance()->EnableProcessing();
+    std::thread waiter([this, length, result] {
+      *result = storage_->Persist({{1, length}});
+    });
+    TEST_SYNC_POINT("TierReclaimTest::PersistQueued");
+    storage_->Start();
+    return waiter;
+  }
+  size_t RetiredLocalCount() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->retired_local_.size();
+  }
+  size_t PendingBarrierCount() {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    return storage_->barriers_.size();
+  }
+  uint64_t LocalExtentBytes(uint64_t number) {
+    std::lock_guard<std::mutex> lock(storage_->mutex_);
+    uint64_t bytes = 0;
+    for (const auto& e : storage_->blobs_.at(number)->live.extents)
+      if (e.local) bytes += e.length;
+    return bytes;
+  }
+  void CheckWorkerReclaimFailure(bool fail_delete) {
+    auto failing = std::make_shared<LocalReclaimFailureFileSystem>(fs_);
+    fs_ = failing;
+    Initialize(14);
+    ASSERT_OK(CreateClosedLocalSegments(2));
+    failing->local_path = FirstExtentPath();
+    failing->staging_dir = m_.staging_dir;
+    failing->fail_delete = fail_delete;
+    Status persisted;
+    auto waiter = StartWorkerWithPersist(14, &persisted);
+    waiter.join();
+    // A subsequent failure cannot replace the worker's reclamation error.
+    const Status later = Status::IOError("later failure");
+    EXPECT_TRUE(later.IsIOError());
+    storage_->Cancel(later);
+    Status stopped = storage_->Stop();
+    failing->fail_delete = false;
+    failing->deleted = false;
+    ASSERT_TRUE(persisted.IsIOError());
+    ASSERT_TRUE(stopped.IsIOError());
+    const std::string expected =
+        Status::IOError(fail_delete ? "SSD source delete failure"
+                                    : "SSD source dirsync failure")
+            .ToString();
+    ASSERT_EQ(persisted.ToString(), expected);
+    ASSERT_EQ(stopped.ToString(), expected);
+    ASSERT_EQ(HddEnd(), 7);
+    ASSERT_FALSE(FinalPublished());
+    ASSERT_EQ(TierStats().staging_bytes, 14);
+    ASSERT_EQ(RetiredLocalCount(), 1);
+    ASSERT_EQ(failing->delete_failures.load(), fail_delete ? 1 : 0);
+    ASSERT_EQ(failing->dirsync_failures.load(), fail_delete ? 0 : 1);
+    Status exists = fs_->FileExists(failing->local_path, IOOptions(), nullptr);
+    ASSERT_EQ(exists.ok(), fail_delete);
+    if (!fail_delete) {
+      ASSERT_TRUE(exists.IsNotFound());
+    }
+  }
   Status MigrateChunk(uint64_t) {
     Status s = storage_->TieredStorage::Migrate(1, storage_->blobs_.at(1));
     return s.ok() ? storage_->TieredStorage::ReclaimLocal() : s;
+  }
+  // Synthetic layout tests have no worker and need a completed publication
+  // before directly editing the next version. Exercise the real queued seal
+  // body synchronously, preserving their non-sticky injected-error contract.
+  Status FreezeFixtureCaller(const std::shared_ptr<TieredStorage::Blob>& blob) {
+    assert(!storage_->worker_.joinable());
+    Status s = storage_->TieredStorage::Freeze(1, blob);
+    if (!s.ok()) return s;
+    while (!storage_->pending_seals_.empty()) {
+      auto task = std::move(storage_->pending_seals_.front());
+      storage_->pending_seals_.pop_front();
+      do {
+        s = storage_->TieredStorage::FinishSeal(&task);
+      } while (s.IsTryAgain());
+      if (task.active.file)
+        s.UpdateIfOk(task.active.file->Close(IOOptions(), nullptr));
+      --task.blob->operations;
+      --task.blob->pending_seals;
+      --storage_->pending_count_;
+      storage_->progress_.notify_all();
+      if (!s.ok()) return s;
+    }
+    return s;
   }
   // Construct arbitrary remote extent boundaries without depending on the
   // worker queue, which no longer owns the caller's HDD writer.
@@ -5239,13 +5834,13 @@ class TieredStorageTest : public MetaBypassTest {
       }
       offset += take;
       if (active.extent.length == TieredStorage::kExtentSize)
-        s = storage_->TieredStorage::Freeze(1, blob);
+        s = FreezeFixtureCaller(blob);
     }
     return s;
   }
   Status SealPending() {
     auto blob = storage_->blobs_.at(1);
-    Status s = storage_->TieredStorage::Freeze(1, blob);
+    Status s = FreezeFixtureCaller(blob);
     if (s.ok())
       s = storage_->TieredStorage::Commit(1, blob,
                                           [](TieredStorage::Version* v) {
@@ -5336,7 +5931,7 @@ class TieredStorageTest : public MetaBypassTest {
   }
   Status CommitPending() {
     auto blob = storage_->blobs_.at(1);
-    if (blob->caller.file) return storage_->TieredStorage::Freeze(1, blob);
+    if (blob->caller.file) return FreezeFixtureCaller(blob);
     return storage_->TieredStorage::Commit(
         1, blob, [](TieredStorage::Version*) { return Status::OK(); });
   }
@@ -5347,7 +5942,8 @@ class TieredStorageTest : public MetaBypassTest {
     if (it == storage_->blobs_.end()) return lengths;
     const auto& version = durable ? it->second->durable : it->second->live;
     for (const auto& e : version.extents)
-      if (!e.local && (!durable || !e.open)) lengths.push_back(e.length);
+      if (!e.local && (!durable || (!e.open && !e.pending)))
+        lengths.push_back(e.length);
     return lengths;
   }
   void CheckPendingSnapshot() {
@@ -6664,6 +7260,144 @@ TEST_F(TieredStorageTest, FrozenSegmentMigratesBeforeLogicalClose) {
   ASSERT_OK(storage_->Stop());
 }
 
+TEST_F(TieredStorageTest, WorkerReclaimsQuotaBeforePendingHddBarrier) {
+  Initialize(14);
+  ASSERT_OK(CreateClosedLocalSegments(2));
+  const auto source = FirstExtentPath();
+  TestGate second_migration;
+  unsigned migrations = 0;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationSelected",
+                                        [&](void*) {
+                                          if (++migrations == 2)
+                                            second_migration.Block();
+                                        });
+  Status persisted;
+  auto waiter = StartWorkerWithPersist(14, &persisted);
+  second_migration.WaitUntilBlocked();
+  EXPECT_EQ(HddEnd(), 7);
+  EXPECT_EQ(PendingBarrierCount(), 1);
+  EXPECT_FALSE(FinalPublished());
+  EXPECT_EQ(RetiredLocalCount(), 0);
+  EXPECT_EQ(TierStats().staging_bytes, 7);
+  EXPECT_TRUE(fs_->FileExists(source, IOOptions(), nullptr).IsNotFound());
+  std::unique_ptr<FSWritableFile> next;
+  Status created = LocalWriter(2, &next);
+  EXPECT_OK(created);
+  if (created.ok()) {
+    EXPECT_OK(next->Append("reused!", IOOptions(), nullptr));
+    EXPECT_EQ(LocalExtentBytes(2), 7);
+    EXPECT_EQ(TierStats().staging_bytes, 14);
+    EXPECT_OK(next->Close(IOOptions(), nullptr));
+  }
+  second_migration.Release();
+  waiter.join();
+  Status stopped = storage_->Stop();
+  ASSERT_OK(persisted);
+  ASSERT_OK(stopped);
+}
+
+TEST_F(TieredStorageTest, WorkerReclaimBacklogDoesNotDrainBeforeHddBarrier) {
+  Initialize(28);
+  ASSERT_OK(CreateClosedLocalSegments(4));
+  TestGate local_read, third_published, fourth_migration;
+  unsigned published = 0, migrations = 0;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierLocalReadPinned",
+                                        [&](void*) { local_read.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierRouteDurable",
+                                        [&](void*) {
+                                          if (++published == 3)
+                                            third_published.Block();
+                                        });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationSelected",
+                                        [&](void*) {
+                                          if (++migrations == 4)
+                                            fourth_migration.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status read, persisted;
+  std::string bytes;
+  std::thread reader([&] { read = ReadBytes(0, 28, &bytes); });
+  local_read.WaitUntilBlocked();
+  auto waiter = StartWorkerWithPersist(28, &persisted);
+  third_published.WaitUntilBlocked();
+  EXPECT_EQ(RetiredLocalCount(), 3);
+  EXPECT_EQ(TierStats().staging_bytes, 28);
+  local_read.Release();
+  reader.join();
+  third_published.Release();
+  fourth_migration.WaitUntilBlocked();
+  // One source was reclaimed, then the next HDD task was selected while two
+  // more unpinned sources remained available for reclamation.
+  EXPECT_EQ(RetiredLocalCount(), 2);
+  EXPECT_EQ(TierStats().staging_bytes, 21);
+  EXPECT_EQ(LocalPins(), 0);
+  EXPECT_EQ(HddEnd(), 21);
+  EXPECT_EQ(PendingBarrierCount(), 1);
+  fourth_migration.Release();
+  waiter.join();
+  Status stopped = storage_->Stop();
+  ASSERT_OK(read);
+  ASSERT_EQ(bytes, "payloadpayloadpayloadpayload");
+  ASSERT_OK(persisted);
+  ASSERT_OK(stopped);
+}
+
+TEST_F(TieredStorageTest,
+       WorkerReclaimsReleasedReaderPinWithHddBarrierPending) {
+  Initialize(21);
+  ASSERT_OK(CreateClosedLocalSegments(3));
+  const auto source = FirstExtentPath();
+  TestGate local_read, second_migration, third_migration;
+  unsigned migrations = 0;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierLocalReadPinned",
+                                        [&](void*) { local_read.Block(); });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierMigrationSelected",
+                                        [&](void*) {
+                                          if (++migrations == 2)
+                                            second_migration.Block();
+                                          else if (migrations == 3)
+                                            third_migration.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status read, persisted;
+  std::string bytes;
+  std::thread reader([&] { read = ReadBytes(0, 7, &bytes); });
+  local_read.WaitUntilBlocked();
+  auto waiter = StartWorkerWithPersist(21, &persisted);
+  second_migration.WaitUntilBlocked();
+  EXPECT_EQ(HddEnd(), 7);
+  EXPECT_EQ(PendingBarrierCount(), 1);
+  EXPECT_EQ(LocalPins(), 1);
+  EXPECT_EQ(RetiredLocalCount(), 1);
+  EXPECT_EQ(TierStats().staging_bytes, 21);
+  EXPECT_OK(fs_->FileExists(source, IOOptions(), nullptr));
+  local_read.Release();
+  reader.join();
+  second_migration.Release();
+  third_migration.WaitUntilBlocked();
+  EXPECT_EQ(LocalPins(), 0);
+  EXPECT_EQ(RetiredLocalCount(), 1);
+  EXPECT_EQ(TierStats().staging_bytes, 14);
+  EXPECT_EQ(HddEnd(), 14);
+  EXPECT_EQ(PendingBarrierCount(), 1);
+  EXPECT_TRUE(fs_->FileExists(source, IOOptions(), nullptr).IsNotFound());
+  third_migration.Release();
+  waiter.join();
+  Status stopped = storage_->Stop();
+  ASSERT_OK(read);
+  ASSERT_EQ(bytes, "payload");
+  ASSERT_OK(persisted);
+  ASSERT_OK(stopped);
+}
+
+TEST_F(TieredStorageTest, WorkerLocalDeleteFailureRetainsQuotaAndFirstError) {
+  CheckWorkerReclaimFailure(true);
+}
+
+TEST_F(TieredStorageTest, WorkerLocalDirsyncFailureRetainsQuotaAndFirstError) {
+  CheckWorkerReclaimFailure(false);
+}
+
 TEST_F(TieredStorageTest, BlockedPrefixAllowsSuffixButSyncWaitsForHddPrefix) {
   Initialize(64);
   std::unique_ptr<FSWritableFile> writer;
@@ -6857,6 +7591,8 @@ TEST_F(TieredStorageTest,
     std::unique_ptr<FSWritableFile> historical;
     ASSERT_OK(LocalWriter(3, &historical));
     ASSERT_OK(historical->Append(std::string(256, 'h'), IOOptions(), nullptr));
+    // The spilled writer's Close waits for its queued HDD seal and publication.
+    storage_->Start();
     ASSERT_OK(historical->Close(IOOptions(), nullptr));
     const auto other_point = root_ + "/historical-map";
     ASSERT_OK(storage_->SaveCheckpoint(other_point, {{1, 10}, {3, 256}}));
@@ -6902,6 +7638,172 @@ TEST_F(TieredStorageTest,
     Clean(m_.data_dir);
     Clean(m_.staging_dir);
   }
+}
+
+TEST_F(TieredStorageTest, AlwaysFullSuffixFsyncDoesNotBlockAppendOrFlush) {
+  CheckAlwaysBlockedSeal("MetaBypass::TierBeforeHddExtentFsync");
+}
+TEST_F(TieredStorageTest, AlwaysFullSuffixReadbackDoesNotBlockAppendOrFlush) {
+  CheckAlwaysBlockedSeal("MetaBypass::TierPayloadVerified");
+}
+TEST_F(TieredStorageTest,
+       AlwaysFullSuffixPublicationDoesNotBlockAppendOrFlush) {
+  CheckAlwaysBlockedSeal("MetaBypass::TierDescriptorSynced");
+}
+TEST_F(TieredStorageTest, AlwaysThirdSealBackpressureWakesOnFirstError) {
+  CheckAlwaysQueueWake("error");
+}
+TEST_F(TieredStorageTest, AlwaysThirdSealBackpressureWakesOnStop) {
+  CheckAlwaysQueueWake("stop");
+}
+TEST_F(TieredStorageTest, AlwaysThirdSealBackpressureWakesOnGc) {
+  CheckAlwaysQueueWake("gc");
+}
+TEST_F(TieredStorageTest, AlwaysSealBarriersKeepIndependentHddWatermarks) {
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_NO_FATAL_FAILURE(PrepareAlwaysSpilled(&writer));
+  constexpr uint64_t extent = 32 * 1024 * 1024;
+  TestGate first_seal, second_seal;
+  std::atomic<unsigned> seals{0}, waits{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierBeforeHddExtentFsync",
+                                        [&](void*) {
+                                          if (++seals == 1)
+                                            first_seal.Block();
+                                          else
+                                            second_seal.Block();
+                                        });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::TierBarrierWaiting", [&](void*) {
+        const auto count = ++waits;
+        if (count == 1) TEST_SYNC_POINT("AlwaysBarrier::LowQueued");
+        if (count == 2) TEST_SYNC_POINT("AlwaysBarrier::CloseQueued");
+        if (count == 3) TEST_SYNC_POINT("AlwaysBarrier::FsyncQueued");
+      });
+  SyncPoint::GetInstance()->LoadDependency(
+      {{"AlwaysBarrier::LowQueued", "AlwaysBarrier::LowWaiting"},
+       {"AlwaysBarrier::CloseQueued", "AlwaysBarrier::CloseWaiting"},
+       {"AlwaysBarrier::FsyncQueued", "AlwaysBarrier::FsyncWaiting"},
+       {"MetaBypass::TierPersistRequested", "AlwaysBarrier::PersistWaiting"}});
+  SyncPoint::GetInstance()->EnableProcessing();
+  storage_->Start();
+  ASSERT_OK(writer->Append(std::string(extent - 1, 'h'), IOOptions(), nullptr));
+  first_seal.WaitUntilBlocked();
+  Status low, closed, fsynced, persisted;
+  std::atomic<bool> low_done{false}, close_done{false}, fsync_done{false},
+      persist_done{false};
+  std::thread sync([&] {
+    low = writer->Sync(IOOptions(), nullptr);
+    low_done = true;
+  });
+  TEST_SYNC_POINT("AlwaysBarrier::LowWaiting");
+  EXPECT_OK(writer->Append("tail", IOOptions(), nullptr));
+  std::thread close([&] {
+    closed = writer->Close(IOOptions(), nullptr);
+    close_done = true;
+  });
+  TEST_SYNC_POINT("AlwaysBarrier::CloseWaiting");
+  std::thread fsync([&] {
+    fsynced = writer->Fsync(IOOptions(), nullptr);
+    fsync_done = true;
+  });
+  TEST_SYNC_POINT("AlwaysBarrier::FsyncWaiting");
+  std::thread persist([&] {
+    persisted = storage_->Persist({{1, extent + 5}});
+    persist_done = true;
+  });
+  TEST_SYNC_POINT("AlwaysBarrier::PersistWaiting");
+  EXPECT_FALSE(low_done.load());
+  EXPECT_FALSE(close_done.load());
+  EXPECT_FALSE(fsync_done.load());
+  EXPECT_FALSE(persist_done.load());
+  EXPECT_TRUE(storage_->SaveCheckpoint(root_ + "/early", {{1, extent + 5}})
+                  .IsCorruption());
+  first_seal.Release();
+  second_seal.WaitUntilBlocked();
+  sync.join();
+  EXPECT_OK(low);
+  EXPECT_EQ(HddEnd(), extent + 1);
+  EXPECT_FALSE(close_done.load());
+  EXPECT_FALSE(fsync_done.load());
+  EXPECT_FALSE(persist_done.load());
+  EXPECT_FALSE(FinalPublished());
+  second_seal.Release();
+  close.join();
+  fsync.join();
+  persist.join();
+  EXPECT_OK(closed);
+  EXPECT_OK(fsynced);
+  EXPECT_OK(persisted);
+  EXPECT_TRUE(FinalPublished());
+  ASSERT_OK(storage_->SaveCheckpoint(root_ + "/complete", {{1, extent + 5}}));
+  ASSERT_OK(storage_->Stop());
+  writer.reset();
+  storage_.reset();
+  Clean(m_.staging_dir);
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+  ASSERT_OK(storage_->Initialize(false));
+  std::string actual;
+  ASSERT_OK(ReadBytes(extent - 1, 6, &actual));
+  ASSERT_EQ(actual, "hhtail");
+  ASSERT_TRUE(FinalPublished());
+}
+
+#ifndef OS_WIN
+TEST_F(TieredStorageTest, AlwaysProcessCrashSealOwnershipAndPublication) {
+  for (const char* hook :
+       {"MetaBypass::TierHandoffPersisted", "MetaBypass::TierHandoffQueued",
+        "MetaBypass::TierPayloadSynced", "MetaBypass::TierPayloadVerified",
+        "MetaBypass::TierPublicationSynced", "MetaBypass::TierRouteDurable"}) {
+    SCOPED_TRACE(hook);
+    EnableTier(1);
+    const pid_t child = fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+      execl(executable.c_str(), executable.c_str(), "--v5-always-crash-writer",
+            m_.data_dir.c_str(), m_.staging_dir.c_str(), hook, nullptr);
+      _exit(127);
+    }
+    int status;
+    ASSERT_EQ(waitpid(child, &status, 0), child);
+    ASSERT_TRUE(WIFSIGNALED(status));
+    ASSERT_EQ(WTERMSIG(status), SIGKILL);
+    Initialize(1);
+    constexpr size_t extent = 32 * 1024 * 1024;
+    std::string actual;
+    ASSERT_OK(ReadBytes(0, extent + 2, &actual));
+    ASSERT_EQ(actual, "s" + std::string(extent, 'h'));
+    storage_->Start();
+    ASSERT_OK(storage_->Persist({{1, extent + 1}}));
+    ASSERT_OK(storage_->Stop());
+    storage_.reset();
+    Clean(m_.data_dir);
+    Clean(m_.staging_dir);
+  }
+}
+#endif
+
+TEST_F(TieredStorageTest, AlwaysPendingPowerLossFailsClosed) {
+  auto fault = std::make_shared<FaultInjectionTestFS>(fs_);
+  fault->SetInjectUnsyncedDataLoss(true);
+  fs_ = fault;
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_NO_FATAL_FAILURE(PrepareAlwaysSpilled(&writer));
+  constexpr size_t extent = 32 * 1024 * 1024;
+  ASSERT_OK(writer->Append(std::string(extent - 1, 'h'), IOOptions(), nullptr));
+  ASSERT_EQ(AdaptiveStat(&MetaBypassStats::adaptive_pending_seals), 1);
+  ASSERT_OK(writer->Append("later", IOOptions(), nullptr));
+  ASSERT_OK(writer->Flush(IOOptions(), nullptr));
+  ASSERT_OK(storage_->Stop());
+  writer.reset();
+  storage_.reset();
+  ASSERT_OK(fault->DropUnsyncedFileData());
+  ASSERT_OK(fault->DeleteFilesCreatedAfterLastDirSync(IOOptions(), nullptr));
+  fault->ResetState();
+  const auto before = TierFiles();
+  storage_.reset(new TieredStorage(fs_, m_, "tier-test"));
+  ASSERT_TRUE(storage_->Initialize(false).IsCorruption());
+  ASSERT_EQ(TierFiles(), before);
+  ASSERT_OK(storage_->Stop());
 }
 
 TEST_F(TieredStorageTest, AdaptiveLowPressureDoesNotWriteSsdPayload) {
@@ -7161,6 +8063,262 @@ TEST_F(TieredStorageTest, AdaptiveAdmissionCountersBeforeMigration) {
 }
 TEST_F(TieredStorageTest, AdaptiveAdmissionCountersAfterMigration) {
   CheckAdaptiveAdmissionCounters(true);
+}
+
+TEST_F(TieredStorageTest, PhysicalObserverWriteEntriesPreserveAccounting) {
+  auto pressure = std::make_shared<HddPressure>(20000);
+  pressure->Stop();
+  auto probe = std::make_shared<ObserverProbe>(fs_);
+  auto observed = ObserveHdd(probe, "/observer/data", "/observer/backup",
+                             pressure, "/observer/index", "/observer/staging");
+  for (const std::string area : {"index", "staging", "data", "backup"}) {
+    SCOPED_TRACE(area);
+    const std::string path = "/observer/" + area + "/payload";
+    std::unique_ptr<FSWritableFile> file, reopened, reused;
+    std::unique_ptr<FSRandomRWFile> rw;
+    ASSERT_OK(observed->NewWritableFile(path, FileOptions(), &file, nullptr));
+    ASSERT_OK(
+        observed->ReopenWritableFile(path, FileOptions(), &reopened, nullptr));
+    ASSERT_OK(observed->ReuseWritableFile(path, path, FileOptions(), &reused,
+                                          nullptr));
+    ASSERT_OK(observed->NewRandomRWFile(path, FileOptions(), &rw, nullptr));
+    const DataVerificationInfo verification;
+    const std::vector<std::function<IOStatus()>> writes{
+        [&] { return file->Append("abc", IOOptions(), nullptr); },
+        [&] { return file->Append("abc", IOOptions(), verification, nullptr); },
+        [&] { return file->PositionedAppend("abc", 0, IOOptions(), nullptr); },
+        [&] {
+          return file->PositionedAppend("abc", 0, IOOptions(), verification,
+                                        nullptr);
+        },
+        [&] { return reopened->Append("abc", IOOptions(), nullptr); },
+        [&] { return reused->Append("abc", IOOptions(), nullptr); },
+        [&] { return rw->Write(0, "abc", IOOptions(), nullptr); }};
+    for (const auto purpose :
+         {HddPurpose::kCaller, HddPurpose::kBulk, HddPurpose::kBarrier}) {
+      HddPurposeScope scope(purpose);
+      for (bool fail : {false, true}) {
+        probe->fail = fail;
+        for (const auto& write : writes) {
+          // Change purpose inside the backend, leaving it changed until the
+          // observer returns. Accounting must use the call's entry purpose.
+          std::unique_ptr<HddPurposeScope> backend_scope;
+          probe->before = [&](ObserverProbe::Op) {
+            backend_scope.reset(new HddPurposeScope(HddPurpose::kBulk));
+          };
+          auto status = write();
+          EXPECT_EQ(status.IsIOError(), fail);
+          backend_scope.reset();
+          probe->before = {};
+        }
+      }
+    }
+    ASSERT_OK(file->Close(IOOptions(), nullptr));
+    ASSERT_OK(reopened->Close(IOOptions(), nullptr));
+    ASSERT_OK(reused->Close(IOOptions(), nullptr));
+    ASSERT_OK(rw->Close(IOOptions(), nullptr));
+  }
+  const auto stats = pressure->Snapshot();
+  for (auto bytes : stats.written_bytes) EXPECT_EQ(bytes, 63);
+  for (auto bytes : stats.purpose_write_bytes) EXPECT_EQ(bytes, 84);
+  EXPECT_EQ(stats.failed_writes, 84);
+  EXPECT_EQ(stats.calls[0], 84);
+  EXPECT_EQ(stats.bytes[0], 126);
+  EXPECT_EQ(probe->calls[ObserverProbe::kWrite], 168);
+}
+
+TEST_F(TieredStorageTest, PhysicalObserverSsdBypassesPressureAndForwardsIo) {
+  auto pressure = std::make_shared<HddPressure>(20000);
+  pressure->Stop();
+  unsigned clock_calls = 0;
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::HddClock",
+                                        [&](void*) { ++clock_calls; });
+  SyncPoint::GetInstance()->EnableProcessing();
+  auto probe = std::make_shared<ObserverProbe>(fs_);
+  auto observed = ObserveHdd(probe, "/observer/data", "/observer/backup",
+                             pressure, "/observer/index", "/observer/staging");
+  for (const std::string area : {"index", "staging"}) {
+    const std::string path = "/observer/" + area + "/payload";
+    std::unique_ptr<FSWritableFile> writer;
+    std::unique_ptr<FSRandomRWFile> rw;
+    std::unique_ptr<FSRandomAccessFile> reader;
+    std::unique_ptr<FSSequentialFile> sequential;
+    std::unique_ptr<FSDirectory> directory;
+    ASSERT_OK(observed->NewWritableFile(path, FileOptions(), &writer, nullptr));
+    ASSERT_OK(observed->NewRandomRWFile(path, FileOptions(), &rw, nullptr));
+    ASSERT_OK(
+        observed->NewRandomAccessFile(path, FileOptions(), &reader, nullptr));
+    ASSERT_OK(
+        observed->NewSequentialFile(path, FileOptions(), &sequential, nullptr));
+    ASSERT_OK(observed->NewDirectory(path, IOOptions(), &directory, nullptr));
+    for (bool fail : {false, true}) {
+      probe->fail = fail;
+      const auto check = [&](IOStatus status) {
+        EXPECT_EQ(status.IsIOError(), fail);
+      };
+      // Holding the HDD observation lock also proves that SSD forwarding and
+      // its accounting do not depend on an in-flight HDD evaluation.
+      WithObserverLock(pressure.get(), [&] {
+        check(writer->Append("abc", IOOptions(), nullptr));
+        check(writer->Flush(IOOptions(), nullptr));
+        check(writer->Sync(IOOptions(), nullptr));
+        check(writer->Fsync(IOOptions(), nullptr));
+        check(rw->Write(0, "abc", IOOptions(), nullptr));
+        check(rw->Flush(IOOptions(), nullptr));
+        check(rw->Sync(IOOptions(), nullptr));
+        check(rw->Fsync(IOOptions(), nullptr));
+        check(observed->SyncFile(path, FileOptions(), IOOptions(), true,
+                                 nullptr));
+        check(directory->Fsync(IOOptions(), nullptr));
+        check(directory->FsyncWithDirOptions(IOOptions(), nullptr,
+                                             DirFsyncOptions()));
+        char scratch[3];
+        Slice value;
+        check(reader->Read(0, 3, IOOptions(), &value, scratch, nullptr));
+        EXPECT_EQ(value.ToString(), fail ? "" : "abc");
+        check(rw->Read(0, 3, IOOptions(), &value, scratch, nullptr));
+        check(sequential->Read(3, IOOptions(), &value, scratch, nullptr));
+        FSReadRequest requests[2];
+        for (auto& request : requests) {
+          request.len = 3;
+          request.scratch = scratch;
+        }
+        ASSERT_OK(reader->MultiRead(requests, 2, IOOptions(), nullptr));
+        for (const auto& request : requests) check(request.status);
+        unsigned callbacks = 0;
+        FSReadRequest request;
+        request.len = 3;
+        request.scratch = scratch;
+        void* handle = nullptr;
+        IOHandleDeleter deleter;
+        ASSERT_OK(reader->ReadAsync(
+            request, IOOptions(),
+            [&](FSReadRequest& result, void*) {
+              check(result.status);
+              ++callbacks;
+            },
+            nullptr, &handle, &deleter, nullptr));
+        EXPECT_FALSE(reader->SubmitReadAsync(
+            request, IOOptions(),
+            [&](FSReadRequest& result) {
+              check(result.status);
+              ++callbacks;
+            },
+            nullptr));
+        EXPECT_EQ(callbacks, 2);
+      });
+    }
+    ASSERT_OK(writer->Close(IOOptions(), nullptr));
+    ASSERT_OK(rw->Close(IOOptions(), nullptr));
+  }
+  EXPECT_EQ(clock_calls, 0);
+  for (const auto op :
+       {ObserverProbe::kWrite, ObserverProbe::kFlush, ObserverProbe::kSync,
+        ObserverProbe::kFsync, ObserverProbe::kDirectory})
+    EXPECT_EQ(probe->calls[op], 8);
+  EXPECT_EQ(probe->calls[ObserverProbe::kRead], 28);
+  EXPECT_EQ(probe->calls[ObserverProbe::kSyncFile], 4);
+  const auto stats = pressure->Snapshot();
+  EXPECT_EQ(stats.written_bytes[0], 6);
+  EXPECT_EQ(stats.written_bytes[1], 6);
+  EXPECT_EQ(stats.failed_writes, 4);
+  for (auto calls : stats.calls) EXPECT_EQ(calls, 0);
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+
+TEST_F(TieredStorageTest, PhysicalObserverSsdProgressCannotRecoverHddPressure) {
+  auto pressure = std::make_shared<HddPressure>(20000);
+  pressure->Stop();
+  std::atomic<uint64_t> now{10000000};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::HddClock", [&](void* p) {
+    *static_cast<uint64_t*>(p) = now.load();
+  });
+  SyncPoint::GetInstance()->EnableProcessing();
+  auto probe = std::make_shared<ObserverProbe>(fs_);
+  auto observed = ObserveHdd(probe, "/observer/data", "/observer/backup",
+                             pressure, "/observer/index", "/observer/staging");
+  std::unique_ptr<FSWritableFile> hdd, ssd;
+  ASSERT_OK(observed->NewWritableFile("/observer/data/payload", FileOptions(),
+                                      &hdd, nullptr));
+  ASSERT_OK(observed->NewWritableFile("/observer/staging/payload",
+                                      FileOptions(), &ssd, nullptr));
+  TestGate blocked;
+  probe->before = [&](ObserverProbe::Op op) {
+    if (op == ObserverProbe::kFsync) blocked.Block();
+  };
+  Status synced;
+  std::thread thread([&] { synced = hdd->Fsync(IOOptions(), nullptr); });
+  blocked.WaitUntilBlocked();
+  now += 20001;
+  EXPECT_OK(ssd->Append("abc", IOOptions(), nullptr));
+  EXPECT_OK(ssd->Flush(IOOptions(), nullptr));
+  EXPECT_TRUE(pressure->Pressured());
+  blocked.Release();
+  thread.join();
+  EXPECT_OK(synced);
+  probe->before = {};
+  now += 2000001;
+  for (unsigned i = 0; i < 5; ++i) {
+    ASSERT_OK(ssd->Append("abc", IOOptions(), nullptr));
+    ASSERT_OK(ssd->Flush(IOOptions(), nullptr));
+  }
+  EXPECT_TRUE(pressure->Pressured());
+  EXPECT_EQ(pressure->Snapshot().recovered, 0);
+  // The successful blocked Fsync supplied progress one. Only real HDD
+  // completions can provide the remaining two pieces of recovery evidence.
+  for (unsigned i = 0; i < 2; ++i) ASSERT_OK(hdd->Flush(IOOptions(), nullptr));
+  EXPECT_FALSE(pressure->Pressured());
+  EXPECT_EQ(pressure->Snapshot().recovered, 1);
+  ASSERT_OK(hdd->Close(IOOptions(), nullptr));
+  ASSERT_OK(ssd->Close(IOOptions(), nullptr));
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+}
+
+TEST_F(TieredStorageTest, PhysicalObserverConcurrentSsdSnapshotsStayBalanced) {
+  auto pressure = std::make_shared<HddPressure>(20000);
+  pressure->Stop();
+  std::atomic<unsigned> done{0};
+  std::vector<std::thread> writers;
+  constexpr unsigned kThreads = 6, kWrites = 1000;
+  for (unsigned t = 0; t < kThreads; ++t) {
+    writers.emplace_back([&, t] {
+      auto probe = std::make_shared<ObserverProbe>(fs_);
+      auto observed =
+          ObserveHdd(probe, "/observer/data", "/observer/backup", pressure,
+                     "/observer/index", "/observer/staging");
+      const std::array<HddPurpose, 3> purposes{
+          HddPurpose::kCaller, HddPurpose::kBulk, HddPurpose::kBarrier};
+      HddPurposeScope purpose(purposes[t % purposes.size()]);
+      std::unique_ptr<FSWritableFile> file;
+      EXPECT_OK(observed->NewWritableFile(
+          t % 2 == 0 ? "/observer/index/payload" : "/observer/staging/payload",
+          FileOptions(), &file, nullptr));
+      for (unsigned i = 0; i < kWrites; ++i) {
+        probe->fail = i % 7 == 0;
+        auto status = file->Append("abc", IOOptions(), nullptr);
+        EXPECT_EQ(status.IsIOError(), probe->fail);
+      }
+      EXPECT_OK(file->Close(IOOptions(), nullptr));
+      ++done;
+    });
+  }
+  do {
+    const auto stats = pressure->Snapshot();
+    EXPECT_EQ(stats.written_bytes[0] + stats.written_bytes[1],
+              stats.purpose_write_bytes[0] + stats.purpose_write_bytes[1] +
+                  stats.purpose_write_bytes[2]);
+  } while (done.load() != kThreads);
+  for (auto& writer : writers) writer.join();
+  const auto stats = pressure->Snapshot();
+  constexpr uint64_t kFailures = (kWrites + 6) / 7;
+  EXPECT_EQ(stats.failed_writes, kThreads * kFailures);
+  EXPECT_EQ(stats.written_bytes[0], 3 * (kWrites - kFailures) * 3);
+  EXPECT_EQ(stats.written_bytes[1], 3 * (kWrites - kFailures) * 3);
+  for (auto bytes : stats.purpose_write_bytes)
+    EXPECT_EQ(bytes, 2 * (kWrites - kFailures) * 3);
+  WithObserverLock(pressure.get(), [] {});
 }
 
 TEST_F(TieredStorageTest, AdaptivePhysicalObserverCountsPerOperationPurpose) {
@@ -7860,6 +9018,9 @@ TEST_F(TieredStorageTest, SuffixCanApplyBeforeEarlierPrefixPublication) {
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::TierBarrierWaiting",
                                         [&](void*) { suffix_wait.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
+  // Queue the suffix before starting the sole physical executor, without
+  // installing an H barrier that would prioritize its earlier SSD hole.
+  ASSERT_OK(FreezeAdaptiveCaller());
   storage_->Start();
   prefix.WaitUntilBlocked();
   Status synced;
@@ -8379,6 +9540,41 @@ int main(int argc, char** argv) {
       fprintf(stderr, "%s\n", s.ToString().c_str());
       return 2;
     }
+    return 3;
+  }
+  if (argc == 5 && std::string(argv[1]) == "--v5-always-crash-writer") {
+    using ROCKSDB_NAMESPACE::BlobFileName;
+    using ROCKSDB_NAMESPACE::Env;
+    using ROCKSDB_NAMESPACE::FileOptions;
+    using ROCKSDB_NAMESPACE::FSWritableFile;
+    using ROCKSDB_NAMESPACE::IOOptions;
+    using ROCKSDB_NAMESPACE::metabypass::EnsureDir;
+    using ROCKSDB_NAMESPACE::metabypass::TieredStorage;
+    MetaBypassOptions options;
+    options.data_dir = argv[2];
+    options.staging_dir = argv[3];
+    options.staging_capacity = 1;
+    auto fs = Env::Default()->GetFileSystem();
+    Status s = EnsureDir(fs.get(), options.data_dir);
+    TieredStorage storage(fs, options, "tier-test");
+    if (s.ok()) s = storage.Initialize(false);
+    std::unique_ptr<FSWritableFile> writer;
+    if (s.ok())
+      s = storage.NewWritableFile(BlobFileName(options.data_dir, 1),
+                                  FileOptions(), &writer, nullptr);
+    if (s.ok()) s = writer->Append("s", IOOptions(), nullptr);
+    if (s.ok()) s = writer->Append("h", IOOptions(), nullptr);
+    SyncPoint::GetInstance()->SetCallBack(
+        argv[4], [](void*) { kill(getpid(), SIGKILL); });
+    SyncPoint::GetInstance()->EnableProcessing();
+    constexpr size_t extent = 32 * 1024 * 1024;
+    if (s.ok())
+      s = writer->Append(std::string(extent - 1, 'h'), IOOptions(), nullptr);
+    storage.Start();
+    if (s.ok()) s = writer->Close(IOOptions(), nullptr);
+    fprintf(stderr, "always crash boundary not reached: %s\n",
+            s.ToString().c_str());
+    storage.Stop().PermitUncheckedError();
     return 3;
   }
   if (argc == 5 && std::string(argv[1]) == "--v5-adaptive-crash-writer") {

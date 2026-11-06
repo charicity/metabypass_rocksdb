@@ -24,6 +24,7 @@
 #include "test_util/testharness.h"
 #include "util/cast_util.h"
 #include "util/crc32c.h"
+#include "util/defer.h"
 #include "util/random.h"
 #include "utilities/fault_injection_fs.h"
 #include "utilities/metabypass/backup.h"
@@ -774,7 +775,10 @@ class MetaBypassTest : public testing::Test {
     ASSERT_NO_FATAL_FAILURE(Open());
     Check("after", "restored");
   }
-  void DirectWriteFailureScenario(const std::string& point, bool tier) {
+  enum class DirectWriteFailurePhase { kBackup, kBeforeWal };
+  void DirectWriteFailureScenario(
+      const std::string& point, bool tier,
+      DirectWriteFailurePhase phase = DirectWriteFailurePhase::kBackup) {
     EnableDirectWrite();
     if (tier) EnableTier();
     ASSERT_NO_FATAL_FAILURE(Open());
@@ -782,19 +786,74 @@ class MetaBypassTest : public testing::Test {
     sync.sync = true;
     ASSERT_OK(db_->Put(sync, "key", "old"));
     const std::string published = PublishedPoint();
-    SyncPoint::GetInstance()->SetCallBack(point, [](void* arg) {
-      *static_cast<Status*>(arg) = Status::IOError("direct checkpoint failure");
+    const Status failure = Status::IOError("direct checkpoint failure");
+    TestGate before_wal, migration_failed;
+    Status result;
+    std::thread writer;
+    Defer cleanup([&] {
+      before_wal.Release();
+      migration_failed.Release();
+      if (phase == DirectWriteFailurePhase::kBeforeWal)
+        TEST_SYNC_POINT("DirectWriteFailure::BeforeWal");
+      if (writer.joinable()) writer.join();
+      result.PermitUncheckedError();
+      SyncPoint::GetInstance()->DisableProcessing();
+      SyncPoint::GetInstance()->ClearAllCallBacks();
+      SyncPoint::GetInstance()->LoadDependency({});
     });
+    SyncPoint::GetInstance()->SetCallBack(
+        point, [&](void* arg) { *static_cast<Status*>(arg) = failure; });
+    if (phase == DirectWriteFailurePhase::kBeforeWal) {
+      ASSERT_TRUE(tier);
+      SyncPoint::GetInstance()->LoadDependency(
+          {{"DirectWriteFailure::BeforeWal", "MetaBypass::TierMigration"}});
+      SyncPoint::GetInstance()->SetCallBack(
+          "DBImpl::WriteImpl:AfterBlobDirectWrite", [&](void* arg) {
+            EXPECT_OK(*static_cast<Status*>(arg));
+            before_wal.Block();
+          });
+      // This point follows both tier failure and its backup failure handler.
+      SyncPoint::GetInstance()->SetCallBack(
+          "MetaBypass::TierMigrationComplete",
+          [&](void*) { migration_failed.Block(); });
+    } else if (tier) {
+      // Blob Sync can freeze an extent before the native WAL write. Delay
+      // migration until the completed native write enters its backup barrier.
+      SyncPoint::GetInstance()->LoadDependency(
+          {{"MetaBypass::SyncWaiting", "MetaBypass::TierMigration"}});
+    }
     SyncPoint::GetInstance()->EnableProcessing();
-    ASSERT_TRUE(db_->Put(sync, "key", "new").IsIOError());
-    Check("key", "new");
+    if (phase == DirectWriteFailurePhase::kBeforeWal) {
+      writer = std::thread([&] { result = db_->Put(sync, "key", "new"); });
+      before_wal.WaitUntilBlocked();
+      Check("key", "old");
+      EXPECT_EQ(PublishedPoint(), published);
+      TEST_SYNC_POINT("DirectWriteFailure::BeforeWal");
+      migration_failed.WaitUntilBlocked();
+      auto stats = db_->GetBackupStats();
+      EXPECT_EQ(stats.error.ToString(), failure.ToString());
+      Check("key", "old");
+      EXPECT_EQ(PublishedPoint(), published);
+      migration_failed.Release();
+      before_wal.Release();
+      writer.join();
+    } else {
+      result = db_->Put(sync, "key", "new");
+    }
+    ASSERT_TRUE(result.IsIOError());
+    ASSERT_NE(result.ToString().find("direct checkpoint failure"),
+              std::string::npos);
+    Check("key", phase == DirectWriteFailurePhase::kBeforeWal ? "old" : "new");
     ASSERT_EQ(PublishedPoint(), published);
-    ASSERT_TRUE(db_->SyncBackup().IsIOError());
-    ASSERT_TRUE(db_->Put(WriteOptions(), "rejected", "x").IsIOError());
-    ASSERT_TRUE(db_->Close().IsIOError());
+    ASSERT_EQ(db_->SyncBackup().ToString(), failure.ToString());
+    ASSERT_EQ(db_->Put(WriteOptions(), "rejected", "x").ToString(),
+              failure.ToString());
+    ASSERT_EQ(db_->Close().ToString(), failure.ToString());
+    ASSERT_EQ(db_->Close().ToString(), failure.ToString());
     db_.reset();
     SyncPoint::GetInstance()->DisableProcessing();
     SyncPoint::GetInstance()->ClearAllCallBacks();
+    SyncPoint::GetInstance()->LoadDependency({});
     if (tier) Clean(m_.staging_dir);
     ASSERT_NO_FATAL_FAILURE(Restore());
     Check("key", "old");
@@ -1899,6 +1958,10 @@ TEST_F(MetaBypassTest, DirectWritePublicationFailurePreservesPoint) {
 }
 TEST_F(MetaBypassTest, DirectWriteMigrationFailurePreservesPoint) {
   DirectWriteFailureScenario("MetaBypass::TierExtentSynced", true);
+}
+TEST_F(MetaBypassTest, DirectWriteMigrationFailureBeforeWalPreservesOldValue) {
+  DirectWriteFailureScenario("MetaBypass::TierExtentSynced", true,
+                             DirectWriteFailurePhase::kBeforeWal);
 }
 TEST_F(MetaBypassTest, DirectWriteBlobGCAndRestore) {
   EnableDirectWrite();

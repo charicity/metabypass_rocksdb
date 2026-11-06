@@ -119,12 +119,23 @@ class TierWriter : public FSWritableFile {
   TierWriter(TieredStorage* s, uint64_t n) : storage_(s), number_(n) {}
   IOStatus Append(const Slice& bytes, const IOOptions& o,
                   IODebugContext* d) override {
+    const auto call_started = Micros();
+    OnExit call_timing{[&] {
+      const uint64_t elapsed = Micros() - call_started;
+      unsigned bucket = 0;
+      for (uint64_t value = elapsed; value > 1; value >>= 1) ++bucket;
+      std::lock_guard<std::mutex> lock(storage_->mutex_);
+      ++storage_->append_calls_;
+      storage_->append_us_ += elapsed;
+      ++storage_->append_latency_[bucket];
+    }};
+    HddPurposeScope purpose(HddPurpose::kCaller);
     TieredStorage::Pin pin;
     Status s = pin.Open(storage_, number_);
     if (!s.ok()) return IO(s);
     auto blob = pin.blob;
     const auto append = [&]() -> Status {
-      std::lock_guard<std::mutex> writer(blob->append);
+      std::lock_guard<std::mutex> writer(blob->operation);
       {
         std::lock_guard<std::mutex> lock(storage_->mutex_);
         if (blob->closing || blob->live.closed)
@@ -145,12 +156,14 @@ class TierWriter : public FSWritableFile {
           std::lock_guard<std::mutex> lock(storage_->mutex_);
           if (!storage_->error_.ok()) return storage_->error_;
           if (storage_->stopping_) return Status::ShutdownInProgress();
-          local = !blob->live.spilled;
+          local = storage_->Adaptive() ? storage_->pressure_->Pressured()
+                                       : !blob->live.spilled;
           if (local) {
             const auto start = Micros();
             const uint64_t available = storage_->options_.staging_capacity -
                                        storage_->usage_ - storage_->reserved_;
             local = take <= available;
+            if (!local && storage_->Adaptive()) ++storage_->quota_fallbacks_;
             storage_->quota_us_ += Micros() - start;
             if (local) {
               storage_->reserved_ += take;
@@ -159,7 +172,20 @@ class TierWriter : public FSWritableFile {
             }
           }
         }
-        if (!local) {
+        if (storage_->Adaptive() && active.file &&
+            active.extent.local != local) {
+          Status st = !active.extent.local && local
+                          ? storage_->EnqueueSeal(number_, blob, true)
+                          : storage_->Freeze(number_, blob);
+          if (!st.ok()) {
+            if (local) {
+              std::lock_guard<std::mutex> lock(storage_->mutex_);
+              storage_->reserved_ -= take;
+            }
+            return st;
+          }
+        }
+        if (!local && !storage_->Adaptive()) {
           bool spilled;
           {
             std::lock_guard<std::mutex> lock(storage_->mutex_);
@@ -191,8 +217,11 @@ class TierWriter : public FSWritableFile {
         if (!active.file) st = storage_->Register(number_, blob, local);
         const auto started = Micros();
         const bool attempted = st.ok();
+        std::unique_lock<std::mutex> physical(blob->append);
         if (st.ok())
           st = active.file->Append(Slice(bytes.data() + offset, take), o, d);
+        // Flush this writer before Freeze can transfer it to the worker. The
+        // outer Flush may already see its successor (or no caller writer).
         if (st.ok()) st = active.file->Flush(o, d);
         {
           std::lock_guard<std::mutex> lock(storage_->mutex_);
@@ -211,9 +240,14 @@ class TierWriter : public FSWritableFile {
             active.extent.length += take;
             blob->live.extents.back().length = active.extent.length;
             blob->live.size += take;
-            if (!local) storage_->spill_bytes_ += take;
+            if (!local) {
+              storage_->spill_bytes_ += take;
+              storage_->direct_bytes_ += take;
+            } else
+              storage_->staged_bytes_ += take;
           }
         }
+        physical.unlock();
         if (!st.ok()) return st;
         offset += take;
         TEST_SYNC_POINT("MetaBypass::TierAppendVisible");
@@ -225,7 +259,8 @@ class TierWriter : public FSWritableFile {
       return Status::OK();
     };
     s = append();
-    if (!s.ok() && !s.IsAborted()) storage_->Fail(s);
+    if (!s.ok() && !s.IsAborted() && !s.IsShutdownInProgress())
+      storage_->Fail(s);
     return IO(s);
   }
   IOStatus Append(const Slice& b, const IOOptions& o,
@@ -247,14 +282,26 @@ class TierWriter : public FSWritableFile {
                                   : IOStatus::NotSupported("tiered truncation");
   }
   IOStatus Flush(const IOOptions& o, IODebugContext* d) override {
+    const auto call_started = Micros();
+    OnExit call_timing{[&] {
+      const uint64_t elapsed = Micros() - call_started;
+      unsigned bucket = 0;
+      for (uint64_t value = elapsed; value > 1; value >>= 1) ++bucket;
+      std::lock_guard<std::mutex> lock(storage_->mutex_);
+      ++storage_->flush_calls_;
+      storage_->flush_us_ += elapsed;
+      ++storage_->flush_latency_[bucket];
+    }};
+    HddPurposeScope purpose(HddPurpose::kCaller);
     TieredStorage::Pin pin;
     Status s = pin.Open(storage_, number_);
     if (!s.ok()) return IO(s);
     {
-      std::lock_guard<std::mutex> writer(pin.blob->append);
+      std::lock_guard<std::mutex> writer(pin.blob->operation);
       if (pin.blob->caller.file) s = pin.blob->caller.file->Flush(o, d);
     }
-    if (!s.ok() && !s.IsAborted()) storage_->Fail(s);
+    if (!s.ok() && !s.IsAborted() && !s.IsShutdownInProgress())
+      storage_->Fail(s);
     return IO(s);
   }
   IOStatus Sync(const IOOptions&, IODebugContext*) override {
@@ -285,6 +332,7 @@ class TierWriter : public FSWritableFile {
 
  private:
   IOStatus Finish(bool close) {
+    HddPurposeScope purpose(HddPurpose::kBarrier);
     TieredStorage::Pin pin;
     Status s = pin.Open(storage_, number_);
     if (!s.ok()) return IO(s);
@@ -293,7 +341,7 @@ class TierWriter : public FSWritableFile {
     uint64_t length = 0;
     bool spilled = false;
     {
-      std::lock_guard<std::mutex> writer(blob->append);
+      std::lock_guard<std::mutex> writer(blob->operation);
       {
         std::lock_guard<std::mutex> lock(storage_->mutex_);
         if (close) blob->closing = true;
@@ -310,12 +358,17 @@ class TierWriter : public FSWritableFile {
             },
             TieredStorage::Reason::kClose);
     }
+    if (s.ok() && storage_->Adaptive())
+      s = storage_->Wait(number_, blob, length, false, false);
     // Closed HDD-only blobs can finalize here; an outstanding prefix remains
     // the worker's responsibility. No writer lock is held across either path.
-    if (s.ok() && spilled && close) s = storage_->Finalize(number_, blob);
+    if (s.ok() && !storage_->Adaptive() && spilled && close)
+      s = storage_->Finalize(number_, blob);
     // Never wait for the worker while holding append or commit.
-    if (s.ok() && spilled) s = storage_->Wait(number_, blob, length, close);
-    if (!s.ok() && !s.IsAborted()) storage_->Fail(s);
+    if (s.ok() && !storage_->Adaptive() && spilled)
+      s = storage_->Wait(number_, blob, length, close);
+    if (!s.ok() && !s.IsAborted() && !s.IsShutdownInProgress())
+      storage_->Fail(s);
     return IO(s);
   }
   TieredStorage* storage_;
@@ -324,8 +377,20 @@ class TierWriter : public FSWritableFile {
 
 TieredStorage::TieredStorage(std::shared_ptr<FileSystem> fs,
                              const MetaBypassOptions& o,
-                             const std::string& identity)
-    : FileSystemWrapper(std::move(fs)), options_(o), identity_(Hex(identity)) {}
+                             const std::string& identity,
+                             std::shared_ptr<HddPressure> pressure)
+    : FileSystemWrapper(fs),
+      options_(o),
+      pressure_(std::move(pressure)),
+      identity_(Hex(identity)) {
+  // Direct component callers receive the same single physical boundary as DB.
+  if (!pressure_) {
+    owns_observer_ = true;
+    pressure_ = std::make_shared<HddPressure>(o.staging_latency_budget_us);
+    target_ = ObserveHdd(std::move(fs), o.data_dir, o.backup_dir, pressure_, {},
+                         o.staging_dir);
+  }
+}
 void TieredStorage::SetIdentity(const std::string& identity) {
   std::lock_guard<std::mutex> lock(mutex_);
   identity_ = Hex(identity);
@@ -400,7 +465,7 @@ void TieredStorage::Pin::Ranges(const Version& version) {
 uint64_t TieredStorage::DurableEnd(const Version& v, bool hdd) {
   uint64_t end = 0;
   for (const auto& e : v.extents) {
-    if (e.start != end || (hdd && (e.local || e.open))) break;
+    if (e.start != end || (hdd && (e.local || e.open || e.pending))) break;
     end += e.durable;
     if (e.durable != e.length) break;
   }
@@ -408,8 +473,9 @@ uint64_t TieredStorage::DurableEnd(const Version& v, bool hdd) {
 }
 bool TieredStorage::Complete(const Version& v) {
   return v.closed && DurableEnd(v, true) == v.size &&
-         std::all_of(v.extents.begin(), v.extents.end(),
-                     [](const Extent& e) { return !e.local && !e.open; });
+         std::all_of(v.extents.begin(), v.extents.end(), [](const Extent& e) {
+           return !e.local && !e.open && !e.pending;
+         });
 }
 bool TieredStorage::Equal(const Version& a, const Version& b) {
   if (a.identity != b.identity || a.incarnation != b.incarnation ||
@@ -422,7 +488,8 @@ bool TieredStorage::Equal(const Version& a, const Version& b) {
                       return x.start == y.start && x.length == y.length &&
                              x.durable == y.durable && x.name == y.name &&
                              x.origin == y.origin && x.local == y.local &&
-                             x.open == y.open && x.crc == y.crc;
+                             x.open == y.open && x.pending == y.pending &&
+                             x.crc == y.crc;
                     });
 }
 std::string TieredStorage::Encode(const Version& v, bool local) {
@@ -431,12 +498,11 @@ std::string TieredStorage::Encode(const Version& v, bool local) {
   out << v.identity << ' ' << v.number << ' ' << v.incarnation << ' '
       << v.generation << ' ';
   if (local) {
-    out << v.size << ' ' << v.closed << ' ' << v.spilled << ' ' << v.boundary
-        << ' ' << v.extents.size() << '\n';
+    out << v.size << ' ' << v.closed << ' ' << v.extents.size() << '\n';
     for (const auto& e : v.extents)
       out << e.start << ' ' << e.length << ' ' << e.durable << ' '
-          << kExtentSize << ' ' << e.local << ' ' << e.open << ' ' << e.crc
-          << ' ' << e.name << ' ' << e.origin << '\n';
+          << kExtentSize << ' ' << e.local << ' ' << e.open << ' ' << e.pending
+          << ' ' << e.crc << ' ' << e.name << ' ' << e.origin << '\n';
   } else {
     out << (v.retired  ? "RETIRED"
             : v.closed ? "COMPLETE"
@@ -447,7 +513,7 @@ std::string TieredStorage::Encode(const Version& v, bool local) {
           << e.origin << '\n';
   }
   const auto body = out.str();
-  return std::string(local ? "MBL4 " : "MBT4 ") +
+  return std::string(local ? "MBL5 " : "MBT5 ") +
          std::to_string(crc32c::Value(body.data(), body.size())) + "\n" + body;
 }
 Status TieredStorage::Decode(const std::string& bytes, Version* v, bool local) {
@@ -456,7 +522,7 @@ Status TieredStorage::Decode(const std::string& bytes, Version* v, bool local) {
   std::string magic, extra;
   uint32_t crc;
   std::istringstream header(bytes.substr(0, split));
-  if (!(header >> magic >> crc) || magic != (local ? "MBL4" : "MBT4") ||
+  if (!(header >> magic >> crc) || magic != (local ? "MBL5" : "MBT5") ||
       (header >> extra))
     return Status::Corruption("tier format");
   const auto body = bytes.substr(split + 1);
@@ -469,13 +535,11 @@ Status TieredStorage::Decode(const std::string& bytes, Version* v, bool local) {
       !Token(v->identity) || !Token(v->incarnation) || !v->generation)
     return Status::Corruption("tier identity");
   if (local) {
-    unsigned closed, spilled;
-    if (!(in >> v->size >> closed >> spilled >> v->boundary >> count) ||
-        closed > 1 || spilled > 1 || v->boundary > v->size ||
-        (!spilled && v->boundary))
+    unsigned closed;
+    if (!(in >> v->size >> closed >> count) || closed > 1)
       return Status::Corruption("local header");
     v->closed = closed;
-    v->spilled = spilled;
+
   } else {
     std::string state;
     if (!(in >> state >> v->size >> count) ||
@@ -492,13 +556,14 @@ Status TieredStorage::Decode(const std::string& bytes, Version* v, bool local) {
     Extent e;
     if (local) {
       uint64_t maximum;
-      unsigned medium, open;
+      unsigned medium, open, pending;
       if (!(in >> e.start >> e.length >> e.durable >> maximum >> medium >>
-            open >> e.crc >> e.name >> e.origin) ||
-          maximum != kExtentSize || medium > 1 || open > 1)
+            open >> pending >> e.crc >> e.name >> e.origin) ||
+          maximum != kExtentSize || medium > 1 || open > 1 || pending > 1)
         return Status::Corruption("local range");
       e.local = medium;
       e.open = open;
+      e.pending = pending;
     } else {
       if (!(in >> e.start >> e.length >> e.crc >> e.name >> e.origin))
         return Status::Corruption("remote range");
@@ -513,13 +578,14 @@ Status TieredStorage::Decode(const std::string& bytes, Version* v, bool local) {
         !SegmentName(e.origin, &owner, &id, &token) || owner != v->number ||
         token != v->incarnation || e.length > kExtentSize ||
         e.start > UINT64_MAX - e.length || e.durable > e.length ||
-        (!e.open && e.durable != e.length) ||
+        (!e.open && !e.pending && e.durable != e.length) ||
+        (e.pending && (e.local || e.open)) ||
         (e.open && (v->closed || i + 1 != count)) ||
         (local ? e.start != end : e.start < end) || (!local && !e.length))
       return Status::Corruption("tier range identity/coverage");
-    if (e.local && (e.name != e.origin ||
-                    (v->spilled && e.start + e.length > v->boundary)))
+    if (e.local && e.name != e.origin)
       return Status::Corruption("local range boundary");
+    if (!e.local) v->spilled = true;
     end = e.start + e.length;
     v->extents.push_back(std::move(e));
   }
@@ -956,6 +1022,17 @@ Status TieredStorage::Register(uint64_t n, const std::shared_ptr<Blob>& blob,
         },
         Reason::kRegister);
   if (s.ok()) {
+    if (Adaptive()) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (blob->has_admission && blob->last_admission_local != local) {
+        if (local)
+          ++to_ssd_;
+        else
+          ++to_hdd_;
+      }
+      blob->has_admission = true;
+      blob->last_admission_local = local;
+    }
     blob->caller = std::move(active);
     TEST_SYNC_POINT("MetaBypass::TierTailRegistered");
   } else if (active.file) {
@@ -965,24 +1042,45 @@ Status TieredStorage::Register(uint64_t n, const std::shared_ptr<Blob>& blob,
   }
   return s;
 }
-Status TieredStorage::Seal(ActiveExtent* active) {
-  const auto start = Micros();
-  if (!active->extent.local) {
-    TEST_SYNC_POINT("MetaBypass::TierBeforeHddExtentFsync");
+Status TieredStorage::Seal(ActiveExtent* active, bool incremental) {
+  Status s;
+  if (!active->synced) {
+    const auto start = Micros();
+    if (!active->extent.local) {
+      TEST_SYNC_POINT("MetaBypass::TierBeforeHddExtentFsync");
+    }
+    s = active->file->Fsync(IOOptions(), nullptr);
+    if (!active->extent.local) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      ++extent_fsyncs_;
+      extent_fsync_us_ += Micros() - start;
+    }
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::TierPayloadSynced", &s);
+    if (!s.ok()) return s;
+    active->synced = true;
   }
-  Status s = active->file->Fsync(IOOptions(), nullptr);
   if (!active->extent.local) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    ++extent_fsyncs_;
-    extent_fsync_us_ += Micros() - start;
-  }
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierPayloadSynced", &s);
-  uint32_t actual = 0;
-  if (s.ok() && !active->extent.local)
-    s = Digest(target(), Path(active->extent), active->extent.length, &actual);
-  if (s.ok() && !active->extent.local && actual != active->crc)
-    s = Status::Corruption("HDD extent checksum");
-  if (!active->extent.local) {
+    do {
+      if (active->readback_offset == active->extent.length) break;
+      const uint64_t end =
+          active->readback_offset +
+          std::min(kChunkSize, active->extent.length - active->readback_offset);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!error_.ok()) return error_;
+      }
+      // Readback is bulk even when a durability barrier requests the seal.
+      HddPurposeScope purpose(HddPurpose::kBulk);
+      s = ExtendDigest(target(), Path(active->extent), active->readback_offset,
+                       end, &active->readback_crc);
+      if (!s.ok()) return s;
+      active->readback_offset = end;
+      TEST_SYNC_POINT("MetaBypass::TierReadbackChunk");
+      if (incremental && end < active->extent.length)
+        return Status::TryAgain("seal readback quantum completed");
+    } while (active->readback_offset < active->extent.length);
+    if (active->readback_crc != active->crc)
+      s = Status::Corruption("HDD extent checksum");
     TEST_SYNC_POINT_CALLBACK("MetaBypass::TierPayloadVerified", &s);
   }
   if (s.ok()) {
@@ -991,6 +1089,7 @@ Status TieredStorage::Seal(ActiveExtent* active) {
   }
   if (s.ok()) {
     active->extent.open = false;
+    active->extent.pending = false;
     active->extent.durable = active->extent.length;
     active->extent.crc = active->crc;
     active->extent.frozen_at = Micros();
@@ -1002,10 +1101,180 @@ Status TieredStorage::Seal(ActiveExtent* active) {
   }
   return s;
 }
+Status TieredStorage::EnqueueSeal(uint64_t n, const std::shared_ptr<Blob>& blob,
+                                  bool install_ssd) {
+  // Caller holds operation, but neither append nor either media commit lock.
+  // A list node is allocated before any durable ownership transfer; splice
+  // below is allocation-free. Capacity includes reservation and in-flight work.
+  std::list<PendingSeal> prepared;
+  prepared.push_back({n, blob, {}});
+  prepared.front().barrier = HddPurposeScope::Current() == HddPurpose::kBarrier;
+  const std::string identity = blob->caller.extent.name;
+  const auto begin = Micros();
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (pending_count_ >= 8 || blob->pending_seals >= 2) {
+      TEST_SYNC_POINT("MetaBypass::TierSealQueueWaiting");
+    }
+    progress_.wait(lock, [&] {
+      return !error_.ok() || stopping_ || blob->retiring ||
+             (pending_count_ < 8 && blob->pending_seals < 2);
+    });
+    pending_wait_us_ += Micros() - begin;
+    if (!error_.ok()) return error_;
+    if (stopping_) return Status::ShutdownInProgress();
+    if (blob->retiring) return Status::Aborted("retiring tier blob");
+    if (!blob->caller.file || blob->caller.extent.name != identity)
+      return Status::Corruption("pending caller identity changed");
+    ++pending_count_;
+    ++blob->pending_seals;
+    peak_pending_count_ = std::max(peak_pending_count_, pending_count_);
+  }
+  bool transferred = false;
+  OnExit release{[&] {
+    if (transferred) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    --pending_count_;
+    --blob->pending_seals;
+    progress_.notify_all();
+  }};
+  ActiveExtent replacement;
+  Status s;
+  if (install_ssd) {
+    replacement.extent.local = true;
+    replacement.extent.start =
+        blob->caller.extent.start + blob->caller.extent.length;
+    replacement.extent.name = NewName(n);
+    replacement.extent.origin = replacement.extent.name;
+    if (replacement.extent.name.empty())
+      return Status::Corruption("tier extent id overflow");
+    FileOptions options = blob->file_options;
+    options.use_direct_writes = false;
+    s = target()->NewWritableFile(Path(replacement.extent), options,
+                                  &replacement.file, nullptr);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::TierHandoffSsdCreated", &s);
+    if (s.ok()) s = replacement.file->Fsync(IOOptions(), nullptr);
+    if (s.ok()) s = SyncDir(target(), options_.staging_dir);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::TierHandoffSsdSynced", &s);
+  }
+  Extent pending = blob->caller.extent;
+  pending.open = false;
+  pending.pending = true;
+  pending.crc = blob->caller.crc;
+  const Extent next = replacement.extent;
+  if (s.ok())
+    s = Commit(
+        n, blob,
+        [pending, next, install_ssd](Version* v) {
+          auto it = std::find_if(
+              v->extents.begin(), v->extents.end(),
+              [&](const Extent& e) { return e.name == pending.name; });
+          if (it == v->extents.end() || !it->open || it + 1 != v->extents.end())
+            return Status::Corruption("pending seal lost active identity");
+          *it = pending;
+          v->size = pending.start + pending.length;
+          if (install_ssd) v->extents.push_back(next);
+          return Status::OK();
+        },
+        Reason::kFreeze);
+  if (!s.ok()) {
+    if (replacement.file)
+      s.UpdateIfOk(replacement.file->Close(IOOptions(), nullptr));
+    return s;
+  }
+  TEST_SYNC_POINT("MetaBypass::TierHandoffPersisted");
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Admission and retirement/Stop are serialized by mutex_. Once either
+    // drain closes admission, never create a new task pin behind its queue
+    // sweep. Keep the caller pin until rejected ownership is closed below.
+    prepared.front().active = std::move(blob->caller);
+    prepared.front().active.extent = pending;
+    blob->caller = std::move(replacement);
+    if (!error_.ok())
+      s = error_;
+    else if (stopping_)
+      s = Status::ShutdownInProgress();
+    else if (blob->retiring)
+      s = Status::Aborted("retiring tier blob");
+    else {
+      ++blob->operations;
+      pending_seals_.splice(pending_seals_.end(), prepared);
+      if (install_ssd) {
+        if (blob->has_admission && !blob->last_admission_local) ++to_ssd_;
+        blob->has_admission = true;
+        blob->last_admission_local = true;
+        const auto response = pressure_->PressureAge();
+        pressure_response_us_ += response;
+        max_pressure_response_us_ =
+            std::max(max_pressure_response_us_, response);
+      }
+      transferred = true;
+      work_.notify_one();
+    }
+  }
+  if (!s.ok()) {
+    // MBL may already reference both files. Close without unlinking either;
+    // recovery or GC owns their disposition. Never hold mutex_ across HDD I/O.
+    Status close = prepared.front().active.file->Close(IOOptions(), nullptr);
+    if (!close.ok()) Fail(close);
+    return s;
+  }
+  TEST_SYNC_POINT("MetaBypass::TierHandoffQueued");
+  return Status::OK();
+}
+Status TieredStorage::FinishSeal(PendingSeal* task) {
+  Status s = Seal(&task->active, !recovering_);
+  const Extent extent = task->active.extent;
+  if (s.ok() && extent.length) s = Publish(task->number, task->blob, extent);
+  if (s.ok())
+    s = Commit(
+        task->number, task->blob,
+        [extent](Version* v) {
+          auto it = std::find_if(
+              v->extents.begin(), v->extents.end(),
+              [&](const Extent& e) { return e.name == extent.name; });
+          if (it == v->extents.end() || !it->pending ||
+              it->start != extent.start || it->length != extent.length ||
+              it->crc != extent.crc)
+            return Status::Corruption("pending seal lost range identity");
+          if (extent.length)
+            *it = extent;
+          else
+            v->extents.erase(it);
+          return Status::OK();
+        },
+        Reason::kFreeze);
+  return s;
+}
+void TieredStorage::DropPending(const std::shared_ptr<Blob>& selected) {
+  std::list<PendingSeal> cancelled;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = pending_seals_.begin(); it != pending_seals_.end();) {
+      auto next = std::next(it);
+      if (!selected || selected == it->blob)
+        cancelled.splice(cancelled.end(), pending_seals_, it);
+      it = next;
+    }
+  }
+  for (auto& task : cancelled) {
+    if (task.active.file) {
+      Status s = task.active.file->Close(IOOptions(), nullptr);
+      if (!s.ok()) Fail(s);
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    --task.blob->operations;
+    --task.blob->pending_seals;
+    --pending_count_;
+    progress_.notify_all();
+  }
+}
 Status TieredStorage::Freeze(uint64_t n, const std::shared_ptr<Blob>& blob) {
   auto& active = blob->caller;
   if (!active.file) return Status::OK();
   const bool local = active.extent.local;
+  if (!recovering_ && !local) return EnqueueSeal(n, blob);
   const auto phase_start = Micros();
   OnExit phase{[&, this] {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1057,7 +1326,7 @@ Status TieredStorage::MergeRecovered(uint64_t n, const Version* local,
   // An applied HDD range is valid only with its independently durable proof.
   // Pure SSD maps and registered, not-yet-published HDD tails need no MBT.
   for (const auto& applied : local->extents) {
-    if (applied.local || applied.open) continue;
+    if (applied.local || applied.open || applied.pending) continue;
     if (!remote) return Status::Corruption("missing HDD publication proof");
     auto proof = std::lower_bound(
         remote->extents.begin(), remote->extents.end(), applied.start,
@@ -1078,17 +1347,20 @@ Status TieredStorage::MergeRecovered(uint64_t n, const Version* local,
                      [&](const Extent& e) { return e.start == hdd.start; });
     if (it == merged->extents.end())
       return Status::Corruption("unregistered HDD range");
-    const bool suffix = !it->local && it->open && it->name == hdd.name &&
-                        it->origin == hdd.origin;
+    const bool suffix = !it->local && (it->open || it->pending) &&
+                        it->name == hdd.name && it->origin == hdd.origin;
     const bool source = it->local && !it->open && it->name == hdd.origin;
     const bool applied = !it->local && !it->open && it->name == hdd.name &&
                          it->origin == hdd.origin;
     if ((!suffix && !source && !applied) ||
-        (suffix ? (hdd.length < it->durable || hdd.length > kExtentSize)
+        (suffix ? (it->pending
+                       ? (hdd.length != it->length || hdd.crc != it->crc)
+                       : (hdd.length < it->durable || hdd.length > kExtentSize))
                 : (it->length != hdd.length || it->crc != hdd.crc)))
       return Status::Corruption("HDD source proof mismatch");
     *it = hdd;
-    if (suffix) merged->size = hdd.start + hdd.length;
+    if (suffix && it + 1 == merged->extents.end())
+      merged->size = hdd.start + hdd.length;
   }
   if (remote->closed &&
       (!local->closed || remote->size != merged->size || !Complete(*merged)))
@@ -1148,7 +1420,7 @@ Status TieredStorage::Recover(bool restore, bool apply) {
       st = Read(target(), path + "/INVENTORY", &inventory);
       if (!st.ok()) return st;
       snapshot->emplace(path + "/INVENTORY", inventory);
-      if (inventory.compare(0, 5, "MBI4\n") ||
+      if (inventory.compare(0, 5, "MBI5\n") ||
           crc32c::Value(inventory.data(), inventory.size()) != crc)
         return Status::Corruption("recovery inventory checksum/format");
       std::string map;
@@ -1351,6 +1623,8 @@ Status TieredStorage::Recover(bool restore, bool apply) {
     peak_ = usage;
     extent_id_ = maximum_id;
     retired_local_ = std::move(garbage);
+    recovering_ = true;
+    OnExit recovered_mode{[&] { recovering_ = false; }};
     // All canonical metadata and required dependencies passed before writes.
     for (const auto& item : retired) {
       auto blob = std::make_shared<Blob>();
@@ -1384,6 +1658,22 @@ Status TieredStorage::Recover(bool restore, bool apply) {
           },
           Reason::kRecovery);
       if (!st.ok()) return st;
+      // Preflight validated every pending length and CRC before any mutation.
+      // Rebuild one writer at a time, without waiting on a not-yet-started
+      // worker.
+      const auto ranges = blob->live.extents;
+      for (const auto& extent : ranges) {
+        if (!extent.pending) continue;
+        PendingSeal task{item.first, blob, {}};
+        task.active.extent = extent;
+        task.active.crc = extent.crc;
+        st = target()->ReopenWritableFile(Path(extent), FileOptions(),
+                                          &task.active.file, nullptr);
+        if (st.ok()) st = FinishSeal(&task);
+        if (task.active.file)
+          st.UpdateIfOk(task.active.file->Close(IOOptions(), nullptr));
+        if (!st.ok()) return st;
+      }
       if (!blob->live.extents.empty() && blob->live.extents.back().open) {
         auto& active = blob->caller;
         active.extent = blob->live.extents.back();
@@ -1419,7 +1709,10 @@ Status TieredStorage::Stop() {
     work_.notify_all();
     progress_.notify_all();
   }
+  TEST_SYNC_POINT("MetaBypass::TierStopping");
   if (worker_.joinable()) worker_.join();
+  DropPending();
+  TEST_SYNC_POINT("MetaBypass::TierStopQueueDrained");
   std::unique_lock<std::mutex> lock(mutex_);
   progress_.wait(lock, [&] {
     for (const auto& item : blobs_)
@@ -1435,6 +1728,7 @@ Status TieredStorage::Stop() {
       if (!s.ok()) Fail(s);
     }
   }
+  if (owns_observer_) pressure_->Stop();
   return Error();
 }
 Status TieredStorage::Error() const {
@@ -1697,24 +1991,34 @@ Status TieredStorage::DigestDurablePrefix(uint64_t n, uint64_t length,
   return s;
 }
 Status TieredStorage::Wait(uint64_t n, const std::shared_ptr<Blob>& blob,
-                           uint64_t length, bool closed) {
+                           uint64_t length, bool closed, bool hdd) {
   const auto start = Micros();
   std::unique_lock<std::mutex> lock(mutex_);
+  auto request =
+      barriers_.insert(barriers_.end(), Barrier{n, length, hdd, closed});
   requests_[n] = std::max(requests_[n], length);
+  const auto end = DurableEnd(blob->durable, hdd);
+  (hdd ? h_debt_ : d_debt_) += length - std::min(length, end);
   work_.notify_one();
   TEST_SYNC_POINT("MetaBypass::TierBarrierWaiting");
   progress_.wait(lock, [&] {
     return !error_.ok() || stopping_ || blob->retiring ||
-           (DurableEnd(blob->durable, true) >= length &&
-            (!closed || blob->complete_ready));
+           (DurableEnd(blob->durable, hdd) >= length &&
+            (!closed || (hdd ? blob->complete_ready : blob->durable.closed)));
   });
   barrier_us_ += Micros() - start;
+  barriers_.erase(request);
+  requests_.erase(n);
+  for (const auto& barrier : barriers_)
+    if (barrier.number == n)
+      requests_[n] = std::max(requests_[n], barrier.length);
   return !error_.ok()     ? error_
          : stopping_      ? Status::ShutdownInProgress()
          : blob->retiring ? Status::Aborted("retiring tier blob")
                           : Status::OK();
 }
 Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
+  std::vector<std::list<Barrier>::iterator> barriers;
   std::vector<std::unique_ptr<Pin>> pins;
   for (const auto& item : lengths) {
     auto pin = std::make_unique<Pin>();
@@ -1728,10 +2032,18 @@ Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
     if (!blob.live.closed || blob.live.size != item.second)
       return Status::InvalidArgument(
           "checkpoint requires closed complete blob");
+  }
+  for (const auto& item : lengths) {
+    const auto& blob = *blobs_.at(item.first);
     if (blob.complete_ready)
       ++persist_skips_;
-    else
+    else {
+      barriers.push_back(barriers_.insert(
+          barriers_.end(), Barrier{item.first, item.second, true, true}));
       requests_[item.first] = std::max(requests_[item.first], item.second);
+      const auto end = DurableEnd(blob.durable, true);
+      h_debt_ += item.second - std::min(item.second, end);
+    }
   }
   TEST_SYNC_POINT("MetaBypass::TierPersistRequested");
   work_.notify_one();
@@ -1749,11 +2061,19 @@ Status TieredStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
   if (s.ok())
     for (const auto& pin : pins)
       if (pin->blob->retiring) s = Status::Aborted("retiring tier blob");
+  for (auto barrier : barriers) barriers_.erase(barrier);
+  for (const auto& item : lengths) {
+    requests_.erase(item.first);
+    for (const auto& barrier : barriers_)
+      if (barrier.number == item.first)
+        requests_[item.first] = std::max(requests_[item.first], barrier.length);
+  }
   lock.unlock();
   return s;
 }
 Status TieredStorage::Migrate(uint64_t n, const std::shared_ptr<Blob>& blob) {
   TEST_SYNC_POINT("MetaBypass::TierMigration");
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::TierMigrationSelected", &n);
   Extent source;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1816,7 +2136,8 @@ Status TieredStorage::Migrate(uint64_t n, const std::shared_ptr<Blob>& blob) {
   }
   if (active.crc != source.crc)
     return Status::Corruption("staging segment checksum");
-  Status s = Seal(&active);
+  Status s = Seal(&active, Adaptive());
+  if (s.IsTryAgain()) return Status::OK();
   const auto publish_start = Micros();
   if (s.ok()) s = Publish(n, blob, active.extent);
   TEST_SYNC_POINT("MetaBypass::TierMigrationSealed");
@@ -1883,6 +2204,7 @@ Status TieredStorage::ReclaimLocal() {
 void TieredStorage::Run() {
   uint64_t cursor = 0;
   bool priority = true;
+  uint64_t next_migration = 0;
   std::unique_lock<std::mutex> lock(mutex_);
   const auto ready = [&](const std::shared_ptr<Blob>& blob) {
     return !blob->retiring &&
@@ -1897,23 +2219,105 @@ void TieredStorage::Run() {
   };
   while (error_.ok() && !stopping_) {
     work_.wait(lock, [&] {
-      if (stopping_ || !error_.ok() || reclaimable()) return true;
+      if (stopping_ || !error_.ok() || reclaimable() || !pending_seals_.empty())
+        return true;
       for (const auto& item : blobs_)
         if (ready(item.second)) return true;
       return false;
     });
     if (stopping_ || !error_.ok()) break;
-    // Only this worker reclaims published-away SSD ranges.
+    // Return one published-away SSD range's quota before scheduling more HDD
+    // work, even when a barrier is still pending. Keep each turn bounded so
+    // a reclamation backlog cannot drain ahead of that work.
     if (reclaimable()) {
       lock.unlock();
       Status s = ReclaimLocal();
       if (!s.ok()) Fail(s);
       lock.lock();
+      if (stopping_ || !error_.ok()) break;
+    }
+    // Resolve each independently captured barrier to its earliest unsatisfied
+    // range. An H request with an SSD hole must not be delayed by sealing a
+    // later HDD range; D may skip an already durable SSD range.
+    uint64_t priority_blob = 0;
+    bool has_priority = false;
+    std::string priority_pending;
+    for (const auto& barrier : barriers_) {
+      const auto found = blobs_.find(barrier.number);
+      if (found == blobs_.end() || found->second->retiring) continue;
+      const auto& blob = *found->second;
+      for (const auto& e : blob.durable.extents) {
+        if (e.start >= barrier.length) break;
+        if (e.durable == e.length && (!barrier.hdd || (!e.local && !e.pending)))
+          continue;
+        if (e.pending || (barrier.hdd && e.local && !e.open)) {
+          priority_blob = barrier.number;
+          has_priority = true;
+          if (e.pending) priority_pending = e.name;
+        }
+        break;
+      }
+      if (!has_priority && barrier.closed && !blob.complete_ready &&
+          Complete(blob.durable)) {
+        priority_blob = barrier.number;
+        has_priority = true;
+      }
+      if (has_priority) break;
+    }
+    auto pending = pending_seals_.end();
+    if (!has_priority && !pending_seals_.empty())
+      pending = pending_seals_.begin();
+    else if (!priority_pending.empty()) {
+      pending =
+          std::find_if(pending_seals_.begin(), pending_seals_.end(),
+                       [&](const PendingSeal& task) {
+                         return task.active.extent.name == priority_pending;
+                       });
+    }
+    if (pending != pending_seals_.end()) {
+      std::list<PendingSeal> running;
+      running.splice(running.end(), pending_seals_, pending);
+      auto& task = running.front();
+      const bool barrier = task.barrier || requests_.count(task.number) != 0;
+      lock.unlock();
+      HddPurposeScope purpose(barrier ? HddPurpose::kBarrier
+                                      : HddPurpose::kBulk);
+      Status s = FinishSeal(&task);
+      if (s.IsTryAgain()) {
+        TEST_SYNC_POINT("MetaBypass::TierSealBeforeRequeue");
+        lock.lock();
+        // GC may have swept the queue while this readback quantum ran.
+        // Requeue only while admission is open, under the same mutex used by
+        // retirement/Stop; otherwise close and release the existing pin below.
+        if (!stopping_ && error_.ok() && !task.blob->retiring) {
+          pending_seals_.splice(pending_seals_.end(), running);
+          continue;
+        }
+        lock.unlock();
+        s = Status::OK();
+      }
+      if (!s.ok() && !s.IsAborted()) Fail(s);
+      if (task.active.file) {
+        Status close = task.active.file->Close(IOOptions(), nullptr);
+        if (!close.ok()) Fail(close);
+        task.active.file.reset();
+      }
+      lock.lock();
+      --task.blob->operations;
+      --task.blob->pending_seals;
+      --pending_count_;
+      progress_.notify_all();
       continue;
     }
     auto selected = blobs_.end();
+    if (has_priority && priority_pending.empty()) {
+      auto requested = blobs_.find(priority_blob);
+      if (requested != blobs_.end() && ready(requested->second))
+        selected = requested;
+    }
     auto it = blobs_.upper_bound(cursor);
-    for (size_t count = 0; count < blobs_.size(); ++count) {
+    for (size_t count = 0; selected == blobs_.end() && count < blobs_.size();
+         ++count) {
       if (it == blobs_.end()) it = blobs_.begin();
       if (ready(it->second) && (!priority || requests_.count(it->first))) {
         selected = it;
@@ -1925,21 +2329,41 @@ void TieredStorage::Run() {
       priority = false;
       continue;
     }
-    priority = !priority;
+    priority = true;
     cursor = selected->first;
     const auto n = selected->first;
     auto blob = selected->second;
+    const bool barrier = requests_.count(n) != 0;
+    const bool copying =
+        std::any_of(blob->live.extents.begin(), blob->live.extents.end(),
+                    [](const Extent& e) { return e.local && !e.open; });
+    if (Adaptive() && copying && !blob->migration.synced && !barrier) {
+      auto now = Micros();
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::TierMigrationClock", &now);
+      if (now < next_migration) {
+        auto delay = next_migration - now;
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::TierThrottleDelay", &delay);
+        const auto wait_started = Micros();
+        TEST_SYNC_POINT("MetaBypass::TierThrottleWaiting");
+        [[maybe_unused]] bool notified =
+            work_.wait_for(lock, std::chrono::microseconds(delay)) ==
+            std::cv_status::no_timeout;
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::TierThrottleAwakened", &notified);
+        throttle_us_ += Micros() - wait_started;
+        continue;
+      }
+      next_migration = now + (pressure_->Pressured() ? 250000 : 125000);
+      TEST_SYNC_POINT_CALLBACK("MetaBypass::TierMigrationCreditGranted",
+                               &cursor);
+    }
     ++blob->operations;
     lock.unlock();
+    HddPurposeScope purpose(barrier ? HddPurpose::kBarrier : HddPurpose::kBulk);
     Status s = Migrate(n, blob);
     if (!s.ok() && !s.IsAborted()) Fail(s);
     TEST_SYNC_POINT("MetaBypass::TierMigrationComplete");
     lock.lock();
     --blob->operations;
-    auto request = requests_.find(n);
-    if (request != requests_.end() &&
-        DurableEnd(blob->durable, true) >= request->second)
-      requests_.erase(request);
     progress_.notify_all();
   }
   progress_.notify_all();
@@ -1960,6 +2384,10 @@ Status TieredStorage::ReclaimBlob(uint64_t n, uint64_t* bytes) {
     progress_.notify_all();
     TEST_SYNC_POINT("MetaBypass::TierBlobRetiring");
     work_.notify_one();
+    lock.unlock();
+    DropPending(blob);
+    TEST_SYNC_POINT("MetaBypass::TierGcQueueDrained");
+    lock.lock();
     progress_.wait(lock, [&] { return !blob->operations; });
     if (!error_.ok()) return error_;
     if (stopping_) return Status::ShutdownInProgress();
@@ -1991,7 +2419,7 @@ Status TieredStorage::CheckRetirement(uint64_t number) {
     s = Read(target(), options_.backup_dir + "/" + point + "/INVENTORY",
              &inventory);
     if (!s.ok()) return s;
-    if (inventory.compare(0, 5, "MBI4\n") ||
+    if (inventory.compare(0, 5, "MBI5\n") ||
         crc32c::Value(inventory.data(), inventory.size()) != expected)
       return Status::Corruption("retirement inventory checksum");
     const auto path = options_.backup_dir + "/" + point + "/BLOB-MAP";
@@ -2143,7 +2571,7 @@ Status TieredStorage::SaveCheckpoint(
   }
   const auto bytes = body.str();
   return Write(target(), path,
-               "MBTC4 " +
+               "MBTC5 " +
                    std::to_string(crc32c::Value(bytes.data(), bytes.size())) +
                    "\n" + bytes);
 }
@@ -2159,7 +2587,7 @@ Status TieredStorage::ParseCheckpoint(const std::string& path,
   std::string magic, extra, identity;
   uint32_t checksum;
   std::istringstream header(bytes.substr(0, split));
-  if (!(header >> magic >> checksum) || magic != "MBTC4" || (header >> extra))
+  if (!(header >> magic >> checksum) || magic != "MBTC5" || (header >> extra))
     return Status::Corruption("tier checkpoint format");
   const auto body = bytes.substr(split + 1);
   if (crc32c::Value(body.data(), body.size()) != checksum)
@@ -2219,7 +2647,7 @@ Status TieredStorage::CheckpointBlobDigest(const std::string& path, uint64_t n,
 Status TieredStorage::BindCheckpointInventory(
     const std::string& inventory, const std::string& map,
     const std::map<uint64_t, Version>& versions) {
-  if (inventory.compare(0, 5, "MBI4\n"))
+  if (inventory.compare(0, 5, "MBI5\n"))
     return Status::Corruption("checkpoint inventory format");
   std::istringstream entries(inventory.substr(5));
   std::set<std::string> names;
@@ -2341,6 +2769,26 @@ Status TieredStorage::ArchiveUnreferenced(
 }
 void TieredStorage::AddStats(MetaBypassStats* stats) const {
   std::lock_guard<std::mutex> lock(mutex_);
+  pressure_->AddStats(stats);
+  stats->blob_append_calls = append_calls_;
+  stats->blob_append_micros = append_us_;
+  stats->blob_flush_calls = flush_calls_;
+  stats->blob_flush_micros = flush_us_;
+  stats->blob_append_latency = append_latency_;
+  stats->blob_flush_latency = flush_latency_;
+  stats->adaptive_pressure_response_micros = pressure_response_us_;
+  stats->adaptive_max_pressure_response_micros = max_pressure_response_us_;
+  stats->adaptive_throttle_micros = throttle_us_;
+  stats->tier_barrier_d_debt_bytes = d_debt_;
+  stats->tier_barrier_h_debt_bytes = h_debt_;
+  stats->direct_blob_bytes = direct_bytes_;
+  stats->staged_blob_bytes = staged_bytes_;
+  stats->adaptive_to_ssd = to_ssd_;
+  stats->adaptive_to_hdd = to_hdd_;
+  stats->adaptive_quota_fallbacks = quota_fallbacks_;
+  stats->adaptive_pending_seals = pending_count_;
+  stats->adaptive_peak_pending_seals = peak_pending_count_;
+  stats->adaptive_pending_wait_micros = pending_wait_us_;
   stats->tier_task_wait_micros = 0;
   stats->tier_append_tasks = 0;
   stats->tier_append_wait_micros = 0;

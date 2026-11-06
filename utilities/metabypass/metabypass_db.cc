@@ -17,7 +17,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
-constexpr char kFormat[] = "MBN4\n";
+constexpr char kFormat[] = "MBN5\n";
 // Refuse legacy directories before taking locks or initializing storage.
 Status CheckFormat(FileSystem* fs, const std::string& path, bool required) {
   std::string version;
@@ -44,7 +44,7 @@ Status CheckStorageLayout(FileSystem* fs, const MetaBypassOptions& options) {
   const bool tiered = s.ok();
   if (tiered != !options.staging_dir.empty())
     return Status::InvalidArgument("cannot change Metabypass storage format");
-  if (tiered && version != "MBT4\n")
+  if (tiered && version != "MBT5\n")
     return Status::NotSupported("tiered storage format");
   return Status::OK();
 }
@@ -73,6 +73,10 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
   if (overlap(index, m.data_dir) || overlap(index, m.backup_dir) ||
       overlap(m.data_dir, m.backup_dir))
     return Status::InvalidArgument("Metabypass directories must be disjoint");
+  if (m.staging_latency_budget_us == 0 ||
+      (m.staging_policy != MetaBypassStagingPolicy::kAlways &&
+       m.staging_policy != MetaBypassStagingPolicy::kAdaptive))
+    return Status::InvalidArgument("invalid staging policy/budget");
   if (!m.staging_dir.empty()) {
     if (!valid_path(m.staging_dir) || m.staging_capacity < 8192 ||
         overlap(m.staging_dir, index) || overlap(m.staging_dir, m.data_dir) ||
@@ -175,6 +179,10 @@ class BackupListener : public EventListener {
 };
 }  // namespace
 struct MetaBypassDB::Impl {
+  std::shared_ptr<metabypass::HddPressure> pressure;
+  mutable std::mutex progress_close_mutex;
+  std::string recovery_identity;
+  std::string recovery_session;
   std::shared_ptr<metabypass::SstStorage> sst;
   std::shared_ptr<metabypass::TieredStorage> tier;
   std::atomic<uint64_t> sync_write_us{0};
@@ -272,8 +280,13 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     if (!s.ok()) return s;
   }
   auto impl = std::make_unique<Impl>();
+  impl->pressure =
+      std::make_shared<metabypass::HddPressure>(m.staging_latency_budget_us);
+  fs = metabypass::ObserveHdd(fs, m.data_dir, m.backup_dir, impl->pressure,
+                              index, m.staging_dir);
   if (!m.staging_dir.empty())
-    impl->tier = std::make_shared<metabypass::TieredStorage>(fs, m, identity);
+    impl->tier = std::make_shared<metabypass::TieredStorage>(fs, m, identity,
+                                                             impl->pressure);
   if (m.sst_tiering.mode != SstTieringMode::kDisabled)
     impl->sst = std::make_shared<metabypass::SstStorage>(
         impl->tier ? std::shared_ptr<FileSystem>(impl->tier) : fs, index, m);
@@ -324,7 +337,7 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     s = impl->tier->Initialize(false);
     if (!s.ok()) return s;
     if (!existing) {
-      s = metabypass::Write(fs.get(), format_path, "MBT4\n");
+      s = metabypass::Write(fs.get(), format_path, "MBT5\n");
       if (s.ok()) s = metabypass::SyncDir(fs.get(), m.data_dir);
       if (!s.ok()) return s;
     }
@@ -378,6 +391,13 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     if (s.ok() && impl->tier) impl->tier->SetIdentity(identity);
     if (s.ok()) s = impl->backup->Activate(identity, impl->db.get());
     if (s.ok()) s = impl->backup->Sync();
+  }
+  if (s.ok()) s = impl->db->GetDbIdentity(impl->recovery_identity);
+  if (s.ok()) {
+    impl->recovery_session = options.env->GenerateUniqueId();
+    if (impl->recovery_identity.empty() || impl->recovery_session.empty())
+      s = Status::Corruption(
+          "missing Metabypass recovery observation identity");
   }
   if (!s.ok()) {
     impl->backup->DetachDB();
@@ -444,6 +464,7 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
   std::shared_ptr<metabypass::TieredStorage> tier;
   if (!m.staging_dir.empty())
     tier = std::make_shared<metabypass::TieredStorage>(fs, m, backup_owner);
+  std::shared_ptr<metabypass::HddPressure> pressure;
   std::shared_ptr<metabypass::SstStorage> sst;
   if (m.sst_tiering.mode != SstTieringMode::kDisabled)
     sst = std::make_shared<metabypass::SstStorage>(
@@ -579,13 +600,25 @@ Status MetaBypassDB::CompactRange(const CompactRangeOptions& o, const Slice* a,
 Status MetaBypassDB::SyncBackup() { return impl_->backup->Sync(); }
 MetaBypassStats MetaBypassDB::GetBackupStats() const {
   auto stats = impl_->backup->Stats();
+  if (impl_->pressure) impl_->pressure->AddStats(&stats);
   if (impl_->tier) impl_->tier->AddStats(&stats);
   if (impl_->sst) impl_->sst->AddStats(&stats);
   stats.sync_write_micros =
       impl_->sync_write_us.load(std::memory_order_relaxed);
   return stats;
 }
+Status MetaBypassDB::GetRecoveryProgress(
+    MetaBypassRecoveryProgress* output) const {
+  if (!output) return Status::InvalidArgument("null recovery progress output");
+  std::lock_guard<std::mutex> lock(impl_->progress_close_mutex);
+  if (!impl_->db) return Status::ShutdownInProgress("Metabypass DB closed");
+  output->db_identity = impl_->recovery_identity;
+  output->open_session_id = impl_->recovery_session;
+  output->visible_sequence = impl_->db->GetLatestSequenceNumber();
+  return Status::OK();
+}
 Status MetaBypassDB::Close() {
+  std::lock_guard<std::mutex> lock(impl_->progress_close_mutex);
   if (!impl_->db) return impl_->closed;
   if (impl_->sst) impl_->sst->Stop();
   Status s = impl_->backup->Sync();
@@ -596,6 +629,7 @@ Status MetaBypassDB::Close() {
   // DB close releases cached readers and may enqueue final logical deletions.
   if (impl_->sst) impl_->sst->Stop();
   if (impl_->tier) s.UpdateIfOk(impl_->tier->Stop());
+  if (impl_->pressure) impl_->pressure->Stop();
   impl_->closed = s;
   return impl_->closed;
 }

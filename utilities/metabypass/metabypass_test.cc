@@ -251,20 +251,35 @@ class CandidateNoLinkFileSystem : public FileSystemWrapper {
       : FileSystemWrapper(fs) {}
   const char* Name() const override { return "CandidateNoLinkFileSystem"; }
   std::atomic<uint64_t> rejected_links{0}, copied_tables{0};
+  std::atomic<uint64_t> reused_tables{0}, synced_tables{0};
+  std::atomic<bool> reject_reuse{false}, reject_native{true}, fail_sync{false};
   IOStatus LinkFile(const std::string& from, const std::string& to,
                     const IOOptions& options, IODebugContext* dbg) override {
-    if (from.find("/work/") != std::string::npos &&
+    const bool reuse = from.find("/point-") != std::string::npos;
+    if (((reject_native.load() && !reuse) || (reuse && reject_reuse.load())) &&
         to.find("/point-") != std::string::npos) {
       ++rejected_links;
       return IOStatus::NotSupported("injected candidate link failure");
     }
-    return target()->LinkFile(from, to, options, dbg);
+    IOStatus s = target()->LinkFile(from, to, options, dbg);
+    if (s.ok() && reuse) ++reused_tables;
+    return s;
+  }
+  IOStatus SyncFile(const std::string& path, const FileOptions& file_options,
+                    const IOOptions& options, bool fsync,
+                    IODebugContext* dbg) override {
+    if (path.find("/point-") != std::string::npos && path.size() >= 4 &&
+        path.substr(path.size() - 4) == ".sst") {
+      ++synced_tables;
+      if (fail_sync.load()) return IOStatus::IOError("candidate table sync");
+    }
+    return target()->SyncFile(path, file_options, options, fsync, dbg);
   }
   IOStatus NewSequentialFile(const std::string& path,
                              const FileOptions& options,
                              std::unique_ptr<FSSequentialFile>* result,
                              IODebugContext* dbg) override {
-    if (path.find("/work/") != std::string::npos && path.size() >= 4 &&
+    if (path.find("/point-") == std::string::npos && path.size() >= 4 &&
         path.substr(path.size() - 4) == ".sst")
       ++copied_tables;
     return target()->NewSequentialFile(path, options, result, dbg);
@@ -1259,16 +1274,16 @@ class MetaBypassTest : public testing::Test {
   }
   void StartBackupFiles(std::unique_ptr<metabypass::Backup>* backup,
                         std::unique_ptr<FSWritableFile>* wal,
-                        std::unique_ptr<FSWritableFile>* sst) {
+                        std::unique_ptr<FSWritableFile>* metadata) {
     ASSERT_NO_FATAL_FAILURE(StartBackup(backup));
     ASSERT_OK((*backup)->NewWritableFile(index_ + "/000001.log", FileOptions(),
                                          wal, nullptr));
-    ASSERT_OK((*backup)->NewWritableFile(index_ + "/000002.sst", FileOptions(),
-                                         sst, nullptr));
+    ASSERT_OK((*backup)->NewWritableFile(index_ + "/MANIFEST-000002",
+                                         FileOptions(), metadata, nullptr));
   }
   void NotificationScenario(bool pressure, bool fail, bool timer,
                             bool metadata = false) {
-    const std::string file_name = metadata ? "000001.sst" : "000001.log";
+    const std::string file_name = metadata ? "MANIFEST-000001" : "000001.log";
     m_.queue_capacity = m_.batch_bytes = 4096;
     m_.interval_ms = timer ? 1 : 60000;
     m_.checkpoint_interval_ms = m_.interval_ms;
@@ -1416,6 +1431,7 @@ class MetaBypassTest : public testing::Test {
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
+
 class MetaBypassNonBlobTest : public MetaBypassTest {
  public:
   MetaBypassNonBlobTest() {
@@ -4819,25 +4835,34 @@ TEST_F(MetaBypassTest, CandidateSkipsUnreferencedIndexFiles) {
   Check("second", "v");
 }
 TEST_F(MetaBypassTest, MissingReferencedSstFailsCapture) {
+  m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "first", "v"));
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(db_->SyncBackup());
   std::string pointer;
   ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pointer));
-  const auto tables = FilesOfType(PublishedPoint(), kTableFile);
+  ASSERT_OK(db_->Put(WriteOptions(), "second", "v"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  auto tables = FilesOfType(index_, kTableFile);
+  const auto previous = FilesOfType(PublishedPoint(), kTableFile);
+  tables.erase(std::remove_if(tables.begin(), tables.end(),
+                              [&](const auto& f) {
+                                return std::find(previous.begin(),
+                                                 previous.end(),
+                                                 f) != previous.end();
+                              }),
+               tables.end());
   ASSERT_FALSE(tables.empty());
   const std::string table = tables.front();
   std::atomic<bool> removed{false};
   Status removal;
   SyncPoint::GetInstance()->SetCallBack(
-      "MetaBypass::BeforeCaptureFiles", [&](void*) {
+      "MetaBypass::BeforeCaptureTables", [&](void*) {
         if (removed.exchange(true)) return;
-        removal = fs_->DeleteFile(m_.backup_dir + "/work/" + table, IOOptions(),
-                                  nullptr);
+        removal = fs_->DeleteFile(index_ + "/" + table, IOOptions(), nullptr);
       });
   SyncPoint::GetInstance()->EnableProcessing();
-  ASSERT_OK(db_->Put(WriteOptions(), "second", "v"));
   const Status failed = db_->SyncBackup();
   EXPECT_TRUE(failed.IsIOError() || failed.IsNotFound()) << failed.ToString();
   SyncPoint::GetInstance()->DisableProcessing();
@@ -4871,6 +4896,438 @@ TEST_F(MetaBypassTest, CandidateSstFallsBackToCopyWhenLinkFails) {
   db_.reset();
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("key", "value");
+}
+TEST_F(MetaBypassTest, SstOperationsPreserveExternalBoundary) {
+  std::unique_ptr<metabypass::Backup> backup;
+  ASSERT_NO_FATAL_FAILURE(StartBackup(&backup));
+  const std::string table = index_ + "/000002.sst";
+  const std::string external = root_ + "/000002.sst";
+  std::unique_ptr<FSWritableFile> writer;
+  ASSERT_OK(backup->NewWritableFile(table, FileOptions(), &writer, nullptr));
+  ASSERT_OK(writer->Append("table", IOOptions(), nullptr));
+  ASSERT_OK(writer->Close(IOOptions(), nullptr));
+  EXPECT_TRUE(
+      backup->LinkFile(table, external, IOOptions(), nullptr).IsNotSupported());
+  EXPECT_TRUE(
+      backup->LinkFile(external, table, IOOptions(), nullptr).IsNotSupported());
+  EXPECT_TRUE(backup->RenameFile(table, external, IOOptions(), nullptr)
+                  .IsNotSupported());
+  EXPECT_TRUE(backup->RenameFile(external, table, IOOptions(), nullptr)
+                  .IsNotSupported());
+  ASSERT_OK(backup->Stop());
+  EXPECT_TRUE(FilesOfType(m_.backup_dir + "/work", kTableFile).empty());
+  EXPECT_OK(fs_->FileExists(table, IOOptions(), nullptr));
+}
+TEST_F(MetaBypassTest, SstCapturedOnlyAtCheckpoint) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  o_.enable_blob_files = false;
+  o_.disable_auto_compactions = true;
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  std::atomic<unsigned> mirrored_tables{0};
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::PrimaryReserved", [&](void* arg) {
+        uint64_t number;
+        FileType type;
+        if (ParseFileName(*static_cast<std::string*>(arg), &number, &type) &&
+            type == kTableFile)
+          ++mirrored_tables;
+      });
+  SyncPoint::GetInstance()->EnableProcessing();
+  for (int round = 0; round < 3; ++round) {
+    ASSERT_OK(db_->Put(WriteOptions(), "key", std::to_string(round)));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+  }
+  ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  EXPECT_TRUE(FilesOfType(m_.backup_dir + "/work", kTableFile).empty());
+  EXPECT_TRUE(FilesOfType(PublishedPoint(), kTableFile).empty());
+  EXPECT_EQ(observed->copied_tables.load(), 0U);
+  EXPECT_EQ(mirrored_tables.load(), 0U);
+  const auto native_tables = FilesOfType(index_, kTableFile);
+  const std::set<std::string> expected(native_tables.begin(),
+                                       native_tables.end());
+  ASSERT_FALSE(expected.empty());
+  ASSERT_OK(
+      metabypass::Write(fs_.get(), index_ + "/999999.sst", "unreferenced"));
+  ASSERT_OK(db_->SyncBackup());
+  const auto tables = FilesOfType(PublishedPoint(), kTableFile);
+  EXPECT_EQ(std::set<std::string>(tables.begin(), tables.end()), expected);
+  EXPECT_EQ(observed->copied_tables.load(), expected.size());
+  std::string inventory;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), PublishedPoint() + "/INVENTORY", &inventory));
+  uint64_t retained = inventory.size(), size;
+  std::string kind, file;
+  std::istringstream entries(inventory.substr(5));
+  while (entries >> kind >> file >> size) {
+    ASSERT_EQ(kind, "I");
+    retained += size;
+    uint64_t number;
+    FileType type;
+    ASSERT_TRUE(ParseFileName(file, &number, &type));
+    if (type != kTableFile) retained += size;
+  }
+  const auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  EXPECT_EQ(stats.retained_index_bytes, retained);
+  EXPECT_TRUE(FilesOfType(m_.backup_dir + "/work", kTableFile).empty());
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "2");
+}
+TEST_F(MetaBypassTest, SstCopyAllowsWalDrainAndPinsCompactionInputs) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  o_.enable_blob_files = false;
+  o_.disable_auto_compactions = true;
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  m_.batch_bytes = 1;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  for (int round = 0; round < 2; ++round) {
+    ASSERT_OK(db_->Put(WriteOptions(), "key", std::to_string(round)));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+  }
+  const auto sources = FilesOfType(index_, kTableFile);
+  ASSERT_GE(sources.size(), 2U);
+  TestGate copying, wal_batch, drained;
+  std::atomic<bool> tables{false}, blocked{false}, completed{false};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureTables",
+                                        [&](void*) { tables = true; });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::StageCopyReadStatus",
+                                        [&](void*) {
+                                          if (tables && !blocked.exchange(true))
+                                            copying.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status result;
+  std::thread checkpoint([&] {
+    result = db_->SyncBackup();
+    completed = true;
+  });
+  copying.WaitUntilBlocked();
+  const auto before = db_->GetBackupStats();
+  EXPECT_OK(before.error);
+  // A single-event batch does not trigger WalAppendBatch.
+  BlockFirstApply(&wal_batch);
+  EXPECT_OK(db_->Put(WriteOptions(), "tail", "wal"));
+  wal_batch.WaitUntilBlocked();
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeMirrorWait",
+                                        [&](void*) { drained.Block(); });
+  wal_batch.Release();
+  drained.WaitUntilBlocked();
+  drained.Release();
+  const auto after = db_->GetBackupStats();
+  EXPECT_OK(after.error);
+  EXPECT_GT(after.mirrored_wal_bytes, before.mirrored_wal_bytes);
+  EXPECT_FALSE(completed);
+  EXPECT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  for (const auto& file : sources)
+    EXPECT_OK(fs_->FileExists(index_ + "/" + file, IOOptions(), nullptr));
+  copying.Release();
+  checkpoint.join();
+  EXPECT_OK(result);
+  SyncPoint::GetInstance()->DisableProcessing();
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "1");
+  Check("tail", "wal");
+}
+TEST_F(MetaBypassTest, SstCopyCloseWaitsForPinRelease) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  TestGate copying;
+  std::atomic<bool> tables{false}, blocked{false}, closed{false};
+  std::atomic<unsigned> released{0};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureTables",
+                                        [&](void*) { tables = true; });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::NativeFilesReleased",
+                                        [&](void*) { ++released; });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::StageCopyReadStatus",
+                                        [&](void*) {
+                                          if (tables && !blocked.exchange(true))
+                                            copying.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status result;
+  std::thread closer([&] {
+    result = db_->Close();
+    closed = true;
+  });
+  copying.WaitUntilBlocked();
+  EXPECT_FALSE(closed);
+  EXPECT_EQ(released.load(), 0U);
+  copying.Release();
+  closer.join();
+  EXPECT_OK(result);
+  EXPECT_EQ(released.load(), 1U);
+  SyncPoint::GetInstance()->DisableProcessing();
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, SstCopyFailureCloseWaitsInDetachDB) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  m_.batch_bytes = 1;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  const std::string previous = PublishedPoint();
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  const auto sources = FilesOfType(index_, kTableFile);
+  ASSERT_FALSE(sources.empty());
+  TestGate copying, detaching;
+  std::atomic<bool> tables{false}, blocked{false}, closed{false};
+  std::atomic<unsigned> released{0};
+  const Status first = Status::IOError("mirror failed during SST capture");
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureTables",
+                                        [&](void*) { tables = true; });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::NativeFilesReleased",
+                                        [&](void*) { ++released; });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::StageCopyReadStatus", [&](void* arg) {
+        if (tables && !blocked.exchange(true)) {
+          copying.Block();
+          *static_cast<Status*>(arg) = Status::IOError("later SST copy fault");
+        }
+      });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeDetachDB",
+                                        [&](void*) { detaching.Block(); });
+  SyncPoint::GetInstance()->EnableProcessing();
+  Status checkpoint_status;
+  std::thread checkpoint([&] { checkpoint_status = db_->SyncBackup(); });
+  copying.WaitUntilBlocked();
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::ApplyStatus",
+      [&](void* arg) { *static_cast<Status*>(arg) = first; });
+  const Status produced = db_->Put(WriteOptions(), "tail", "value");
+  if (!produced.ok()) EXPECT_EQ(produced.ToString(), first.ToString());
+  checkpoint.join();
+  EXPECT_EQ(checkpoint_status.ToString(), first.ToString());
+  Status close_status;
+  std::thread closer([&] {
+    close_status = db_->Close();
+    closed = true;
+  });
+  detaching.WaitUntilBlocked();
+  detaching.Release();
+  // BeforeDetachDB holds the queue mutex. Acquiring it here proves Close has
+  // passed that hook into its wait, after the failed Sync returned immediately.
+  const auto waiting = db_->GetBackupStats();
+  EXPECT_EQ(waiting.error.ToString(), first.ToString());
+  EXPECT_FALSE(closed);
+  EXPECT_EQ(released.load(), 0U);
+  for (const auto& file : sources)
+    EXPECT_OK(fs_->FileExists(index_ + "/" + file, IOOptions(), nullptr));
+  copying.Release();
+  closer.join();
+  EXPECT_EQ(close_status.ToString(), first.ToString());
+  EXPECT_EQ(released.load(), 1U);
+  EXPECT_EQ(PublishedPoint(), previous);
+  SyncPoint::GetInstance()->DisableProcessing();
+  db_.reset();
+}
+TEST_F(MetaBypassTest, ColdSstCaptureFallsBackThroughLogicalFileSystem) {
+  EnableSst();
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  observed->reject_reuse = true;
+  const auto copied = db_->GetBackupStats();
+  ASSERT_OK(copied.error);
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.ssd_bytes == 0;
+  });
+  ASSERT_TRUE(FilesOfType(index_, kTableFile).empty());
+  ASSERT_TRUE(FilesOfType(m_.backup_dir + "/work", kTableFile).empty());
+  ASSERT_OK(db_->SyncBackup());
+  const auto cold_copy = db_->GetBackupStats();
+  ASSERT_OK(cold_copy.error);
+  EXPECT_GT(cold_copy.candidate_copied_bytes, copied.candidate_copied_bytes);
+  EXPECT_GT(observed->rejected_links.load(), 0U);
+  EXPECT_GT(observed->synced_tables.load(), 0U);
+  EXPECT_FALSE(FilesOfType(PublishedPoint(), kTableFile).empty());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, SstCopyFailuresReleasePinAndPreservePoint) {
+  for (const auto* failure :
+       {"MetaBypass::StageCopyReadStatus", "MetaBypass::StageCopyAppendStatus",
+        "MetaBypass::StageCopyCloseStatus", "sync"}) {
+    SCOPED_TRACE(failure);
+    auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+    auto env = NewCompositeEnv(observed);
+    Options options = o_;
+    options.env = env.get();
+    m_.checkpoint_interval_ms = 60000;
+    ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+    ASSERT_OK(db_->SyncBackup());
+    const std::string previous = PublishedPoint();
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "new"));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+    std::atomic<bool> tables{false};
+    std::atomic<unsigned> released{0};
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureTables",
+                                          [&](void*) { tables = true; });
+    SyncPoint::GetInstance()->SetCallBack("MetaBypass::NativeFilesReleased",
+                                          [&](void*) { ++released; });
+    if (std::string(failure) == "sync") {
+      observed->fail_sync = true;
+    } else {
+      SyncPoint::GetInstance()->SetCallBack(failure, [&](void* arg) {
+        if (tables)
+          *static_cast<Status*>(arg) = Status::IOError("SST copy fault");
+      });
+    }
+    SyncPoint::GetInstance()->EnableProcessing();
+    EXPECT_TRUE(db_->SyncBackup().IsIOError());
+    EXPECT_EQ(released.load(), 1U);
+    EXPECT_EQ(PublishedPoint(), previous);
+    EXPECT_TRUE(db_->Close().IsIOError());
+    db_.reset();
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+    ASSERT_NO_FATAL_FAILURE(Restore());
+    Check("key", "new");
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(root_);
+    ASSERT_OK(fs_->CreateDirIfMissing(root_, IOOptions(), nullptr));
+  }
+}
+TEST_F(MetaBypassTest, PublishedSstReuseSkipsSyncAndFallsBackToCopy) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  options.disable_auto_compactions = true;
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  const auto copied = observed->copied_tables.load();
+  const auto synced = observed->synced_tables.load();
+  ASSERT_GT(copied, 0U);
+  ASSERT_GT(synced, 0U);
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_GT(observed->reused_tables.load(), 0U);
+  EXPECT_EQ(observed->copied_tables.load(), copied);
+  EXPECT_EQ(observed->synced_tables.load(), synced);
+
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_EQ(observed->synced_tables.load(), synced);
+
+  // Failed published-point links must sync either fallback: native hard links
+  // and copies both own bytes whose durability cannot be inferred from LATEST.
+  observed->reject_reuse = true;
+  observed->reject_native = false;
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_EQ(observed->copied_tables.load(), copied);
+  EXPECT_GT(observed->synced_tables.load(), synced);
+  const auto linked_syncs = observed->synced_tables.load();
+  observed->reject_native = true;
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_GT(observed->copied_tables.load(), copied);
+  EXPECT_GT(observed->synced_tables.load(), linked_syncs);
+  observed->reject_reuse = false;
+  const std::string previous = PublishedPoint();
+  const auto previous_tables = FilesOfType(previous, kTableFile);
+  const auto before_new_table_syncs = observed->synced_tables.load();
+  ASSERT_OK(db_->Put(WriteOptions(), "new-key", "new-value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  bool found_new_table = false;
+  for (const auto& table : FilesOfType(index_, kTableFile)) {
+    if (std::find(previous_tables.begin(), previous_tables.end(), table) !=
+        previous_tables.end())
+      continue;
+    // Exercise the real filesystem's missing-path result, including POSIX
+    // PathNotFound, rather than injecting a generic NotFound status.
+    uint64_t size = 0;
+    IOStatus missing =
+        fs_->GetFileSize(previous + "/" + table, IOOptions(), &size, nullptr);
+    ASSERT_TRUE(missing.IsNotFound() || missing.IsPathNotFound());
+    found_new_table = true;
+  }
+  ASSERT_TRUE(found_new_table);
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_GT(observed->synced_tables.load(), before_new_table_syncs);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+  Check("new-key", "new-value");
+}
+TEST_F(MetaBypassTest, ReusedSstLinkFallbackSyncFailurePreservesPoint) {
+  auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  ASSERT_OK(db_->SyncBackup());
+  const std::string point = PublishedPoint();
+  const auto synced = observed->synced_tables.load();
+  observed->reject_reuse = true;
+  observed->reject_native = false;
+  observed->fail_sync = true;
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  EXPECT_GT(observed->synced_tables.load(), synced);
+  EXPECT_EQ(PublishedPoint(), point);
+  EXPECT_TRUE(db_->Put(WriteOptions(), "rejected", "v").IsIOError());
+  EXPECT_TRUE(db_->Delete(WriteOptions(), "key").IsIOError());
+  EXPECT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  Check("key", "value");
+}
+TEST_F(MetaBypassTest, BackupErrorFastPathPreservesFirstStatus) {
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  ASSERT_OK(backup->Error());
+  const Status first = Status::Corruption("first storage failure", "details");
+  const Status later = Status::IOError("later storage failure");
+  ASSERT_NE(first.ToString(), later.ToString());
+  backup->StorageFailed(first);
+  backup->StorageFailed(later);
+  EXPECT_EQ(backup->Error().ToString(), first.ToString());
+  auto stats = backup->Stats();
+  EXPECT_EQ(stats.error.ToString(), first.ToString());
+  EXPECT_TRUE(wal->Append("rejected", IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
+  EXPECT_EQ(backup->Stop().ToString(), first.ToString());
 }
 TEST_F(MetaBypassTest, NativeSnapshotRegeneratesCurrentFromCapturedManifest) {
   Open();
@@ -5071,19 +5528,19 @@ TEST_F(MetaBypassTest, WalCoalescingControlsAndRecreatedFile) {
                                         [&](void*) { ++groups; });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
   EXPECT_OK(wal->Append("a", IOOptions(), nullptr));
   EXPECT_OK(wal->Append("b", IOOptions(), nullptr));
-  EXPECT_OK(sst->Append("metadata", IOOptions(), nullptr));
+  EXPECT_OK(metadata->Append("metadata", IOOptions(), nullptr));
   EXPECT_OK(wal->Close(IOOptions(), nullptr));
   EXPECT_OK(backup->NewWritableFile(index_ + "/000001.log", FileOptions(), &wal,
                                     nullptr));
   EXPECT_OK(wal->Append("c", IOOptions(), nullptr));
   EXPECT_OK(wal->Append("d", IOOptions(), nullptr));
   EXPECT_OK(wal->Close(IOOptions(), nullptr));
-  EXPECT_OK(sst->Close(IOOptions(), nullptr));
+  EXPECT_OK(metadata->Close(IOOptions(), nullptr));
   applying.Release();
   EXPECT_OK(backup->Stop());
   SyncPoint::GetInstance()->DisableProcessing();
@@ -5092,8 +5549,8 @@ TEST_F(MetaBypassTest, WalCoalescingControlsAndRecreatedFile) {
   ASSERT_OK(
       metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
   EXPECT_EQ(bytes, "cd");
-  ASSERT_OK(
-      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000002",
+                             &bytes));
   EXPECT_EQ(bytes, "metadata");
 }
 TEST_F(MetaBypassTest, WalCoalescingBackpressureAndRecovery) {
@@ -5115,7 +5572,8 @@ TEST_F(MetaBypassTest, WalCoalescingSelectionBoundaries) {
       {Input{}, Input{"000001.log", std::string(65537, 'a')}, Input{}},
       {1, 1, 1});
   CoalesceSelector({Input{}, Input{"000002.log"}, Input{}}, {1, 1, 1});
-  CoalesceSelector({Input{}, Input{"000002.sst"}, Input{}, Input{}}, {1, 1, 2});
+  CoalesceSelector({Input{}, Input{"MANIFEST-000002"}, Input{}, Input{}},
+                   {1, 1, 2});
   CoalesceSelector({Input{}, Input{"000001.log", "", 'c'}, Input{}, Input{}},
                    {1, 1, 2});
   CoalesceSelector(std::vector<Input>(6), {3}, 3);
@@ -5171,31 +5629,33 @@ TEST_F(MetaBypassTest, WalCoalescingPartialWriteIsNotAcknowledgedOrRetried) {
 TEST_F(MetaBypassTest, ChannelMetadataOnlyDrainsOnTimer) {
   NotificationScenario(false, false, true, true);
 }
-TEST_F(MetaBypassTest, ChannelWalPassesBlockedPrimarySst) {
+TEST_F(MetaBypassTest, ChannelWalPassesBlockedPrimaryMetadata) {
   m_.queue_capacity = 8192;
   m_.batch_bytes = 1;
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   TestGate primary;
   SyncPoint::GetInstance()->SetCallBack(
       "MetaBypass::PrimaryReserved", [&](void* arg) {
-        if (*static_cast<std::string*>(arg) == "000002.sst") primary.Block();
+        if (*static_cast<std::string*>(arg) == "MANIFEST-000002")
+          primary.Block();
       });
   SyncPoint::GetInstance()->EnableProcessing();
   std::thread writer(
-      [&] { EXPECT_OK(sst->Append("sst", IOOptions(), nullptr)); });
+      [&] { EXPECT_OK(metadata->Append("metadata", IOOptions(), nullptr)); });
   primary.WaitUntilBlocked();
-  // Must return while the SST operation still owns its primary-operation lock.
+  // Must return while the metadata operation still owns its primary-operation
+  // lock.
   ASSERT_OK(wal->Append("wal", IOOptions(), nullptr));
   primary.Release();
   writer.join();
   SyncPoint::GetInstance()->DisableProcessing();
-  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
   ASSERT_OK(wal->Close(IOOptions(), nullptr));
   ASSERT_OK(backup->Stop());
 }
-TEST_F(MetaBypassTest, ChannelWalPassesSstCapacityWait) {
+TEST_F(MetaBypassTest, ChannelWalPassesMetadataCapacityWait) {
   m_.queue_capacity = 8192;
   m_.batch_bytes = 1;
   TestGate applying, blocked;
@@ -5204,12 +5664,12 @@ TEST_F(MetaBypassTest, ChannelWalPassesSstCapacityWait) {
                                         [&](void*) { blocked.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
-  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread writer([&] {
-    EXPECT_OK(sst->Append(std::string(3000, 'b'), IOOptions(), nullptr));
+    EXPECT_OK(metadata->Append(std::string(3000, 'b'), IOOptions(), nullptr));
   });
   blocked.WaitUntilBlocked();
   blocked.Release();
@@ -5217,15 +5677,15 @@ TEST_F(MetaBypassTest, ChannelWalPassesSstCapacityWait) {
   applying.Release();
   writer.join();
   SyncPoint::GetInstance()->DisableProcessing();
-  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
   ASSERT_OK(wal->Close(IOOptions(), nullptr));
   ASSERT_OK(backup->Stop());
   auto stats = backup->Stats();
   ASSERT_OK(stats.error);
   ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
   std::string bytes;
-  ASSERT_OK(
-      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000002",
+                             &bytes));
   ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(3000, 'b'));
 }
 TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
@@ -5243,13 +5703,13 @@ TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
       });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
-  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread meta_writer([&] {
-    EXPECT_TRUE(
-        sst->Append(std::string(3000, 'b'), IOOptions(), nullptr).IsIOError());
+    EXPECT_TRUE(metadata->Append(std::string(3000, 'b'), IOOptions(), nullptr)
+                    .IsIOError());
   });
   std::thread wal_writer([&] {
     EXPECT_TRUE(
@@ -5261,7 +5721,7 @@ TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
   meta_writer.join();
   wal_writer.join();
   SyncPoint::GetInstance()->DisableProcessing();
-  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
   ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
   ASSERT_TRUE(backup->Stop().IsIOError());
 }
@@ -5276,24 +5736,27 @@ TEST_F(MetaBypassTest, ChannelMergeOrdersControlOperations) {
       [&](void* arg) { sequence.push_back(*static_cast<uint64_t*>(arg)); });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst, renamed, next;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata, renamed, next;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
   ASSERT_OK(wal->Append("w1", IOOptions(), nullptr));
-  ASSERT_OK(sst->Append("s1", IOOptions(), nullptr));
-  ASSERT_OK(sst->Append("s2", IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append("s1", IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append("s2", IOOptions(), nullptr));
   ASSERT_OK(wal->Append("w2", IOOptions(), nullptr));
   ASSERT_OK(wal->Close(IOOptions(), nullptr));
-  ASSERT_OK(sst->Close(IOOptions(), nullptr));
-  ASSERT_OK(backup->RenameFile(index_ + "/000001.log", index_ + "/000003.sst",
-                               IOOptions(), nullptr));
-  ASSERT_OK(backup->ReopenWritableFile(index_ + "/000003.sst", FileOptions(),
-                                       &renamed, nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->RenameFile(index_ + "/000001.log",
+                               index_ + "/MANIFEST-000003", IOOptions(),
+                               nullptr));
+  ASSERT_OK(backup->ReopenWritableFile(index_ + "/MANIFEST-000003",
+                                       FileOptions(), &renamed, nullptr));
   ASSERT_OK(renamed->Append("w3", IOOptions(), nullptr));
   ASSERT_OK(renamed->Close(IOOptions(), nullptr));
-  ASSERT_OK(backup->RenameFile(index_ + "/000002.sst", index_ + "/000004.sst",
-                               IOOptions(), nullptr));
-  ASSERT_OK(backup->DeleteFile(index_ + "/000004.sst", IOOptions(), nullptr));
+  ASSERT_OK(backup->RenameFile(index_ + "/MANIFEST-000002",
+                               index_ + "/MANIFEST-000004", IOOptions(),
+                               nullptr));
+  ASSERT_OK(
+      backup->DeleteFile(index_ + "/MANIFEST-000004", IOOptions(), nullptr));
   ASSERT_OK(backup->NewWritableFile(index_ + "/000005.log", FileOptions(),
                                     &next, nullptr));
   ASSERT_OK(next->Append("w4", IOOptions(), nullptr));
@@ -5304,15 +5767,15 @@ TEST_F(MetaBypassTest, ChannelMergeOrdersControlOperations) {
   ASSERT_EQ(sequence.size(), 16U);
   for (size_t i = 0; i < sequence.size(); ++i) ASSERT_EQ(sequence[i], i + 1);
   std::string bytes;
-  ASSERT_OK(
-      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000003.sst", &bytes));
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000003",
+                             &bytes));
   ASSERT_EQ(bytes, "w1w2w3");
   ASSERT_OK(
       metabypass::Read(fs_.get(), m_.backup_dir + "/work/000005.log", &bytes));
   ASSERT_EQ(bytes, "w4");
-  ASSERT_TRUE(
-      fs_->FileExists(m_.backup_dir + "/work/000004.sst", IOOptions(), nullptr)
-          .IsNotFound());
+  ASSERT_TRUE(fs_->FileExists(m_.backup_dir + "/work/MANIFEST-000004",
+                              IOOptions(), nullptr)
+                  .IsNotFound());
 }
 TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
   m_.batch_bytes = 1;
@@ -5320,7 +5783,8 @@ TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
   BlockFirstApply(&applying);
   SyncPoint::GetInstance()->SetCallBack(
       "MetaBypass::PrimaryReserved", [&](void* arg) {
-        if (*static_cast<std::string*>(arg) == "000002.sst") primary.Block();
+        if (*static_cast<std::string*>(arg) == "MANIFEST-000002")
+          primary.Block();
       });
   SyncPoint::GetInstance()->SetCallBack(
       "MetaBypass::ApplyStatus", [](void* arg) {
@@ -5331,11 +5795,11 @@ TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
                                         [&](void*) { discarded.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
   std::thread writer([&] {
-    EXPECT_OK(sst->Append(std::string(1024, 'x'), IOOptions(), nullptr));
+    EXPECT_OK(metadata->Append(std::string(1024, 'x'), IOOptions(), nullptr));
   });
   primary.WaitUntilBlocked();
   applying.Release();
@@ -5351,7 +5815,7 @@ TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
   auto after = backup->Stats();
   ASSERT_TRUE(after.error.IsIOError());
   ASSERT_EQ(after.queued_bytes, 0U);
-  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
   ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
   SyncPoint::GetInstance()->DisableProcessing();
 }
@@ -5366,12 +5830,12 @@ TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
   });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
-  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread meta_writer([&] {
-    EXPECT_OK(sst->Append(std::string(6000, 'b'), IOOptions(), nullptr));
+    EXPECT_OK(metadata->Append(std::string(6000, 'b'), IOOptions(), nullptr));
   });
   std::thread wal_writer([&] {
     EXPECT_OK(wal->Append(std::string(6000, 'w'), IOOptions(), nullptr));
@@ -5382,7 +5846,7 @@ TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
   meta_writer.join();
   wal_writer.join();
   SyncPoint::GetInstance()->DisableProcessing();
-  ASSERT_OK(sst->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
   ASSERT_OK(wal->Close(IOOptions(), nullptr));
   ASSERT_OK(backup->Stop());
   auto stats = backup->Stats();
@@ -5390,8 +5854,8 @@ TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
   ASSERT_EQ(stats.queued_bytes, 0U);
   ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
   std::string bytes;
-  ASSERT_OK(
-      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000002.sst", &bytes));
+  ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000002",
+                             &bytes));
   ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(6000, 'b'));
   ASSERT_OK(
       metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
@@ -5409,13 +5873,13 @@ TEST_F(MetaBypassTest, ChannelStopWakesBothCapacityWaiters) {
   });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, sst;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &sst));
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
-  ASSERT_OK(sst->Append(std::string(6000, 'a'), IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread meta_writer([&] {
-    EXPECT_TRUE(
-        sst->Append(std::string(3000, 'b'), IOOptions(), nullptr).IsIOError());
+    EXPECT_TRUE(metadata->Append(std::string(3000, 'b'), IOOptions(), nullptr)
+                    .IsIOError());
   });
   std::thread wal_writer([&] {
     EXPECT_TRUE(
@@ -5429,7 +5893,7 @@ TEST_F(MetaBypassTest, ChannelStopWakesBothCapacityWaiters) {
   wal_writer.join();
   applying.Release();
   stop.join();
-  ASSERT_TRUE(sst->Close(IOOptions(), nullptr).IsIOError());
+  ASSERT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
   ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
   auto stats = backup->Stats();
   ASSERT_OK(stats.error);
@@ -5563,6 +6027,13 @@ TEST_F(MetaBypassTest, SigkillPublicationStages) {
     Clean(root_);
     ASSERT_OK(fs_->CreateDir(root_, IOOptions(), nullptr));
   }
+}
+TEST_F(MetaBypassTest, SigkillDuringSstCopyRestoresAfterSsdLoss) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("sst-copy"));
+  // Restore deletes the complete native directory. Only the old published
+  // point and the continuously mirrored WAL survive the interrupted copy.
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 5));
+  CheckContents({{"a", "last"}, {"b", "batch"}});
 }
 TEST_F(MetaBypassTest, SigkillDuringRetiredPointCleanup) {
   ASSERT_NO_FATAL_FAILURE(RunCrashWriter("MetaBypass::GCFileDeleted"));
@@ -7256,7 +7727,7 @@ class TieredStorageTest : public MetaBypassTest {
       ASSERT_EQ(actual, std::string(phase) == "register" ? "" : "payload");
       ASSERT_TRUE(LogicalClosed());
       storage_->Start();
-      ASSERT_OK(storage_->Persist({{1, actual.size()}}));
+      ASSERT_OK(storage_->Persist({{ 1, actual.size() }}));
       ASSERT_TRUE(FinalPublished());
     }
     ASSERT_OK(storage_->Stop());
@@ -10935,9 +11406,15 @@ int main(int argc, char** argv) {
     MetaBypassOptions bypass;
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
+    const bool sst_copy_crash = argc == 6 && std::string(argv[5]) == "sst-copy";
+    auto no_links =
+        std::make_shared<ROCKSDB_NAMESPACE::CandidateNoLinkFileSystem>(
+            options.env->GetFileSystem());
+    auto env = ROCKSDB_NAMESPACE::NewCompositeEnv(no_links);
+    if (sst_copy_crash) options.env = env.get();
     const bool gc_crash =
         argc == 6 && std::string(argv[5]) == "MetaBypass::GCFileDeleted";
-    if (gc_crash) {
+    if (gc_crash || sst_copy_crash) {
       bypass.batch_bytes = bypass.queue_capacity;
       bypass.interval_ms = 60000;
       bypass.checkpoint_interval_ms = bypass.interval_ms;
@@ -10948,7 +11425,18 @@ int main(int argc, char** argv) {
     // The GC crash starts with Open's only root. Its first retirement must
     // belong to the batch below, after "a" has been overwritten with "last".
     if (s.ok() && !gc_crash) s = db->SyncBackup();
-    if (argc == 6) {
+    std::atomic<bool> copying_tables{false};
+    if (sst_copy_crash) {
+      SyncPoint::GetInstance()->SetCallBack(
+          "MetaBypass::BeforeCaptureTables",
+          [&](void*) { copying_tables = true; });
+      SyncPoint::GetInstance()->SetCallBack("MetaBypass::StageCopyAppendStatus",
+                                            [&](void*) {
+                                              if (copying_tables)
+                                                kill(getpid(), SIGKILL);
+                                            });
+      SyncPoint::GetInstance()->EnableProcessing();
+    } else if (argc == 6) {
       SyncPoint::GetInstance()->SetCallBack(
           argv[5], [](void*) { kill(getpid(), SIGKILL); });
       SyncPoint::GetInstance()->EnableProcessing();
@@ -10959,8 +11447,16 @@ int main(int argc, char** argv) {
     if (s.ok()) s = batch.Put("b", "batch");
     if (s.ok()) s = batch.Delete("deleted");
     WriteOptions sync;
-    sync.sync = true;
+    sync.sync = !sst_copy_crash;
     if (s.ok()) s = db->Write(sync, &batch);
+    if (sst_copy_crash) {
+      if (s.ok()) s = db->Flush(ROCKSDB_NAMESPACE::FlushOptions());
+      if (s.ok()) s = db->SyncBackup();
+      if (s.ok()) {
+        fprintf(stderr, "SST copy crash hook did not run\n");
+        _exit(3);
+      }
+    }
     if (!s.ok()) {
       fprintf(stderr, "%s\n", s.ToString().c_str());
       return 2;

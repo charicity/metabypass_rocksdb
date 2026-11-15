@@ -400,6 +400,7 @@ class MetaBypassDB {
   Status Close();
 
  private:
+  Status WriteImpl(const WriteOptions&, WriteBatch*, bool check_batch);
   struct Impl;
   explicit MetaBypassDB(std::unique_ptr<Impl> impl);
   std::unique_ptr<Impl> impl_;

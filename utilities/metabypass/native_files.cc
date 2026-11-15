@@ -194,7 +194,9 @@ void HddPressure::Monitor() {
       wake_.wait(lock, [&] { return stop_ || active_hdd_ != 0; });
     else
       wake_.wait_for(lock, std::chrono::milliseconds(5));
-    if (!stop_) Evaluate(NowLocked());
+    if (!stop_) {
+      Evaluate(NowLocked());
+    }
   }
 }
 namespace {

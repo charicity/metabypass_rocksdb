@@ -192,14 +192,14 @@ Backup::~Backup() {
 std::string Backup::Base(const std::string& path) const {
   return path.substr(index_.size() + 1);
 }
-bool Backup::Tracked(const std::string& path) const {
+bool Backup::Tracked(const std::string& path, bool include_tables) const {
   if (path.compare(0, index_.size() + 1, index_ + "/") != 0) return false;
   uint64_t number;
   FileType type;
   if (!ParseFileName(Base(path), &number, &type)) return false;
-  return type == kWalFile || type == kTableFile || type == kDescriptorFile ||
-         type == kCurrentFile || type == kOptionsFile ||
-         type == kIdentityFile || type == kTempFile;
+  return type == kWalFile || (include_tables && type == kTableFile) ||
+         type == kDescriptorFile || type == kCurrentFile ||
+         type == kOptionsFile || type == kIdentityFile || type == kTempFile;
 }
 Backup::Channel& Backup::ChannelFor(const std::string& name) {
   uint64_t number;
@@ -319,12 +319,7 @@ Status Backup::Start(bool existing) {
       if (s.ok()) {
         uint64_t number;
         FileType type;
-        if (storage_->sst() && ParseFileName(f, &number, &type) &&
-            type == kTableFile) {
-          s = disk_->LinkFile(index_ + "/" + f, work_ + "/" + f, IOOptions(),
-                              nullptr);
-          if (!s.ok()) s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
-        } else if (ParseFileName(f, &number, &type) && type == kWalFile) {
+        if (ParseFileName(f, &number, &type) && type == kWalFile) {
           TEST_SYNC_POINT("MetaBypass::BeforeWalReseed");
           s = ExtendWal(disk_, index_ + "/" + f, work_ + "/" + f, size);
           TEST_SYNC_POINT("MetaBypass::AfterWalReseed");
@@ -367,9 +362,9 @@ Status Backup::Reserve(Channel& channel, size_t charge) {
   if (charge > options_.queue_capacity)
     return Status::InvalidArgument(
         "file operation exceeds Metabypass queue capacity");
-  const uint64_t start = Now();
   const bool blocked = stats_.queued_bytes > options_.queue_capacity - charge;
   if (blocked) {
+    const uint64_t start = Now();
     assert(channel.waiting_charge == 0);
     channel.waiting_charge = charge;
     // A reservation can run out of space before reaching batch_bytes.
@@ -394,7 +389,10 @@ void Backup::Fail(const Status& status) {
   if (storage_->tier()) storage_->tier()->Cancel(status);
   std::lock_guard<std::mutex> publish(publication_mutex_);
   std::lock_guard<std::mutex> lock(mutex_);
-  if (stats_.error.ok()) stats_.error = status;
+  if (stats_.error.ok()) {
+    stats_.error = status;
+    failed_.store(true, std::memory_order_release);
+  }
   WakeMirror();
   validator_cv_.notify_one();
   gc_cv_.notify_all();
@@ -406,7 +404,6 @@ void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (primary.ok() && stats_.error.ok() && !stopping_) {
     e.seq = ++accepted_;
-    e.queued_micros = Now();
     if (e.kind == Kind::kRetireBlob) {
       ++native_changes_;
       MarkDirty();
@@ -499,6 +496,8 @@ IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
 }
 IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
                             const IOOptions& o, IODebugContext* d) {
+  if (Tracked(a, true) != Tracked(b, true))
+    return IOStatus::NotSupported("cross-boundary rename");
   if (!Tracked(a) && !Tracked(b)) return target()->RenameFile(a, b, o, d);
   if (!Tracked(a) || !Tracked(b))
     return IOStatus::NotSupported("cross-boundary rename");
@@ -524,7 +523,7 @@ IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
 }
 IOStatus Backup::LinkFile(const std::string& a, const std::string& b,
                           const IOOptions& o, IODebugContext* d) {
-  if (Tracked(a) || Tracked(b))
+  if (Tracked(a, true) || Tracked(b, true))
     return IOStatus::NotSupported("Metabypass external links");
   return target()->LinkFile(a, b, o, d);
 }
@@ -633,6 +632,7 @@ Status Backup::Capture(Candidate* candidate) {
       candidate->blobs.emplace(info.file_number, info.size);
       continue;
     }
+    if (info.file_type == kTableFile) continue;
     const std::string destination = candidate->path + "/" + file;
     if (!info.replacement_contents.empty()) {
       // These bytes are private to this candidate. Publish synchronizes and
@@ -650,17 +650,10 @@ Status Backup::Capture(Candidate* candidate) {
       if (!s.ok()) return s;
       if (size < info.size || (!info.trim_to_size && size != info.size))
         return Status::Corruption("native checkpoint size mismatch", file);
-      const bool immutable = info.file_type == kTableFile;
-      if (immutable) {
-        candidate->state.tables.emplace(info.file_number, info.size);
-        s = disk_->LinkFile(source, destination, IOOptions(), nullptr);
-      }
-      if (!immutable || !s.ok()) {
-        s = StageCopy(disk_, source, destination, info.size);
-        if (s.ok()) {
-          std::lock_guard<std::mutex> lock(mutex_);
-          stats_.candidate_copied_bytes += info.size;
-        }
+      s = StageCopy(disk_, source, destination, info.size);
+      if (s.ok()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.candidate_copied_bytes += info.size;
       }
     }
     if (!s.ok()) return s;
@@ -668,6 +661,54 @@ Status Backup::Capture(Candidate* candidate) {
   }
   s = PruneWal(candidate->wal_floor);
   if (!s.ok()) return s;
+  TEST_SYNC_POINT("MetaBypass::MutableFilesCaptured");
+  return Status::OK();
+}
+Status Backup::CaptureTables(Candidate* candidate) {
+  std::string published_point;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The sole validator cannot retire this point before Publish completes.
+    if (!points_.empty())
+      published_point = options_.backup_dir + "/" + points_.back().Name();
+  }
+  TEST_SYNC_POINT("MetaBypass::BeforeCaptureTables");
+  for (const auto& info : candidate->files) {
+    if (info.file_type != kTableFile) continue;
+    const auto& file = info.relative_filename;
+    const std::string destination = candidate->path + "/" + file;
+    candidate->state.tables.emplace(info.file_number, info.size);
+    Status s;
+    if (!published_point.empty()) {
+      const std::string previous = published_point + "/" + file;
+      uint64_t previous_size = 0;
+      s = disk_->GetFileSize(previous, IOOptions(), &previous_size, nullptr);
+      if (!s.ok() && !s.IsNotFound() && !s.IsPathNotFound()) return s;
+      if (s.ok() && previous_size == info.size) {
+        s = disk_->LinkFile(previous, destination, IOOptions(), nullptr);
+        if (s.ok()) candidate->durable_tables.insert(info.file_number);
+      }
+    }
+    if (!candidate->durable_tables.count(info.file_number)) {
+      // Resolve through the logical filesystem, including cold SST routing.
+      // Native deletions remain pinned until every table has been captured.
+      const std::string source = info.directory + "/" + file;
+      uint64_t size = 0;
+      s = storage_->GetFileSize(source, IOOptions(), &size, nullptr);
+      if (!s.ok()) return s;
+      if (size != info.size)
+        return Status::Corruption("native checkpoint size mismatch", file);
+      s = storage_->LinkFile(source, destination, IOOptions(), nullptr);
+      if (!s.ok()) {
+        s = StageCopy(storage_.get(), source, destination, info.size);
+        if (s.ok()) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          stats_.candidate_copied_bytes += info.size;
+        }
+      }
+      if (!s.ok()) return s;
+    }
+  }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateCaptured", &candidate->path);
   return Status::OK();
 }
@@ -739,7 +780,7 @@ Status Backup::Publish(const Candidate& candidate) {
         if (!cold.IsNotSupported()) s = cold;
       }
       s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
-    } else {
+    } else if (!candidate.durable_tables.count(number)) {
       s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
                           true, nullptr);
     }
@@ -1001,7 +1042,8 @@ void Backup::Run() {
       capture_done_ = true;
       validator_cv_.notify_all();
     }
-    if (applied_ != before_applied) validator_cv_.notify_one();
+    if (applied_ != before_applied && NeedsBlobCheckpoint())
+      validator_cv_.notify_one();
     if (stopping_ && QueuesEmpty()) break;
   }
   for (auto* channel : {&wal_channel_, &metadata_channel_}) {
@@ -1042,7 +1084,9 @@ void Backup::SampleProgress() {
                                        FileOptions(), &file, nullptr);
   if (s.ok()) {
     s = file->Append(row, IOOptions(), nullptr);
-    if (s.ok()) s = file->Fsync(IOOptions(), nullptr);
+    if (s.ok()) {
+      s = file->Fsync(IOOptions(), nullptr);
+    }
     s.UpdateIfOk(file->Close(IOOptions(), nullptr));
   }
   // Samples carry no recovery correctness dependency. A gap widens the time
@@ -1231,6 +1275,7 @@ void Backup::ValidateLoop() {
       s = stats_.error.ok() ? Status::ShutdownInProgress() : stats_.error;
     }
     lock.unlock();
+    if (s.ok()) s = CaptureTables(candidate.get());
     // Candidate files now own their bytes and candidate_busy_ protects blobs.
     if (pinned) {
       s.UpdateIfOk(db->EnableFileDeletions());
@@ -1393,6 +1438,7 @@ Status Backup::Sync() {
 void Backup::DetachDB() {
   std::unique_lock<std::mutex> lock(mutex_);
   active_ = false;
+  TEST_SYNC_POINT("MetaBypass::BeforeDetachDB");
   sync_cv_.wait(lock, [&] { return !candidate_busy_; });
   db_ = nullptr;
 }
@@ -1414,6 +1460,8 @@ Status Backup::Stop() {
   return Error();
 }
 Status Backup::Error() const {
+  // Fail publishes the complete first Status before exposing the sticky flag.
+  if (!failed_.load(std::memory_order_acquire)) return Status::OK();
   std::lock_guard<std::mutex> lock(mutex_);
   return stats_.error;
 }

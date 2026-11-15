@@ -816,24 +816,31 @@ Status MetaBypassDB::Put(const WriteOptions& o, const Slice& k,
                          const Slice& v) {
   WriteBatch b;
   Status s = b.Put(k, v);
-  return s.ok() ? Write(o, &b) : s;
+  return s.ok() ? WriteImpl(o, &b, false) : s;
 }
 Status MetaBypassDB::Delete(const WriteOptions& o, const Slice& k) {
   WriteBatch b;
   Status s = b.Delete(k);
-  return s.ok() ? Write(o, &b) : s;
+  return s.ok() ? WriteImpl(o, &b, false) : s;
 }
 Status MetaBypassDB::Write(const WriteOptions& o, WriteBatch* b) {
+  return WriteImpl(o, b, true);
+}
+Status MetaBypassDB::WriteImpl(const WriteOptions& o, WriteBatch* b,
+                               bool check_batch) {
   if (!impl_->db) return Status::ShutdownInProgress();
   if (o.disableWAL) return Status::NotSupported("Metabypass requires WAL");
   if (!b) return Status::InvalidArgument("null WriteBatch");
   if (!b->GetWalTerminationPoint().is_cleared())
     return Status::NotSupported(
         "Metabypass requires the complete batch in WAL");
-  SupportedBatch check;
-  Status s = b->Iterate(&check);
-  if (s.ok() && !check.supported)
-    s = Status::NotSupported("Metabypass LogData");
+  Status s;
+  if (check_batch) {
+    SupportedBatch check;
+    s = b->Iterate(&check);
+    if (s.ok() && !check.supported)
+      s = Status::NotSupported("Metabypass LogData");
+  }
   if (s.ok()) s = impl_->backup->Error();
   if (!s.ok()) return s;
   {

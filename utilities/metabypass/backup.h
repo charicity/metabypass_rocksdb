@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -86,7 +87,6 @@ class Backup : public FileSystemWrapper {
     std::string name, other, bytes;
     uint64_t size = 0;
     uint64_t seq = 0;
-    uint64_t queued_micros = 0;
     size_t charge = 0;
   };
   struct Channel {
@@ -98,7 +98,7 @@ class Backup : public FileSystemWrapper {
     size_t waiting_charge = 0;
   };
   Channel& ChannelFor(const std::string& name);
-  bool Tracked(const std::string& path) const;
+  bool Tracked(const std::string& path, bool include_tables = false) const;
   std::string Base(const std::string& path) const;
   Status Reserve(Channel& channel, size_t charge);
   void Fail(const Status& status);
@@ -120,8 +120,11 @@ class Backup : public FileSystemWrapper {
     std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
     NativeState state;
+    // Hard links to immutable tables already synced by the published point.
+    std::set<uint64_t> durable_tables;
   };
   Status Capture(Candidate* candidate);
+  Status CaptureTables(Candidate* candidate);
   Status PruneWal(uint64_t floor);
   Status Publish(const Candidate& candidate);
   // Called with mutex_ held. Each wait channel has a distinct predicate.
@@ -163,6 +166,7 @@ class Backup : public FileSystemWrapper {
   bool mirror_waiting_ = false;
   bool prune_wal_ = false;
   MetaBypassStats stats_;
+  std::atomic<bool> failed_{false};
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
   uint64_t generation_ = 0;
   DB* db_ = nullptr;

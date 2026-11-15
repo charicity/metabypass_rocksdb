@@ -39,10 +39,8 @@ class Backup : public FileSystemWrapper {
   void StorageFailed(const Status& s) { Fail(s); }
   // Read-only protocol validation before Restore creates any directories.
   static Status CheckRestoreFormat(FileSystem*, const std::string& backup);
-  static Status RestoreFiles(FileSystem*, const std::string& backup,
-                             const std::string& destination,
-                             const SeparatedStorage& storage,
-                             bool preflight = false);
+  static Status PreflightCheckpoint(FileSystem*, const std::string& backup,
+                                    const SeparatedStorage& storage);
   static Status PrepareRecovery(FileSystem*, const std::string& backup,
                                 const std::string& destination,
                                 std::string* point,
@@ -70,9 +68,8 @@ class Backup : public FileSystemWrapper {
                     IODebugContext*) override;
 
  private:
-  static Status RestoreFilesImpl(FileSystem*, const std::string&,
-                                 const std::string&, const SeparatedStorage&,
-                                 bool preflight);
+  static Status PreflightCheckpointImpl(FileSystem*, const std::string&,
+                                        const SeparatedStorage&);
   friend class MirrorWriter;
   friend class BackupTestAccess;
   enum class Kind {
@@ -123,11 +120,9 @@ class Backup : public FileSystemWrapper {
     std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
     NativeState state;
-    std::set<std::string> closed;
-    std::map<std::string, uint64_t> epochs;
-    std::map<std::string, StagedCopy> staged;
   };
   Status Capture(Candidate* candidate);
+  Status PruneWal(uint64_t floor);
   Status Publish(const Candidate& candidate);
   // Called with mutex_ held. Each wait channel has a distinct predicate.
   bool MirrorReady() const;
@@ -152,13 +147,6 @@ class Backup : public FileSystemWrapper {
       return reference.substr(0, reference.find(' '));
     }
   };
-  struct FileDigest {
-    uint64_t epoch = 0, length = 0;
-    uint32_t crc = 0;
-  };
-  // Byte digests are private to the coordinator, except GC under its gate.
-  std::map<std::string, FileDigest> digest_cache_;
-  std::map<uint64_t, FileDigest> blob_cache_;
   std::shared_ptr<SeparatedStorage> storage_;
   FileSystem* disk_;
   const std::string index_;
@@ -173,6 +161,7 @@ class Backup : public FileSystemWrapper {
   mutable std::mutex mutex_;
   std::condition_variable mirror_cv_, validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
+  bool prune_wal_ = false;
   MetaBypassStats stats_;
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
   uint64_t generation_ = 0;
@@ -191,9 +180,6 @@ class Backup : public FileSystemWrapper {
   uint64_t captured_ = 0;
   std::unique_ptr<Candidate> candidate_;
   std::thread thread_, validator_, garbage_collector_, sampler_;
-  uint64_t next_epoch_ = 0;
-  std::map<std::string, uint64_t> epochs_;
-  std::set<std::string> closed_;
   std::map<std::string, std::unique_ptr<FSWritableFile>> writers_;
   std::deque<Point> points_;
   Point retired_;

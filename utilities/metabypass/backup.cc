@@ -12,7 +12,6 @@
 
 #include "file/filename.h"
 #include "test_util/sync_point.h"
-#include "util/crc32c.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
@@ -39,8 +38,8 @@ Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
   if (!s.ok()) return s;
   std::istringstream p(pointer);
   std::string name;
-  uint32_t inventory_crc;
-  if (!(p >> name >> inventory_crc) || !SafeName(name) ||
+  std::string extra;
+  if (!(p >> name) || (p >> extra) || !SafeName(name) ||
       name.compare(0, 6, "point-") != 0)
     return Status::Corruption("invalid published pointer");
   *point = backup + "/" + name;
@@ -50,9 +49,7 @@ Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
   if (identity != owner) return Status::Corruption("backup identity mismatch");
   s = Read(fs, *point + "/INVENTORY", inventory);
   if (!s.ok()) return s;
-  if (crc32c::Value(inventory->data(), inventory->size()) != inventory_crc)
-    return Status::Corruption("published inventory checksum");
-  if (inventory->compare(0, 5, "MBI5\n") != 0)
+  if (inventory->compare(0, 5, "MBI6\n") != 0)
     return Status::NotSupported("Metabypass inventory format");
   return Status::OK();
 }
@@ -238,23 +235,21 @@ Status Backup::Start(bool existing) {
   if (s.ok()) {
     std::istringstream in(pointer);
     std::string p;
-    uint32_t inventory_crc;
-    while (in >> p >> inventory_crc) {
+    while (in >> p) {
       if (!SafeName(p) || p.compare(0, 6, "point-") != 0)
         return Status::Corruption("invalid recovery point pointer");
-      Point point{p + " " + std::to_string(inventory_crc), 0, {}};
+      Point point{p, 0, {}};
       std::string inventory;
       s = Read(disk_, options_.backup_dir + "/" + p + "/INVENTORY", &inventory);
       if (!s.ok()) return s;
-      if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
-        return Status::Corruption("published inventory checksum");
-      if (inventory.compare(0, 5, "MBI5\n") != 0)
+      if (inventory.compare(0, 5, "MBI6\n") != 0)
         return Status::NotSupported("Metabypass inventory format");
       std::istringstream entries(inventory.substr(5));
       std::string kind, file;
       uint64_t length;
-      uint32_t crc;
-      while (entries >> kind >> file >> length >> crc) {
+      while (entries >> kind) {
+        if (!(entries >> file >> length))
+          return Status::Corruption("incomplete inventory entry");
         if (kind == "B") {
           uint64_t number;
           std::istringstream id(file);
@@ -277,7 +272,7 @@ Status Backup::Start(bool existing) {
         return s;
       points_.push_back(std::move(point));
     }
-    if (points_.empty() || points_.size() > 2)
+    if (points_.empty() || points_.size() > 1)
       return Status::Corruption("invalid recovery point pointer");
   } else if (!s.IsNotFound())
     return s;
@@ -301,8 +296,6 @@ Status Backup::Start(bool existing) {
     uint64_t number;
     FileType type;
     if (ParseFileName(file, &number, &type) && type == kWalFile) {
-      closed_.insert(file);
-      epochs_[file] = ++next_epoch_;
       continue;
     }
     s = disk_->DeleteFile(work_ + "/" + file, IOOptions(), nullptr);
@@ -340,8 +333,6 @@ Status Backup::Start(bool existing) {
         }
       }
       if (!s.ok()) return s;
-      closed_.insert(f);
-      epochs_[f] = ++next_epoch_;
     }
   }
   garbage_collector_ = std::thread(&Backup::GarbageCollectLoop, this);
@@ -554,7 +545,6 @@ Status Backup::Append(const std::string& name, const Slice& bytes) {
                                          &writer, nullptr);
     if (!s.ok()) return s;
   }
-  closed_.erase(name);
   return writer->Append(bytes, IOOptions(), nullptr);
 }
 Status Backup::Apply(const Event& e) {
@@ -586,30 +576,23 @@ Status Backup::Apply(const Event& e) {
   if (e.kind == Kind::kCreate) {
     Status s = close();
     if (!s.ok()) return s;
-    closed_.erase(e.name);
-    epochs_[e.name] = ++next_epoch_;
     return disk_->NewWritableFile(path, FileOptions(), &writers_[e.name],
                                   nullptr);
   }
   if (e.kind == Kind::kTruncate) {
-    epochs_[e.name] = ++next_epoch_;
     auto& writer = writers_[e.name];
     if (!writer) {
       Status s =
           disk_->ReopenWritableFile(path, FileOptions(), &writer, nullptr);
       if (!s.ok()) return s;
     }
-    closed_.erase(e.name);
     return writer->Truncate(e.size, IOOptions(), nullptr);
   }
   Status s = close();
   if (!s.ok()) return s;
   if (e.kind == Kind::kClose) {
-    closed_.insert(e.name);
     return Status::OK();
   }
-  closed_.erase(e.name);
-  epochs_.erase(e.name);
   if (e.kind == Kind::kDelete) {
     uint64_t number;
     FileType type;
@@ -630,16 +613,11 @@ Status Backup::Apply(const Event& e) {
     }
     return s;
   }
-  closed_.insert(e.other);
-  epochs_[e.other] = ++next_epoch_;
   return disk_->RenameFile(path, work_ + "/" + e.other, IOOptions(), nullptr);
 }
 Status Backup::Capture(Candidate* candidate) {
   candidate->name = "point-" + std::to_string(++generation_);
   candidate->path = options_.backup_dir + "/" + candidate->name;
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforeCaptureSnapshot", &closed_);
-  candidate->closed = closed_;
-  candidate->epochs = epochs_;
   for (const auto& writer : writers_) {
     if (!writer.second) continue;
     Status s = writer.second->Flush(IOOptions(), nullptr);
@@ -665,7 +643,6 @@ Status Backup::Capture(Candidate* candidate) {
         s = writer->Append(info.replacement_contents, IOOptions(), nullptr);
         s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
       }
-      candidate->epochs[file] = ++next_epoch_;
     } else {
       uint64_t size = 0;
       const std::string source = work_ + "/" + file;
@@ -673,18 +650,14 @@ Status Backup::Capture(Candidate* candidate) {
       if (!s.ok()) return s;
       if (size < info.size || (!info.trim_to_size && size != info.size))
         return Status::Corruption("native checkpoint size mismatch", file);
-      if (!candidate->epochs.count(file))
-        return Status::Corruption("missing mirrored file generation", file);
       const bool immutable = info.file_type == kTableFile;
       if (immutable) {
         candidate->state.tables.emplace(info.file_number, info.size);
         s = disk_->LinkFile(source, destination, IOOptions(), nullptr);
       }
       if (!immutable || !s.ok()) {
-        StagedCopy staged;
-        s = StageCopy(disk_, source, destination, info.size, &staged);
+        s = StageCopy(disk_, source, destination, info.size);
         if (s.ok()) {
-          candidate->staged.emplace(file, staged);
           std::lock_guard<std::mutex> lock(mutex_);
           stats_.candidate_copied_bytes += info.size;
         }
@@ -693,31 +666,34 @@ Status Backup::Capture(Candidate* candidate) {
     if (!s.ok()) return s;
     candidate->work_bytes += info.size;
   }
-  // The mirror worker exclusively owns work files and writers. Pruning here
-  // also handles WAL delete events retained by an older recovery root.
-  uint64_t floor = candidate->wal_floor;
+  s = PruneWal(candidate->wal_floor);
+  if (!s.ok()) return s;
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateCaptured", &candidate->path);
+  return Status::OK();
+}
+Status Backup::PruneWal(uint64_t floor) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (points_.empty()) return Status::OK();
     for (const auto& point : points_) floor = std::min(floor, point.wal_floor);
     if (retired_pending_) floor = std::min(floor, retired_.wal_floor);
+    if (candidate_ && !capture_done_)
+      floor = std::min(floor, candidate_->wal_floor);
   }
-  if (floor) {
-    std::vector<std::string> names;
-    s = disk_->GetChildren(work_, IOOptions(), &names, nullptr);
+  if (!floor) return Status::OK();
+  std::vector<std::string> names;
+  Status s = disk_->GetChildren(work_, IOOptions(), &names, nullptr);
+  if (!s.ok()) return s;
+  for (const auto& name : names) {
+    uint64_t number;
+    FileType type;
+    if (!ParseFileName(name, &number, &type) || type != kWalFile ||
+        number >= floor || writers_.count(name))
+      continue;
+    s = disk_->DeleteFile(work_ + "/" + name, IOOptions(), nullptr);
     if (!s.ok()) return s;
-    for (const auto& name : names) {
-      uint64_t number;
-      FileType type;
-      if (!ParseFileName(name, &number, &type) || type != kWalFile ||
-          number >= floor || writers_.count(name))
-        continue;
-      s = disk_->DeleteFile(work_ + "/" + name, IOOptions(), nullptr);
-      if (!s.ok()) return s;
-      closed_.erase(name);
-      epochs_.erase(name);
-    }
   }
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateCaptured", &candidate->path);
+  TEST_SYNC_POINT("MetaBypass::WalPruned");
   return Status::OK();
 }
 Status Backup::Publish(const Candidate& candidate) {
@@ -738,24 +714,10 @@ Status Backup::Publish(const Candidate& candidate) {
     stats_.checkpoint_persist_micros += Now() - persist_started;
   }
   if (!s.ok()) return s;
-  for (const auto& blob : blobs) {
-    auto& digest = blob_cache_[blob.first];
-    if (digest.length != blob.second) {
-      s = storage_->DigestBlob(blob.first, blob.second, &digest.crc);
-      if (!s.ok()) return s;
-      digest.length = blob.second;
-    }
-  }
-  for (auto it = digest_cache_.begin(); it != digest_cache_.end();) {
-    if (!files.count(it->first))
-      it = digest_cache_.erase(it);
-    else
-      ++it;
-  }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
   if (!s.ok()) return s;
   std::ostringstream inventory;
-  inventory << "MBI5\n";
+  inventory << "MBI6\n";
   uint64_t total = 0;
   for (const auto& f : files) {
     uint64_t number;
@@ -770,6 +732,12 @@ Status Backup::Publish(const Candidate& candidate) {
       if (!s.ok()) return s;
       s = writer->Truncate(f.second, IOOptions(), nullptr);
       if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
+      if (s.ok()) {
+        // Non-table candidates own independent copies. Their durable bytes are
+        // cold until recovery; never invalidate shared SSTs or active mirrors.
+        Status cold = writer->InvalidateCache(0, f.second);
+        if (!cold.IsNotSupported()) s = cold;
+      }
       s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
     } else {
       s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
@@ -777,29 +745,7 @@ Status Backup::Publish(const Candidate& candidate) {
     }
     TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileSyncStatus", &s);
     if (!s.ok()) return s;
-    auto& digest = digest_cache_[f.first];
-    const uint64_t epoch = candidate.epochs.at(f.first);
-    const auto staged = candidate.staged.find(f.first);
-    if (staged != candidate.staged.end()) {
-      // A fresh copy must verify its prefix too, even when the source epoch
-      // and length match the preceding recovery point's cached digest.
-      TEST_SYNC_POINT("MetaBypass::BeforeCandidateFileReadback");
-      s = Digest(disk_, point + "/" + f.first, f.second, &digest.crc);
-      TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileReadbackStatus", &s);
-      if (s.ok() && (staged->second.length != f.second ||
-                     staged->second.crc != digest.crc))
-        s = Status::Corruption("staged file checksum mismatch", f.first);
-    } else {
-      if (digest.epoch != epoch || digest.length > f.second)
-        digest = FileDigest();
-      s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
-                       &digest.crc);
-    }
-    if (!s.ok()) return s;
-    digest.epoch = epoch;
-    digest.length = f.second;
-    inventory << "I " << f.first << ' ' << f.second << ' ' << digest.crc
-              << '\n';
+    inventory << "I " << f.first << ' ' << f.second << '\n';
     total += f.second;
   }
   if (storage_->tier()) {
@@ -809,17 +755,13 @@ Status Backup::Publish(const Candidate& candidate) {
     s = Read(disk_, point + "/BLOB-MAP", &map);
     if (!s.ok()) return s;
     total += map.size();
-    inventory << "D BLOB-MAP " << map.size() << ' '
-              << crc32c::Value(map.data(), map.size()) << '\n';
+    inventory << "D BLOB-MAP " << map.size() << '\n';
   }
   for (const auto& b : blobs) {
-    inventory << "B " << b.first << ' ' << b.second << ' '
-              << blob_cache_.at(b.first).crc << '\n';
+    inventory << "B " << b.first << ' ' << b.second << '\n';
   }
   const std::string inventory_bytes = inventory.str();
   total += inventory_bytes.size();
-  const uint32_t inventory_crc =
-      crc32c::Value(inventory_bytes.data(), inventory_bytes.size());
   if (s.ok())
     s = Write(disk_, point + "/RECOVERY",
               std::to_string(candidate.native_sequence) + " " +
@@ -831,12 +773,8 @@ Status Backup::Publish(const Candidate& candidate) {
   if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateSynced", &s);
   if (!s.ok()) return s;
-  const std::string reference = name + " " + std::to_string(inventory_crc);
-  std::string pointer = reference + "\n";
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!points_.empty()) pointer += points_.front().reference + "\n";
-  }
+  const std::string reference = name;
+  const std::string pointer = reference + "\n";
   if (s.ok()) s = Write(disk_, options_.backup_dir + "/LATEST.tmp", pointer);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforePointerReplace", &s);
   if (!s.ok()) return s;
@@ -863,12 +801,12 @@ Status Backup::Publish(const Candidate& candidate) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       Point retired;
-      if (points_.size() == 2) retired = points_.back();
+      if (points_.size() == 1) retired = points_.back();
       Point published{
           reference, total, {}, candidate.blob_floor, candidate.wal_floor};
       for (const auto& blob : blobs) published.blobs.insert(blob.first);
       points_.push_front(std::move(published));
-      if (points_.size() > 2) points_.pop_back();
+      if (points_.size() > 1) points_.pop_back();
       uint64_t retained = candidate.work_bytes;
       for (const auto& retained_point : points_)
         retained += retained_point.bytes;
@@ -901,7 +839,8 @@ Status Backup::Publish(const Candidate& candidate) {
   return Status::OK();
 }
 bool Backup::MirrorReady() const {
-  return stopping_ || !stats_.error.ok() || (candidate_ && !capture_done_) ||
+  return stopping_ || prune_wal_ || !stats_.error.ok() ||
+         (candidate_ && !capture_done_) ||
          (!QueuesEmpty() &&
           (wal_channel_.waiting_charge != 0 ||
            metadata_channel_.waiting_charge != 0 || requested_ > applied_ ||
@@ -1011,6 +950,16 @@ void Backup::Run() {
                         [&] { return MirrorReady(); });
     mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
+    if (prune_wal_) {
+      prune_wal_ = false;
+      lock.unlock();
+      Status s = PruneWal(std::numeric_limits<uint64_t>::max());
+      lock.lock();
+      if (!s.ok()) {
+        fail(s);
+        break;
+      }
+    }
     const uint64_t boundary = accepted_;
     const uint64_t before_applied = applied_;
     while (auto* channel = NextChannel()) {
@@ -1296,7 +1245,7 @@ void Backup::ValidateLoop() {
     if (!s.ok()) Fail(s);
     lock.lock();
     candidate_busy_ = false;
-    // Retained roots can require one more point after the current publication.
+    // Retirement events after capture require their own coverage boundary.
     // New writes and listener events already own their first-event deadline.
     if (s.ok() && NeedsBlobCheckpoint()) MarkDirty();
     gc_cv_.notify_all();
@@ -1323,12 +1272,6 @@ bool Backup::NeedsBlobCheckpoint() const {
   if (points_.empty() || pending_blobs_.empty()) return false;
   for (const auto& blob : pending_blobs_) {
     if (published_ < blob.second.seq) return applied_ > captured_;
-    const auto needs = [&](const Point& point) {
-      return point.blobs.count(blob.first) || !point.blob_floor ||
-             blob.first >= point.blob_floor;
-    };
-    if (!needs(points_.front()) && points_.size() == 2 && needs(points_.back()))
-      return true;
   }
   return false;
 }
@@ -1367,6 +1310,8 @@ void Backup::GarbageCollectLoop() {
       if (!s.ok()) break;
       retired_ = Point();
       retired_pending_ = false;
+      prune_wal_ = true;
+      WakeMirror();
       stats_.pending_gc_points = 0;
       stats_.pending_gc_bytes = 0;
       gc_cv_.notify_all();
@@ -1389,8 +1334,6 @@ void Backup::GarbageCollectLoop() {
       uint64_t bytes = 0;
       s = storage_->ReclaimBlob(number, &bytes);
       if (!s.ok()) break;
-      // The capture gate also excludes the validator cache owner.
-      blob_cache_.erase(number);
       lock.lock();
       stats_.pending_blob_gc_bytes -= pending_blobs_.at(number).bytes;
       --stats_.pending_blob_gc_files;
@@ -1482,19 +1425,15 @@ Status Backup::CheckRestoreFormat(FileSystem* fs, const std::string& backup) {
   std::string point, inventory;
   return ReadPublishedInventory(fs, backup, &point, &inventory);
 }
-Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
-                            const std::string& destination,
-                            const SeparatedStorage& storage, bool preflight) {
-  if (!preflight)
-    return RestoreFilesImpl(fs, backup, destination, storage, false);
+Status Backup::PreflightCheckpoint(FileSystem* fs, const std::string& backup,
+                                   const SeparatedStorage& storage) {
   for (unsigned attempt = 0; attempt < 3; ++attempt) {
     std::string before, after;
     Status first = Read(fs, backup + "/LATEST", &before);
     const bool missing = first.IsNotFound() || first.IsPathNotFound();
     if (!first.ok() && !missing) return first;
     Status validated =
-        first.ok() ? RestoreFilesImpl(fs, backup, destination, storage, true)
-                   : first;
+        first.ok() ? PreflightCheckpointImpl(fs, backup, storage) : first;
     TEST_SYNC_POINT_CALLBACK("MetaBypass::RestorePreflightValidated",
                              &validated);
     Status last = Read(fs, backup + "/LATEST", &after);
@@ -1532,9 +1471,10 @@ Status Backup::PrepareRecovery(FileSystem* fs, const std::string& backup,
   std::istringstream in(inventory.substr(5));
   std::string kind, file;
   uint64_t length;
-  uint32_t crc;
   std::vector<SstStorage::RestoreFile> ssts;
-  while (in >> kind >> file >> length >> crc) {
+  while (in >> kind) {
+    if (!(in >> file >> length))
+      return Status::Corruption("incomplete inventory entry");
     if (kind != "I") continue;
     if (!SafeName(file)) return Status::Corruption("checkpoint file name");
     uint64_t number;
@@ -1569,108 +1509,62 @@ Status Backup::PrepareRecovery(FileSystem* fs, const std::string& backup,
   }
   return SyncDir(fs, destination);
 }
-Status Backup::RestoreFilesImpl(FileSystem* fs, const std::string& backup,
-                                const std::string& destination,
-                                const SeparatedStorage& storage,
-                                bool preflight) {
+Status Backup::PreflightCheckpointImpl(FileSystem* fs,
+                                       const std::string& backup,
+                                       const SeparatedStorage& storage) {
   std::map<uint64_t, TieredStorage::Version> parsed;
   std::string point, inventory;
   Status s = ReadPublishedInventory(fs, backup, &point, &inventory);
   if (!s.ok()) return s;
   if (storage.tier()) {
-    std::istringstream maps(inventory.substr(5));
-    std::string kind, file;
-    uint64_t size;
-    uint32_t crc;
-    bool found = false;
-    while (maps >> kind >> file >> size >> crc) {
-      if (kind != "D") continue;
-      if (found || file != "BLOB-MAP")
-        return Status::Corruption("invalid blob map entry");
-      std::string bytes;
-      s = Read(fs, point + "/BLOB-MAP", &bytes);
-      if (!s.ok()) return s;
-      if (bytes.size() != size ||
-          crc32c::Value(bytes.data(), bytes.size()) != crc)
-        return Status::Corruption("blob map checksum");
-      s = preflight
-              ? storage.tier()->ParseCheckpoint(point + "/BLOB-MAP", &parsed)
-              : storage.tier()->LoadCheckpoint(point + "/BLOB-MAP");
-      if (!s.ok()) return s;
-      found = true;
+    std::string map;
+    s = Read(fs, point + "/BLOB-MAP", &map);
+    if (s.ok())
+      s = storage.tier()->ParseCheckpoint(point + "/BLOB-MAP", &parsed, false);
+    if (s.ok())
+      s = storage.tier()->BindCheckpointInventory(inventory, map, parsed);
+    if (!s.ok()) return s;
+    for (const auto& blob : parsed) {
+      for (const auto& extent : blob.second.extents) {
+        uint64_t size;
+        s = fs->GetFileSize(storage.tier()->Path(extent), IOOptions(), &size,
+                            nullptr);
+        if (!s.ok()) return s;
+        if (size != extent.length)
+          return Status::Corruption("checkpoint extent length");
+      }
     }
-    if (!found) return Status::Corruption("missing tiered blob map");
+    if (!s.ok()) return s;
   }
   std::istringstream in(inventory.substr(5));
   std::string kind, file;
   uint64_t length;
-  uint32_t expected;
-  struct Entry {
-    std::string file;
-    uint64_t length;
-  };
-  std::vector<Entry> entries;
-  while (in >> kind >> file >> length >> expected) {
-    if (!SafeName(file) ||
+  std::set<std::string> names;
+  bool native = false;
+  while (in >> kind) {
+    if (!(in >> file >> length))
+      return Status::Corruption("incomplete inventory entry");
+    if (!SafeName(file) || !names.insert(kind + ":" + file).second ||
         (kind != "I" && kind != "B" &&
          !(storage.tier() && kind == "D" && file == "BLOB-MAP")))
       return Status::Corruption("invalid inventory");
-    std::string path;
+    std::string path = point + "/" + file;
     if (kind == "B") {
       uint64_t number;
       std::istringstream n(file);
-      if (!(n >> number) || !n.eof())
+      if (!(n >> number) || !n.eof() || file != std::to_string(number))
         return Status::Corruption("invalid blob number");
+      if (storage.tier()) continue;
       path = storage.BlobPath(number);
-    } else {
-      path = point + "/" + file;
-      uint64_t size;
-      s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
-      if (!s.ok()) return s;
-      if (size != length)
-        return Status::Corruption("published file size", path);
-      entries.push_back({file, length});
     }
-    uint32_t crc = 0;
-    if (preflight && storage.tier() && kind == "B") {
-      uint64_t n;
-      std::istringstream number(file);
-      if (!(number >> n)) return Status::Corruption("blob number");
-      auto found = parsed.find(n);
-      if (found == parsed.end() || found->second.size != length)
-        return Status::Corruption("checkpoint logical length");
-      for (const auto& extent : found->second.extents) {
-        s = ExtendDigest(storage.tier()->target(), storage.tier()->Path(extent),
-                         0, extent.length, &crc);
-        if (!s.ok()) return s;
-      }
-    } else {
-      s = Digest(fs, path, length, &crc);
-    }
+    native |= kind == "I";
+    uint64_t size;
+    s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
     if (!s.ok()) return s;
-    if (crc != expected) return Status::Corruption("published checksum", path);
+    if (size != length) return Status::Corruption("published file size", path);
   }
-  if (!in.eof() || entries.empty())
-    return Status::Corruption("invalid inventory");
-  if (preflight) return Status::OK();
-  std::vector<SstStorage::RestoreFile> ssts;
-  for (const auto& e : entries) {
-    uint64_t number;
-    FileType type;
-    if (storage.sst() && ParseFileName(e.file, &number, &type) &&
-        type == kTableFile) {
-      ssts.push_back({point + "/" + e.file, number, e.length});
-    } else {
-      s = Copy(fs, point + "/" + e.file, destination + "/" + e.file, e.length);
-      if (!s.ok()) return s;
-    }
-  }
-  if (storage.sst()) {
-    s = storage.sst()->RestoreTables(ssts);
-    if (!s.ok()) return s;
-  }
-  s = SyncDir(fs, destination);
-  return s;
+  if (!in.eof() || !native) return Status::Corruption("invalid inventory");
+  return Status::OK();
 }
 }  // namespace metabypass
 }  // namespace ROCKSDB_NAMESPACE

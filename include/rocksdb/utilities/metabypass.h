@@ -185,6 +185,8 @@ struct MetaBypassStats {
   uint64_t tier_switch_wait_micros = 0;
   // Durable-prefix checkpoint checksum physical open attempts and whole-call
   // time, including failures and pin acquisition. Disabled staging: zero.
+  // Reserved for compatibility; checkpoint payload digests are no longer read.
+  // Both counters remain zero.
   uint64_t tier_checkpoint_digest_opens = 0;
   uint64_t tier_checkpoint_digest_micros = 0;
   // Pipeline diagnostics. Cumulative times overlap and are not wall time.

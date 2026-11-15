@@ -1410,8 +1410,9 @@ Status TieredStorage::Recover(bool restore, bool apply) {
     snapshot->emplace(options_.backup_dir + "/LATEST", latest);
     std::istringstream points(latest);
     std::string name;
-    uint32_t crc;
-    while (points >> name >> crc) {
+    unsigned roots = 0;
+    while (points >> name) {
+      if (++roots != 1) return Status::Corruption("multiple recovery roots");
       if (name.compare(0, 6, "point-") || name.find('/') != std::string::npos ||
           name.find("..") != std::string::npos)
         return Status::Corruption("recovery point name");
@@ -1420,8 +1421,7 @@ Status TieredStorage::Recover(bool restore, bool apply) {
       st = Read(target(), path + "/INVENTORY", &inventory);
       if (!st.ok()) return st;
       snapshot->emplace(path + "/INVENTORY", inventory);
-      if (inventory.compare(0, 5, "MBI5\n") ||
-          crc32c::Value(inventory.data(), inventory.size()) != crc)
+      if (inventory.compare(0, 5, "MBI6\n"))
         return Status::Corruption("recovery inventory checksum/format");
       std::string map;
       st = Read(target(), path + "/BLOB-MAP", &map);
@@ -1953,43 +1953,6 @@ IOStatus TieredStorage::ReadBlob(uint64_t n, uint64_t offset, size_t size,
   }
   return ReadVersion(version, offset, size, o, out, scratch, d);
 }
-Status TieredStorage::DigestDurablePrefix(uint64_t n, uint64_t length,
-                                          uint32_t* crc) {
-  const auto start = Micros();
-  uint64_t opens = 0;
-  *crc = 0;
-  const auto digest = [&]() -> Status {
-    Pin pin;
-    Status s = pin.Open(this, n);
-    if (!s.ok()) return s;
-    Version version;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      version = pin.blob->durable;
-      if (DurableEnd(version, true) < length)
-        return Status::Corruption("short durable tier prefix");
-      pin.Ranges(version);
-    }
-    TEST_SYNC_POINT("MetaBypass::TierDigestPinned");
-    uint64_t remain = length;
-    for (const auto& e : version.extents) {
-      if (!remain) break;
-      const uint64_t take = std::min(remain, e.length);
-      s = ExtendDigest(target(), Path(e), 0, take, crc, &opens);
-      if (!s.ok()) return s;
-      remain -= take;
-      TEST_SYNC_POINT("MetaBypass::TierDigestExtentRead");
-    }
-    return remain ? Status::Corruption("short digest map") : Status::OK();
-  };
-  Status s = digest();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    digest_opens_ += opens;
-    digest_us_ += Micros() - start;
-  }
-  return s;
-}
 Status TieredStorage::Wait(uint64_t n, const std::shared_ptr<Blob>& blob,
                            uint64_t length, bool closed, bool hdd) {
   const auto start = Micros();
@@ -2411,8 +2374,9 @@ Status TieredStorage::CheckRetirement(uint64_t number) {
   if (!s.ok()) return s;
   std::istringstream points(latest);
   std::string point;
-  uint32_t expected;
-  while (points >> point >> expected) {
+  unsigned roots = 0;
+  while (points >> point) {
+    if (++roots != 1) return Status::Corruption("multiple recovery roots");
     if (point.compare(0, 6, "point-") || point.find('/') != std::string::npos ||
         point.find("..") != std::string::npos)
       return Status::Corruption("retirement point identity");
@@ -2420,8 +2384,7 @@ Status TieredStorage::CheckRetirement(uint64_t number) {
     s = Read(target(), options_.backup_dir + "/" + point + "/INVENTORY",
              &inventory);
     if (!s.ok()) return s;
-    if (inventory.compare(0, 5, "MBI5\n") ||
-        crc32c::Value(inventory.data(), inventory.size()) != expected)
+    if (inventory.compare(0, 5, "MBI6\n"))
       return Status::Corruption("retirement inventory checksum");
     const auto path = options_.backup_dir + "/" + point + "/BLOB-MAP";
     std::string map;
@@ -2630,42 +2593,27 @@ Status TieredStorage::ParseCheckpoint(const std::string& path,
   if (in >> extra) return Status::Corruption("checkpoint trailing data");
   return Status::OK();
 }
-Status TieredStorage::CheckpointBlobDigest(const std::string& path, uint64_t n,
-                                           uint64_t length, uint32_t* crc) {
-  std::map<uint64_t, Version> parsed;
-  Status s = ParseCheckpoint(path, &parsed);
-  if (!s.ok()) return s;
-  auto it = parsed.find(n);
-  if (it == parsed.end() || it->second.size != length)
-    return Status::Corruption("checkpoint logical size");
-  *crc = 0;
-  for (const auto& e : it->second.extents) {
-    s = ExtendDigest(target(), Path(e), 0, e.length, crc);
-    if (!s.ok()) return s;
-  }
-  return Status::OK();
-}
 Status TieredStorage::BindCheckpointInventory(
     const std::string& inventory, const std::string& map,
     const std::map<uint64_t, Version>& versions) {
-  if (inventory.compare(0, 5, "MBI5\n"))
+  if (inventory.compare(0, 5, "MBI6\n"))
     return Status::Corruption("checkpoint inventory format");
   std::istringstream entries(inventory.substr(5));
   std::set<std::string> names;
   std::set<uint64_t> blobs;
   std::string kind, file;
   uint64_t length;
-  uint32_t crc;
   bool found_map = false;
-  while (entries >> kind >> file >> length >> crc) {
+  while (entries >> kind) {
+    if (!(entries >> file >> length))
+      return Status::Corruption("incomplete inventory entry");
     if (file.empty() || file.find('/') != std::string::npos ||
         file.find("..") != std::string::npos ||
         file.find('\\') != std::string::npos ||
         !names.insert(kind + ":" + file).second)
       return Status::Corruption("checkpoint inventory name/duplicate");
     if (kind == "D") {
-      if (found_map || file != "BLOB-MAP" || length != map.size() ||
-          crc != crc32c::Value(map.data(), map.size()))
+      if (found_map || file != "BLOB-MAP" || length != map.size())
         return Status::Corruption("checkpoint inventory map binding");
       found_map = true;
     } else if (kind == "B") {
@@ -2677,11 +2625,6 @@ Status TieredStorage::BindCheckpointInventory(
       auto it = versions.find(n);
       if (it == versions.end() || it->second.size != length)
         return Status::Corruption("checkpoint inventory blob set/length");
-      uint32_t combined = 0;
-      for (const auto& e : it->second.extents)
-        combined = crc32c::Crc32cCombine(combined, e.crc, e.length);
-      if (combined != crc)
-        return Status::Corruption("checkpoint inventory blob checksum");
     } else if (kind != "I") {
       return Status::Corruption("checkpoint inventory entry kind");
     }
@@ -2845,8 +2788,6 @@ void TieredStorage::AddStats(MetaBypassStats* stats) const {
   stats->migrated_blob_bytes = migrated_;
   stats->tier_persist_skips = persist_skips_;
   stats->tier_commit_skips = commit_skips_;
-  stats->tier_checkpoint_digest_opens = digest_opens_;
-  stats->tier_checkpoint_digest_micros = digest_us_;
   stats->tier_extent_fsyncs = extent_fsyncs_;
   stats->tier_extent_fsync_micros = extent_fsync_us_;
   stats->tier_commit_dir_syncs = commit_dir_syncs_;

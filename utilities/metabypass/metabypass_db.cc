@@ -25,7 +25,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
-constexpr char kFormat[] = "MBN5\n";
+constexpr char kFormat[] = "MBN6\n";
 // Refuse legacy directories before taking locks or initializing storage.
 Status CheckFormat(FileSystem* fs, const std::string& path, bool required) {
   std::string version;
@@ -231,10 +231,40 @@ class RecoveryBatch : public WriteBatch::Handler {
   const Options& options_;
   WriteBatch* output_;
 };
+// Inspect every record without copying keys or values. Handler's default Merge
+// can succeed without consuming an update, so the recognized count is required.
+class RecoveryBatchShape : public WriteBatch::Handler {
+ public:
+  uint64_t updates = 0;
+  bool has_blob_index = false;
+  Status PutCF(uint32_t, const Slice&, const Slice&) override {
+    ++updates;
+    return Status::OK();
+  }
+  Status DeleteCF(uint32_t, const Slice&) override {
+    ++updates;
+    return Status::OK();
+  }
+  Status SingleDeleteCF(uint32_t, const Slice&) override {
+    ++updates;
+    return Status::OK();
+  }
+  Status DeleteRangeCF(uint32_t, const Slice&, const Slice&) override {
+    ++updates;
+    return Status::OK();
+  }
+  Status PutBlobIndexCF(uint32_t, const Slice&, const Slice&) override {
+    ++updates;
+    has_blob_index = true;
+    return Status::OK();
+  }
+};
 class RecoveryFilter : public WalFilter {
  public:
   RecoveryFilter(const Options& options, MetaBypassRecoveryReport* report)
-      : options_(options), report_(report) {}
+      : options_(options), report_(report) {
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::RecoveryFilterCreated", this);
+  }
   const char* Name() const override { return "MetaBypassContinuousRecovery"; }
   WalProcessingOption LogRecordFound(unsigned long long, const std::string&,
                                      const WriteBatch& batch,
@@ -249,18 +279,27 @@ class RecoveryFilter : public WalFilter {
       report_->stop_reason = "sequence_gap";
       return WalProcessingOption::kStopReplay;
     }
-    RecoveryBatch rewrite(options_, output);
-    Status s = batch.Iterate(&rewrite);
-    if (!s.ok()) {
-      report_->stop_reason = "missing_dependency: " + s.ToString();
-      return WalProcessingOption::kStopReplay;
-    }
-    if (WriteBatchInternal::Count(output) != count) {
+    RecoveryBatchShape shape;
+    Status s = batch.Iterate(&shape);
+    if (!s.ok() || shape.updates != count) {
       report_->stop_reason = "unsupported_batch";
       return WalProcessingOption::kStopReplay;
     }
-    WriteBatchInternal::SetSequence(output, sequence);
-    *changed = true;
+    if (shape.has_blob_index) {
+      TEST_SYNC_POINT("MetaBypass::RecoveryBatchRebuilt");
+      RecoveryBatch rewrite(options_, output);
+      s = batch.Iterate(&rewrite);
+      if (!s.ok()) {
+        report_->stop_reason = "missing_dependency: " + s.ToString();
+        return WalProcessingOption::kStopReplay;
+      }
+      if (WriteBatchInternal::Count(output) != count) {
+        report_->stop_reason = "unsupported_batch";
+        return WalProcessingOption::kStopReplay;
+      }
+      WriteBatchInternal::SetSequence(output, sequence);
+      *changed = true;
+    }
     report_->recovered_sequence = sequence + count - 1;
     return WalProcessingOption::kContinueProcessing;
   }
@@ -429,8 +468,8 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     Status pointer =
         fs->FileExists(m.backup_dir + "/LATEST", IOOptions(), nullptr);
     if (pointer.ok()) {
-      s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index,
-                                           *impl->storage, true);
+      s = metabypass::Backup::PreflightCheckpoint(fs.get(), m.backup_dir,
+                                                  *impl->storage);
       if (!s.ok()) return s;
     } else if (!pointer.IsNotFound()) {
       return pointer;
@@ -448,8 +487,8 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
     Status pointer =
         fs->FileExists(m.backup_dir + "/LATEST", IOOptions(), nullptr);
     if (pointer.ok()) {
-      s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index,
-                                           *impl->storage, true);
+      s = metabypass::Backup::PreflightCheckpoint(fs.get(), m.backup_dir,
+                                                  *impl->storage);
       if (!s.ok()) return s;
     } else if (!pointer.IsNotFound()) {
       return pointer;

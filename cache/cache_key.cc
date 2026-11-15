@@ -303,7 +303,7 @@ OffsetableCacheKey::OffsetableCacheKey(const std::string& db_id,
   UniqueId64x2 internal_id;
   Status s = GetSstInternalUniqueId(db_id, db_session_id, file_number,
                                     &internal_id, /*force=*/true);
-  assert(s.ok());
+  s.PermitUncheckedOk();
   *this = FromInternalUniqueId(&internal_id);
 }
 

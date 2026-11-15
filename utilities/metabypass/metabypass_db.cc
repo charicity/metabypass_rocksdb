@@ -8,11 +8,19 @@
 #include <filesystem>
 #include <limits>
 #include <mutex>
+#include <sstream>
 
+#include "db/blob/blob_contents.h"
+#include "db/blob/blob_file_reader.h"
+#include "db/blob/blob_index.h"
+#include "db/write_batch_internal.h"
+#include "options/cf_options.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/utilities/metabypass.h"
+#include "rocksdb/wal_filter.h"
 #include "rocksdb/write_batch.h"
+#include "test_util/sync_point.h"
 #include "utilities/metabypass/backup.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -144,6 +152,123 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
         "required");
   return Status::OK();
 }
+// Recovery owns only destination index files. Blob sources remain immutable
+// until the native database has flushed and closed successfully.
+class RecoveryStorage : public metabypass::SeparatedStorage {
+ public:
+  using SeparatedStorage::SeparatedStorage;
+  IOStatus NewWritableFile(const std::string& path, const FileOptions& options,
+                           std::unique_ptr<FSWritableFile>* file,
+                           IODebugContext* dbg) override {
+    if (IsBlob(path)) return IOStatus::NotSupported("read-only recovery blob");
+    return SeparatedStorage::NewWritableFile(path, options, file, dbg);
+  }
+  IOStatus ReopenWritableFile(const std::string& path,
+                              const FileOptions& options,
+                              std::unique_ptr<FSWritableFile>* file,
+                              IODebugContext* dbg) override {
+    if (IsBlob(path)) return IOStatus::NotSupported("read-only recovery blob");
+    return SeparatedStorage::ReopenWritableFile(path, options, file, dbg);
+  }
+  IOStatus Truncate(const std::string& path, size_t size,
+                    const IOOptions& options, IODebugContext* dbg) override {
+    if (IsBlob(path)) return IOStatus::NotSupported("read-only recovery blob");
+    return target()->Truncate(path, size, options, dbg);
+  }
+  IOStatus ReuseWritableFile(const std::string& path, const std::string& old,
+                             const FileOptions& options,
+                             std::unique_ptr<FSWritableFile>* file,
+                             IODebugContext* dbg) override {
+    if (IsBlob(path) || IsBlob(old))
+      return IOStatus::NotSupported("read-only recovery blob");
+    return target()->ReuseWritableFile(path, old, options, file, dbg);
+  }
+  IOStatus RenameFile(const std::string& from, const std::string& to,
+                      const IOOptions& options, IODebugContext* dbg) override {
+    if (IsBlob(from) || IsBlob(to))
+      return IOStatus::NotSupported("read-only recovery blob");
+    return target()->RenameFile(from, to, options, dbg);
+  }
+};
+class RecoveryBatch : public WriteBatch::Handler {
+ public:
+  RecoveryBatch(const Options& options, WriteBatch* output)
+      : options_(options), output_(output) {}
+  Status PutCF(uint32_t cf, const Slice& key, const Slice& value) override {
+    return WriteBatchInternal::Put(output_, cf, key, value);
+  }
+  Status DeleteCF(uint32_t cf, const Slice& key) override {
+    return WriteBatchInternal::Delete(output_, cf, key);
+  }
+  Status SingleDeleteCF(uint32_t cf, const Slice& key) override {
+    return WriteBatchInternal::SingleDelete(output_, cf, key);
+  }
+  Status DeleteRangeCF(uint32_t cf, const Slice& begin,
+                       const Slice& end) override {
+    return WriteBatchInternal::DeleteRange(output_, cf, begin, end);
+  }
+  Status PutBlobIndexCF(uint32_t cf, const Slice& key,
+                        const Slice& value) override {
+    BlobIndex index;
+    Status s = index.DecodeFrom(value);
+    if (!s.ok()) return s;
+    if (index.IsInlined() || index.HasTTL())
+      return Status::NotSupported("unsupported recovery blob index");
+    std::unique_ptr<BlobFileReader> reader;
+    s = BlobFileReader::Create(ImmutableOptions(options_), ReadOptions(),
+                               FileOptions(), cf, nullptr, index.file_number(),
+                               nullptr, true, &reader);
+    std::unique_ptr<BlobContents> contents;
+    uint64_t bytes = 0;
+    if (s.ok())
+      s = reader->GetBlob(ReadOptions(), key, index.offset(), index.size(),
+                          index.compression(), nullptr, nullptr, &contents,
+                          &bytes);
+    return s.ok() ? PutCF(cf, key, contents->data()) : s;
+  }
+
+ private:
+  const Options& options_;
+  WriteBatch* output_;
+};
+class RecoveryFilter : public WalFilter {
+ public:
+  RecoveryFilter(const Options& options, MetaBypassRecoveryReport* report)
+      : options_(options), report_(report) {}
+  const char* Name() const override { return "MetaBypassContinuousRecovery"; }
+  WalProcessingOption LogRecordFound(unsigned long long, const std::string&,
+                                     const WriteBatch& batch,
+                                     WriteBatch* output,
+                                     bool* changed) override {
+    const uint64_t sequence = WriteBatchInternal::Sequence(&batch);
+    const uint64_t count = WriteBatchInternal::Count(&batch);
+    *changed = false;
+    if (sequence <= report_->checkpoint_sequence || !count)
+      return WalProcessingOption::kContinueProcessing;
+    if (sequence != report_->recovered_sequence + 1) {
+      report_->stop_reason = "sequence_gap";
+      return WalProcessingOption::kStopReplay;
+    }
+    RecoveryBatch rewrite(options_, output);
+    Status s = batch.Iterate(&rewrite);
+    if (!s.ok()) {
+      report_->stop_reason = "missing_dependency: " + s.ToString();
+      return WalProcessingOption::kStopReplay;
+    }
+    if (WriteBatchInternal::Count(output) != count) {
+      report_->stop_reason = "unsupported_batch";
+      return WalProcessingOption::kStopReplay;
+    }
+    WriteBatchInternal::SetSequence(output, sequence);
+    *changed = true;
+    report_->recovered_sequence = sequence + count - 1;
+    return WalProcessingOption::kContinueProcessing;
+  }
+
+ private:
+  const Options& options_;
+  MetaBypassRecoveryReport* report_;
+};
 class SupportedBatch : public WriteBatch::Handler {
  public:
   bool supported = true;
@@ -419,6 +544,14 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
 }
 Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
                              const std::string& index) {
+  MetaBypassRecoveryReport report;
+  return Restore(options, m, index, &report);
+}
+Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
+                             const std::string& index,
+                             MetaBypassRecoveryReport* report) {
+  if (!report) return Status::InvalidArgument("null recovery report");
+  *report = MetaBypassRecoveryReport();
   Status s = Validate(options, m, index);
   if (!s.ok()) return s;
   auto fs = options.env->GetFileSystem();
@@ -427,117 +560,216 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
     if (!s.ok()) return s;
   }
   s = CheckFormat(fs.get(), index, false);
+  if (s.ok()) s = CheckStorageLayout(fs.get(), m);
   if (!s.ok()) return s;
-
-  s = CheckStorageLayout(fs.get(), m);
+  std::string identity;
+  s = metabypass::Read(fs.get(), m.backup_dir + "/METABYPASS-IDENTITY",
+                       &identity);
   if (!s.ok()) return s;
-
+  std::string data_identity;
+  s = metabypass::Read(fs.get(), m.data_dir + "/METABYPASS-IDENTITY",
+                       &data_identity);
+  if (!s.ok()) return s;
+  if (data_identity != identity)
+    return Status::Corruption("data and backup identity mismatch");
   s = metabypass::Backup::CheckRestoreFormat(fs.get(), m.backup_dir);
   if (!s.ok()) return s;
-
-  std::string data_owner, backup_owner;
-  s = metabypass::Read(fs.get(), m.data_dir + "/METABYPASS-IDENTITY",
-                       &data_owner);
-  if (s.ok())
-    s = metabypass::Read(fs.get(), m.backup_dir + "/METABYPASS-IDENTITY",
-                         &backup_owner);
-  if (s.ok() && data_owner != backup_owner)
-    s = Status::Corruption("data and backup identity mismatch");
   bool staging_identity_exists = false;
-  if (s.ok() && !m.staging_dir.empty()) {
-    std::vector<std::string> staging_files;
-    s = fs->GetChildren(m.staging_dir, IOOptions(), &staging_files, nullptr);
+  if (!m.staging_dir.empty()) {
+    std::vector<std::string> names;
+    s = fs->GetChildren(m.staging_dir, IOOptions(), &names, nullptr);
     if (s.IsNotFound()) s = Status::OK();
-    for (const auto& file : staging_files) {
-      if (!s.ok()) break;
-      if (file == "." || file == ".." || file == "METABYPASS-LOCK" ||
-          file == "METABYPASS-IDENTITY.tmp")
-        continue;
-      if (file != "METABYPASS-IDENTITY") {
-        s = Status::InvalidArgument("restore staging is not empty");
-        break;
+    if (!s.ok()) return s;
+    for (const auto& name : names) {
+      if (name == "METABYPASS-IDENTITY") {
+        std::string owner;
+        s = metabypass::Read(fs.get(), m.staging_dir + "/" + name, &owner);
+        if (!s.ok()) return s;
+        if (owner != identity)
+          return Status::Corruption("restore staging identity mismatch");
+        staging_identity_exists = true;
+      } else if (name != "." && name != ".." && name != "METABYPASS-LOCK" &&
+                 name != "METABYPASS-IDENTITY.tmp") {
+        return Status::InvalidArgument("restore staging is not empty");
       }
-      std::string owner;
-      s = metabypass::Read(fs.get(), m.staging_dir + "/" + file, &owner);
-      if (s.ok() && owner != backup_owner)
-        s = Status::Corruption("restore staging identity mismatch");
-      if (s.ok()) staging_identity_exists = true;
     }
   }
-  if (!s.ok()) return s;
-
-  std::shared_ptr<metabypass::TieredStorage> tier;
-  if (!m.staging_dir.empty())
-    tier = std::make_shared<metabypass::TieredStorage>(fs, m, backup_owner);
-  std::shared_ptr<metabypass::HddPressure> pressure;
+  auto tier =
+      m.staging_dir.empty()
+          ? nullptr
+          : std::make_shared<metabypass::TieredStorage>(fs, m, identity);
   std::shared_ptr<metabypass::SstStorage> sst;
   if (m.sst_tiering.mode != SstTieringMode::kDisabled)
     sst = std::make_shared<metabypass::SstStorage>(
         tier ? std::shared_ptr<FileSystem>(tier) : fs, index, m);
-  if (tier) {
-    s = tier->Preflight(true);
-    if (!s.ok()) return s;
-  }
-  metabypass::SeparatedStorage storage(fs, index, m.data_dir, tier, sst);
-  s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index, storage,
-                                       true);
-  if (!s.ok()) return s;
-  s = storage.Lock();
+  auto storage =
+      std::make_shared<RecoveryStorage>(fs, index, m.data_dir, tier, sst);
+  s = storage->Lock();
   if (!s.ok()) return s;
   FileLock* backup_lock = nullptr;
   s = fs->LockFile(m.backup_dir + "/LOCK", IOOptions(), &backup_lock, nullptr);
   if (!s.ok()) return s;
-  if (tier) {
-    s = tier->Initialize(true);
-    if (!s.ok()) {
-      fs->UnlockFile(backup_lock, IOOptions(), nullptr).PermitUncheckedError();
-      return s;
+  auto restore = [&]() -> Status {
+    Status status;
+    if (!m.staging_dir.empty())
+      status = metabypass::EnsureDir(fs.get(), m.staging_dir);
+    if (!status.ok()) return status;
+    status = metabypass::EnsureDir(fs.get(), index);
+    if (!status.ok()) return status;
+    std::vector<std::string> files;
+    status = fs->GetChildren(index, IOOptions(), &files, nullptr);
+    if (!status.ok()) return status;
+    bool nonempty = false;
+    for (const auto& file : files)
+      if (file != "." && file != ".." && file != "METABYPASS-FORMAT")
+        nonempty = true;
+    if (nonempty) {
+      std::string marker;
+      status =
+          metabypass::Read(fs.get(), index + "/METABYPASS-RESTORING", &marker);
+      if (!status.ok() || marker != identity)
+        return Status::InvalidArgument("restore destination is not resumable");
     }
-  }
-  if (s.ok())
-    s = metabypass::Backup::RestoreFiles(fs.get(), m.backup_dir, index, storage,
-                                         true);
-  if (s.ok()) s = metabypass::EnsureDir(fs.get(), index);
-  std::vector<std::string> children;
-  if (s.ok()) s = fs->GetChildren(index, IOOptions(), &children, nullptr);
-  bool nonempty = false;
-  for (const auto& f : children)
-    if (f != "." && f != ".." && f != "METABYPASS-FORMAT") nonempty = true;
-  if (s.ok() && nonempty) {
-    std::string marker;
-    s = metabypass::Read(fs.get(), index + "/METABYPASS-RESTORING", &marker);
-    if (!s.ok() || marker != backup_owner)
-      s = Status::InvalidArgument(
-          "restore destination is not empty or resumable");
-  }
-  // A resumed restore already has a verified marker. Preserve it so an
-  // interruption cannot invalidate the next retry.
-  if (s.ok() && !nonempty) s = WriteFormat(fs.get(), index);
-  if (s.ok() && !nonempty)
-    s = metabypass::Write(fs.get(), index + "/METABYPASS-RESTORING",
-                          backup_owner);
-  if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
-  if (s.ok() && sst) s = sst->Initialize(backup_owner, true);
-  if (s.ok())
-    s = metabypass::Backup::RestoreFiles(storage.target(), m.backup_dir, index,
-                                         storage);
-  if (s.ok() && tier && !staging_identity_exists) {
-    const std::string marker = m.staging_dir + "/METABYPASS-IDENTITY";
-    s = metabypass::Write(fs.get(), marker + ".tmp", backup_owner);
-    if (s.ok())
-      s = fs->RenameFile(marker + ".tmp", marker, IOOptions(), nullptr);
-  }
-  if (s.ok() && tier) s = metabypass::SyncDir(fs.get(), m.staging_dir);
-  if (s.ok()) {
-    std::string identity;
-    s = metabypass::Read(fs.get(), index + "/IDENTITY", &identity);
-    if (s.ok())
-      s = metabypass::Write(fs.get(), index + "/METABYPASS", identity);
-    if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
-  }
-  if (s.ok())
-    s = fs->DeleteFile(index + "/METABYPASS-RESTORING", IOOptions(), nullptr);
-  if (s.ok()) s = metabypass::SyncDir(fs.get(), index);
+    std::string persisted, point;
+    status =
+        metabypass::Read(fs.get(), index + "/METABYPASS-RECOVERED", &persisted);
+    const bool finalized_native = status.ok();
+    if (!status.ok() && !status.IsNotFound()) return status;
+    if (finalized_native) {
+      std::istringstream in(persisted);
+      if (!std::getline(in, point) ||
+          !(in >> report->checkpoint_sequence >> report->recovered_sequence))
+        return Status::Corruption("restore progress marker");
+      if (!(in >> report->has_time_lower_bound >>
+            report->time_lower_bound_micros >> report->has_time_upper_bound >>
+            report->time_upper_bound_micros))
+        return Status::Corruption("restore time marker");
+      std::getline(in, report->stop_reason);
+      if (!report->stop_reason.empty()) report->stop_reason.erase(0, 1);
+    } else {
+      // Prior preparation may have opened and flushed native files, but its
+      // source mappings remain untouched until the persisted-stage marker.
+      for (const auto& file : files) {
+        if (file == "." || file == ".." || file == "METABYPASS-FORMAT" ||
+            file == "METABYPASS-RESTORING")
+          continue;
+        status = fs->DeleteFile(index + "/" + file, IOOptions(), nullptr);
+        if (!status.ok()) return status;
+      }
+      if (!nonempty) {
+        status = WriteFormat(fs.get(), index);
+        if (status.ok())
+          status = metabypass::Write(fs.get(), index + "/METABYPASS-RESTORING",
+                                     identity);
+      } else {
+        status = Status::OK();
+      }
+      if (status.ok()) status = metabypass::SyncDir(fs.get(), index);
+      if (!status.ok()) return status;
+      if (sst) {
+        status = sst->Initialize(identity, true);
+        if (!status.ok()) return status;
+      }
+      bool has_boundary;
+      status = metabypass::Backup::PrepareRecovery(fs.get(), m.backup_dir,
+                                                   index, &point, report,
+                                                   &has_boundary, sst.get());
+      if (!status.ok()) return status;
+      TEST_SYNC_POINT("MetaBypass::RecoveryPrepared");
+      if (tier) {
+        status = tier->OpenRecoveryView(point + "/BLOB-MAP");
+        if (!status.ok()) return status;
+      }
+      auto source_tier =
+          m.staging_dir.empty()
+              ? nullptr
+              : std::make_shared<metabypass::TieredStorage>(fs, m, identity);
+      if (source_tier) {
+        status = source_tier->OpenRecoveryView("");
+        if (!status.ok()) return status;
+      }
+      auto source =
+          std::make_shared<RecoveryStorage>(fs, index, m.data_dir, source_tier);
+      auto source_env = NewCompositeEnv(source);
+      Options read_options = options;
+      read_options.env = source_env.get();
+      read_options.cf_paths = {DbPath(index, UINT64_MAX)};
+      RecoveryFilter filter(read_options, report);
+      auto env = NewCompositeEnv(storage);
+      Options recovery = options;
+      recovery.env = env.get();
+      recovery.enable_blob_direct_write = false;
+      recovery.enable_blob_files = false;
+      recovery.disable_auto_compactions = true;
+      recovery.avoid_flush_during_recovery = false;
+      recovery.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
+      recovery.wal_filter = has_boundary ? &filter : nullptr;
+      recovery.create_if_missing = false;
+      recovery.error_if_exists = false;
+      std::unique_ptr<DB> native;
+      status = DB::Open(recovery, index, &native);
+      if (!status.ok()) return status;
+      if (!has_boundary) {
+        report->checkpoint_sequence = native->GetLatestSequenceNumber();
+        report->recovered_sequence = report->checkpoint_sequence;
+        report->stop_reason = "checkpoint_only_no_boundary";
+      } else if (report->stop_reason.empty()) {
+        report->stop_reason = "native_replay_end";
+      }
+      status = native->Close();
+      native.reset();
+      if (!status.ok()) return status;
+      TEST_SYNC_POINT("MetaBypass::RecoveryNativeClosed");
+      std::string samples;
+      Status sample_status =
+          metabypass::Read(fs.get(), m.backup_dir + "/PROGRESS", &samples);
+      if (sample_status.ok())
+        metabypass::Backup::EstimateRecoveryTime(samples, report);
+      status = metabypass::Write(
+          fs.get(), index + "/METABYPASS-RECOVERED.tmp",
+          point + "\n" + std::to_string(report->checkpoint_sequence) + " " +
+              std::to_string(report->recovered_sequence) + " " +
+              std::to_string(report->has_time_lower_bound) + " " +
+              std::to_string(report->time_lower_bound_micros) + " " +
+              std::to_string(report->has_time_upper_bound) + " " +
+              std::to_string(report->time_upper_bound_micros) + " " +
+              report->stop_reason + "\n");
+      if (status.ok())
+        status = fs->RenameFile(index + "/METABYPASS-RECOVERED.tmp",
+                                index + "/METABYPASS-RECOVERED", IOOptions(),
+                                nullptr);
+      if (status.ok()) status = metabypass::SyncDir(fs.get(), index);
+      if (!status.ok()) return status;
+    }
+    TEST_SYNC_POINT("MetaBypass::RecoveryPersisted");
+    if (tier) {
+      status = tier->LoadCheckpoint(point + "/BLOB-MAP", true);
+      if (!status.ok()) return status;
+      if (!staging_identity_exists) {
+        const std::string marker = m.staging_dir + "/METABYPASS-IDENTITY";
+        status = metabypass::Write(fs.get(), marker + ".tmp", identity);
+        if (status.ok())
+          status =
+              fs->RenameFile(marker + ".tmp", marker, IOOptions(), nullptr);
+      }
+      if (status.ok()) status = metabypass::SyncDir(fs.get(), m.staging_dir);
+      if (!status.ok()) return status;
+    }
+    // A restore starts a new native sequence timeline. The report above is
+    // durable before resetting samples so finalize retries retain its bounds.
+    status = metabypass::Write(fs.get(), m.backup_dir + "/PROGRESS", "");
+    if (status.ok()) status = metabypass::SyncDir(fs.get(), m.backup_dir);
+    if (status.ok())
+      status = metabypass::Write(fs.get(), index + "/METABYPASS", identity);
+    if (status.ok()) status = metabypass::SyncDir(fs.get(), index);
+    TEST_SYNC_POINT("MetaBypass::RecoveryFinalized");
+    if (status.ok())
+      status =
+          fs->DeleteFile(index + "/METABYPASS-RESTORING", IOOptions(), nullptr);
+    if (status.ok()) status = metabypass::SyncDir(fs.get(), index);
+    return status;
+  };
+  s = restore();
   s.UpdateIfOk(fs->UnlockFile(backup_lock, IOOptions(), nullptr));
   return s;
 }
@@ -565,10 +797,14 @@ Status MetaBypassDB::Write(const WriteOptions& o, WriteBatch* b) {
     s = Status::NotSupported("Metabypass LogData");
   if (s.ok()) s = impl_->backup->Error();
   if (!s.ok()) return s;
-  s = impl_->db->Write(o, b);
-  if (s.ok()) impl_->backup->WriteCompleted();
+  {
+    std::shared_lock<std::shared_mutex> fence(impl_->backup->WriteFence());
+    s = impl_->db->Write(o, b);
+    if (s.ok()) impl_->backup->WriteCompleted();
+  }
   // Count successful primary writes even if the following backup barrier fails.
   if (s.ok() && o.sync) {
+    TEST_SYNC_POINT("MetaBypass::BeforeSyncWriteBarrier");
     const auto start = std::chrono::steady_clock::now();
     s = impl_->backup->Sync();
     impl_->sync_write_us.fetch_add(

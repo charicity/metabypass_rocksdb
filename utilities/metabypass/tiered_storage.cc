@@ -2306,6 +2306,7 @@ void TieredStorage::Run() {
       --task.blob->operations;
       --task.blob->pending_seals;
       --pending_count_;
+      TEST_SYNC_POINT("MetaBypass::TierSealCompleted");
       progress_.notify_all();
       continue;
     }
@@ -2693,12 +2694,53 @@ Status TieredStorage::PreflightCheckpoint(const std::string& path) {
   std::map<uint64_t, Version> parsed;
   return ParseCheckpoint(path, &parsed);
 }
-Status TieredStorage::LoadCheckpoint(const std::string& path) {
-  std::map<uint64_t, Version> parsed;
-  Status s = ParseCheckpoint(path, &parsed);
+Status TieredStorage::OpenRecoveryView(const std::string& checkpoint) {
+  std::vector<std::string> names;
+  Status s =
+      target()->GetChildren(options_.data_dir, IOOptions(), &names, nullptr);
   if (!s.ok()) return s;
-  // Preflight all current metadata, but never require obsolete SSD payloads.
-  s = Preflight(true);
+  std::map<uint64_t, Version> versions;
+  for (const auto& name : names) {
+    uint64_t number;
+    if (!IsBlob(options_.data_dir + "/" + name, &number)) continue;
+    std::string bytes;
+    s = Read(target(), options_.data_dir + "/" + name, &bytes);
+    if (!s.ok()) continue;
+    Version version;
+    s = Decode(bytes, &version, false);
+    // An unreadable incremental descriptor is a missing dependency, not a
+    // reason to reject the trusted checkpoint or other readable blobs.
+    if (!s.ok()) continue;
+    if (version.retired || version.identity != identity_ ||
+        version.number != number)
+      continue;
+    if (!version.closed && !version.extents.empty()) {
+      const auto& last = version.extents.back();
+      version.size = last.start + last.length;
+    }
+    versions.emplace(number, std::move(version));
+  }
+  if (!checkpoint.empty()) {
+    std::map<uint64_t, Version> baseline;
+    s = ParseCheckpoint(checkpoint, &baseline, false);
+    if (!s.ok()) return s;
+    for (auto& entry : baseline)
+      versions[entry.first] = std::move(entry.second);
+  }
+  for (auto& entry : versions) {
+    auto blob = std::make_shared<Blob>();
+    blob->live = blob->durable = blob->remote = std::move(entry.second);
+    blobs_[entry.first] = std::move(blob);
+  }
+  return Status::OK();
+}
+Status TieredStorage::LoadCheckpoint(const std::string& path, bool trusted) {
+  std::map<uint64_t, Version> parsed;
+  Status s = ParseCheckpoint(path, &parsed, !trusted);
+  if (!s.ok()) return s;
+  // Trusted restore already owns a fixed checkpoint; damaged incremental
+  // metadata must not prevent finalizing its independently recovered prefix.
+  if (!trusted) s = Preflight(true);
   if (!s.ok()) return s;
   std::vector<std::string> obsolete;
   for (bool local : {false, true}) {

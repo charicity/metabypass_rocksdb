@@ -65,7 +65,7 @@ struct MetaBypassOptions {
   // Start a checkpoint this long after the first uncovered write or native
   // file change. Later work does not postpone the deadline. Idle databases
   // have no checkpoint timer. Explicit barriers bypass this batching delay.
-  uint64_t checkpoint_interval_ms = 5000;
+  uint64_t checkpoint_interval_ms = 30000;
   // Optional fast blob staging. Requires Options::enable_blob_files=true.
   // Empty routes blobs directly to data_dir when blob files are enabled.
   // With staging enabled, data_dir and backup_dir must survive staging loss.
@@ -319,6 +319,20 @@ struct MetaBypassRecoveryProgress {
   std::string open_session_id;
   uint64_t visible_sequence = 0;
 };
+// Continuous native sequence prefix recovered from a trusted checkpoint and
+// surviving WALs. Time bounds are optional wall-clock microseconds, estimated
+// from visibility samples; they are not an acknowledgement or durability SLA.
+struct MetaBypassRecoveryReport {
+  uint64_t checkpoint_sequence = 0;
+  uint64_t recovered_sequence = 0;
+  // native_replay_end includes EOF, truncation and CRC stops that native
+  // point-in-time recovery does not expose separately to its WalFilter.
+  std::string stop_reason;
+  bool has_time_lower_bound = false;
+  bool has_time_upper_bound = false;
+  uint64_t time_lower_bound_micros = 0;
+  uint64_t time_upper_bound_micros = 0;
+};
 // Experimental single-CF entry point. All mutation goes through this object;
 // no mutable underlying DB is exposed. Iterators must be destroyed before
 // Close. Write/Get/SyncBackup/Flush/CompactRange can be called concurrently.
@@ -342,15 +356,17 @@ class MetaBypassDB {
   static Status Open(const Options& options, const MetaBypassOptions& bypass,
                      const std::string& index_dir,
                      std::unique_ptr<MetaBypassDB>* result);
-  // Copies only the published native index files to an empty directory and
-  // verifies file checksums. Tiered mode also requires empty staging (or a
-  // resumable restore), and reads values remotely without full rehydration.
-  // Does not modify the published backup. data_dir must be
-  // exclusively owned. Blob contents are never rewritten. A failed
-  // restore can be retried on its marked destination. Call Open afterwards
-  // to execute native RocksDB recovery.
+  // Restores the latest trusted checkpoint, then replays the continuous
+  // recoverable WAL prefix through native RocksDB recovery. The destination
+  // must be empty or marked by an interrupted Restore. data_dir and backup_dir
+  // must survive and be exclusively owned; staging must be empty. Incremental
+  // blob values are read without modifying their sources and flushed into the
+  // destination before tiered descriptors are finalized. Call Open afterwards.
   static Status Restore(const Options& options, const MetaBypassOptions& bypass,
                         const std::string& empty_index_dir);
+  static Status Restore(const Options& options, const MetaBypassOptions& bypass,
+                        const std::string& empty_index_dir,
+                        MetaBypassRecoveryReport* report);
   ~MetaBypassDB();
   // In all supported modes, sync=true waits for a complete backup point.
   // A failed remote barrier can follow a successful primary mutation.

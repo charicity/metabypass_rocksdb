@@ -8,6 +8,7 @@
 #include <deque>
 #include <mutex>
 #include <set>
+#include <shared_mutex>
 #include <thread>
 
 #include "rocksdb/metadata.h"
@@ -27,6 +28,7 @@ class Backup : public FileSystemWrapper {
   Status Start(bool existing);
   Status Activate(const std::string& identity, DB* db);
   void WriteCompleted();
+  std::shared_mutex& WriteFence() { return write_fence_; }
   // Listener notification only; never performs I/O or waits for a checkpoint.
   void NativeFilesChanged();
   void DetachDB();
@@ -41,6 +43,15 @@ class Backup : public FileSystemWrapper {
                              const std::string& destination,
                              const SeparatedStorage& storage,
                              bool preflight = false);
+  static Status PrepareRecovery(FileSystem*, const std::string& backup,
+                                const std::string& destination,
+                                std::string* point,
+                                MetaBypassRecoveryReport* report,
+                                bool* has_boundary, SstStorage* sst = nullptr);
+  // Estimation only: malformed, nonmonotone or clock-discontinuous samples
+  // leave the report bounds unknown and never change the recovered prefix.
+  static void EstimateRecoveryTime(const std::string& samples,
+                                   MetaBypassRecoveryReport* report);
   IOStatus NewWritableFile(const std::string&, const FileOptions&,
                            std::unique_ptr<FSWritableFile>*,
                            IODebugContext*) override;
@@ -107,6 +118,7 @@ class Backup : public FileSystemWrapper {
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
     uint64_t writes = 0, request = 0, native_changes = 0;
+    uint64_t native_sequence = 0, blob_floor = 0, wal_floor = 0;
     std::vector<LiveFileStorageInfo> files;
     std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
@@ -125,6 +137,8 @@ class Backup : public FileSystemWrapper {
   bool QueuesEmpty() const;
   void Run();
   void ValidateLoop();
+  void SampleLoop();
+  void SampleProgress();
   void GarbageCollectLoop();
   bool BlobEligible(uint64_t number, uint64_t seq) const;
   bool NeedsBlobCheckpoint() const;
@@ -133,6 +147,7 @@ class Backup : public FileSystemWrapper {
     std::string reference;
     uint64_t bytes = 0;
     std::set<uint64_t> blobs;
+    uint64_t blob_floor = 0, wal_floor = 0;
     std::string Name() const {
       return reference.substr(0, reference.find(' '));
     }
@@ -154,6 +169,7 @@ class Backup : public FileSystemWrapper {
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
+  std::shared_mutex write_fence_;
   mutable std::mutex mutex_;
   std::condition_variable mirror_cv_, validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
@@ -174,7 +190,7 @@ class Backup : public FileSystemWrapper {
   bool validator_done_ = false, retired_pending_ = false;
   uint64_t captured_ = 0;
   std::unique_ptr<Candidate> candidate_;
-  std::thread thread_, validator_, garbage_collector_;
+  std::thread thread_, validator_, garbage_collector_, sampler_;
   uint64_t next_epoch_ = 0;
   std::map<std::string, uint64_t> epochs_;
   std::set<std::string> closed_;

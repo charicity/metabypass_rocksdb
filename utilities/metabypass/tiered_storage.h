@@ -45,7 +45,11 @@ class TieredStorage : public FileSystemWrapper {
   Status DigestDurablePrefix(uint64_t number, uint64_t length, uint32_t* crc);
   Status SaveCheckpoint(const std::string&,
                         const std::map<uint64_t, uint64_t>&);
-  Status LoadCheckpoint(const std::string&);
+  Status LoadCheckpoint(const std::string&, bool trusted = false);
+  // Offline view: accepts partial remote descriptors and reads only covered
+  // ranges. Does not initialize workers, rewrite descriptors or touch staging.
+  // A nonempty checkpoint overlays its fixed blob mappings on this view.
+  Status OpenRecoveryView(const std::string& checkpoint);
   Status ArchiveUnreferenced(const std::map<uint64_t, uint64_t>&);
   void AddStats(MetaBypassStats*) const;
   bool IsBlob(const std::string&, uint64_t* = nullptr) const;

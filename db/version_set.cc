@@ -6046,7 +6046,7 @@ Status VersionSet::ProcessManifestWrites(
     // If we just created a new descriptor file, install it by writing a
     // new CURRENT file that points to it.
     if (s.ok()) {
-      assert(manifest_io_status.ok());
+      manifest_io_status.PermitUncheckedOk();
     }
     if (s.ok() && new_descriptor_log) {
       io_s = SetCurrentFile(

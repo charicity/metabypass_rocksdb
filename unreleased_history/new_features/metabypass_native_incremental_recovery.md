@@ -1,0 +1,1 @@
+MetaBypass Restore now persists a continuous recoverable native WAL prefix beyond the latest trusted checkpoint, reports its sequence and optional wall-clock bounds, and defaults to a 30-second checkpoint interval.

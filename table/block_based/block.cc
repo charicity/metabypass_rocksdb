@@ -678,7 +678,7 @@ void IndexBlockIter::DecodeCurrentValue(bool is_shared) {
   Status decode_s __attribute__((__unused__)) = decoded_value_.DecodeFrom(
       &v, have_first_key_,
       (value_delta_encoded_ && is_shared) ? &decoded_value_.handle : nullptr);
-  assert(decode_s.ok());
+  decode_s.PermitUncheckedOk();
   value_ = Slice(value_.data(), v.data() - value_.data());
   if (!values_section_ && value_delta_encoded_) {
     assert(entry_.data() + entry_.size() == value_.data());

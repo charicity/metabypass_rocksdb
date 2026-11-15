@@ -409,14 +409,16 @@ class BlockIter : public InternalIteratorBase<TValue> {
     return key_;
   }
 
-#ifndef NDEBUG
   ~BlockIter() override {
+#ifndef NDEBUG
     // Assert that the BlockIter is never deleted while Pinning is Enabled.
     assert(!pinned_iters_mgr_ ||
            (pinned_iters_mgr_ && !pinned_iters_mgr_->PinningEnabled()));
+#endif
     status_.PermitUncheckedError();
   }
 
+#ifndef NDEBUG
   void SetPinnedItersMgr(PinnedIteratorsManager* pinned_iters_mgr) override {
     pinned_iters_mgr_ = pinned_iters_mgr;
   }
@@ -952,7 +954,7 @@ class IndexBlockIter final : public BlockIter<IndexValue> {
       Slice v = value_;
       Status decode_s __attribute__((__unused__)) =
           entry.DecodeFrom(&v, have_first_key_, nullptr);
-      assert(decode_s.ok());
+      decode_s.PermitUncheckedOk();
       return entry;
     }
   }

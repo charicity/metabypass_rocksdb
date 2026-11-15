@@ -5117,7 +5117,9 @@ TEST_F(MetaBypassTest, SstCopyFailureCloseWaitsInDetachDB) {
       "MetaBypass::ApplyStatus",
       [&](void* arg) { *static_cast<Status*>(arg) = first; });
   const Status produced = db_->Put(WriteOptions(), "tail", "value");
-  if (!produced.ok()) EXPECT_EQ(produced.ToString(), first.ToString());
+  if (!produced.ok()) {
+    EXPECT_EQ(produced.ToString(), first.ToString());
+  }
   checkpoint.join();
   EXPECT_EQ(checkpoint_status.ToString(), first.ToString());
   Status close_status;

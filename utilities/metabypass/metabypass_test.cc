@@ -401,6 +401,7 @@ class MetaBypassTest : public testing::Test {
     m_.data_dir = root_ + "/data";
     m_.backup_dir = root_ + "/backup";
     o_.create_if_missing = true;
+    o_.enable_blob_files = true;
     o_.write_buffer_size = 64 * 1024;
     o_.max_manifest_file_size = 4096;
     fs_ = o_.env->GetFileSystem();
@@ -1399,6 +1400,278 @@ class MetaBypassTest : public testing::Test {
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
+class MetaBypassNonBlobTest : public MetaBypassTest {
+ public:
+  MetaBypassNonBlobTest() {
+    o_ = Options();
+    o_.create_if_missing = true;
+  }
+  void CheckNoBlobs(const std::string& path) {
+    std::vector<std::string> names;
+    Status status = fs_->GetChildren(path, IOOptions(), &names, nullptr);
+    if (status.IsNotFound()) return;
+    ASSERT_OK(status);
+    for (const auto& name : names) {
+      if (name == "." || name == "..") continue;
+      uint64_t number;
+      FileType type;
+      ASSERT_FALSE(ParseFileName(name, &number, &type) && type == kBlobFile);
+      const std::string child = path + "/" + name;
+      bool directory = false;
+      status = fs_->IsDirectory(child, IOOptions(), &directory, nullptr);
+      // IsDirectory may report a removed path as IOError on some filesystems.
+      // Skip only confirmed removals while retired recovery points are
+      // reclaimed.
+      if (!status.ok()) {
+        Status exists = fs_->FileExists(child, IOOptions(), nullptr);
+        if (exists.IsNotFound()) continue;
+        ASSERT_OK(exists);
+      }
+      ASSERT_OK(status);
+      if (directory) {
+        ASSERT_NO_FATAL_FAILURE(CheckNoBlobs(child));
+      }
+    }
+  }
+  void CheckContents(const std::map<std::string, std::string>& expected) {
+    for (const auto& entry : expected) Check(entry.first, entry.second);
+    std::unique_ptr<Iterator> iterator(db_->NewIterator(ReadOptions()));
+    iterator->SeekToFirst();
+    for (const auto& entry : expected) {
+      ASSERT_TRUE(iterator->Valid());
+      ASSERT_EQ(iterator->key(), entry.first);
+      ASSERT_EQ(iterator->value(), entry.second);
+      iterator->Next();
+    }
+    ASSERT_FALSE(iterator->Valid());
+    ASSERT_OK(iterator->status());
+    iterator->SeekToLast();
+    for (auto entry = expected.rbegin(); entry != expected.rend(); ++entry) {
+      ASSERT_TRUE(iterator->Valid());
+      ASSERT_EQ(iterator->key(), entry->first);
+      ASSERT_EQ(iterator->value(), entry->second);
+      iterator->Prev();
+    }
+    ASSERT_FALSE(iterator->Valid());
+    ASSERT_OK(iterator->status());
+  }
+  void ReopenContents(const std::map<std::string, std::string>& expected,
+                      bool restore) {
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    if (restore) {
+      ASSERT_NO_FATAL_FAILURE(Restore());
+    } else {
+      ASSERT_NO_FATAL_FAILURE(Open());
+    }
+    ASSERT_NO_FATAL_FAILURE(CheckContents(expected));
+    ASSERT_NO_FATAL_FAILURE(CheckNoBlobs(root_));
+  }
+  void CrudScenario() {
+    ASSERT_FALSE(o_.enable_blob_files);
+    ASSERT_NO_FATAL_FAILURE(Open());
+    const std::string value(4096, 'v');
+    ASSERT_OK(db_->Put(WriteOptions(), "a", "old"));
+    ASSERT_OK(db_->Put(WriteOptions(), "b", "deleted"));
+    ASSERT_OK(db_->Delete(WriteOptions(), "b"));
+    WriteBatch batch;
+    ASSERT_OK(batch.Put("a", value));
+    ASSERT_OK(batch.Put("b", "temporary"));
+    ASSERT_OK(batch.Delete("b"));
+    ASSERT_OK(batch.Put("c", "last"));
+    ASSERT_OK(db_->Write(WriteOptions(), &batch));
+    const std::map<std::string, std::string> expected{{"a", value},
+                                                      {"c", "last"}};
+    ASSERT_NO_FATAL_FAILURE(CheckContents(expected));
+    std::string absent;
+    ASSERT_TRUE(db_->Get(ReadOptions(), "b", &absent).IsNotFound());
+    ASSERT_OK(db_->Flush(FlushOptions()));
+    ASSERT_FALSE(FilesOfType(index_, kTableFile).empty());
+    ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+    ASSERT_OK(db_->SyncBackup());
+    ASSERT_NO_FATAL_FAILURE(CheckNoBlobs(root_));
+    ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, false));
+  }
+  void RecoveryScenario(bool flush) {
+    o_.avoid_flush_during_recovery = true;
+    m_.checkpoint_interval_ms = 60000;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    const std::map<std::string, std::string> expected{
+        {"a", std::string(4096, 'a')}, {"b", std::string(4096, 'b')}};
+    for (const auto& entry : expected)
+      ASSERT_OK(db_->Put(WriteOptions(), entry.first, entry.second));
+    ASSERT_OK(db_->Put(WriteOptions(), "removed", "value"));
+    ASSERT_OK(db_->Delete(WriteOptions(), "removed"));
+    if (flush) {
+      ASSERT_OK(db_->Flush(FlushOptions()));
+    }
+    ASSERT_OK(db_->SyncBackup());
+    ASSERT_EQ(FilesOfType(index_, kTableFile).empty(), !flush);
+    ASSERT_EQ(FilesOfType(PublishedPoint(), kTableFile).empty(), !flush);
+    if (!flush) {
+      ASSERT_FALSE(FilesOfType(PublishedPoint(), kWalFile).empty());
+      auto stats = db_->GetBackupStats();
+      ASSERT_OK(stats.error);
+      ASSERT_EQ(stats.checkpoint_flush_micros, 0U);
+      ASSERT_GT(stats.mirrored_wal_bytes, 8192U);
+    }
+    ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, true));
+    ASSERT_EQ(FilesOfType(index_, kTableFile).empty(), !flush);
+    std::string absent;
+    ASSERT_TRUE(db_->Get(ReadOptions(), "removed", &absent).IsNotFound());
+  }
+  void SstScenario(SstTieringMode mode) {
+    EnableSst(mode);
+    o_.compression = kNoCompression;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    std::map<std::string, std::string> expected;
+    for (int i = 0; i < 16; ++i) {
+      const std::string key = "key" + std::to_string(i);
+      expected[key] = std::string(2048, 'a' + i);
+      ASSERT_OK(db_->Put(WriteOptions(), key, expected[key]));
+    }
+    ASSERT_OK(db_->Flush(FlushOptions()));
+    ASSERT_OK(db_->SyncBackup());
+    if (mode == SstTieringMode::kAdaptive) {
+      AwaitSst([](const auto& stats) {
+        return stats.demotions > 0 && stats.ssd_bytes == 0;
+      });
+      ASSERT_TRUE(FilesOfType(index_, kTableFile).empty());
+      auto stats = db_->GetBackupStats();
+      ASSERT_OK(stats.error);
+      ASSERT_GT(stats.sst_tiering.hdd_bytes, 32768U);
+    } else {
+      if (mode == SstTieringMode::kObserveOnly)
+        AwaitSst(
+            [](const auto& stats) { return stats.observed_demotions > 0; });
+      ASSERT_FALSE(FilesOfType(index_, kTableFile).empty());
+    }
+    ASSERT_NO_FATAL_FAILURE(CheckContents(expected));
+    ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, false));
+    ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, true));
+  }
+};
+TEST_F(MetaBypassNonBlobTest, DefaultOptionsCrudAndReopen) {
+  ASSERT_NO_FATAL_FAILURE(CrudScenario());
+}
+TEST_F(MetaBypassNonBlobTest, ExplicitFalseCrudAndReopen) {
+  o_.enable_blob_files = false;
+  ASSERT_NO_FATAL_FAILURE(CrudScenario());
+}
+TEST_F(MetaBypassNonBlobTest, WalOnlyBackupDoesNotFlushAndRestores) {
+  ASSERT_NO_FATAL_FAILURE(RecoveryScenario(false));
+}
+TEST_F(MetaBypassNonBlobTest, SstBackupRestores) {
+  ASSERT_NO_FATAL_FAILURE(RecoveryScenario(true));
+}
+TEST_F(MetaBypassNonBlobTest, SstDisabledReadReopenAndRestore) {
+  ASSERT_NO_FATAL_FAILURE(SstScenario(SstTieringMode::kDisabled));
+}
+TEST_F(MetaBypassNonBlobTest, SstObserveReadReopenAndRestore) {
+  ASSERT_NO_FATAL_FAILURE(SstScenario(SstTieringMode::kObserveOnly));
+}
+TEST_F(MetaBypassNonBlobTest, SstAdaptiveColdReadReopenAndRestore) {
+  ASSERT_NO_FATAL_FAILURE(SstScenario(SstTieringMode::kAdaptive));
+}
+TEST_F(MetaBypassNonBlobTest, RejectBlobFeaturesBeforeDirectoryChanges) {
+  for (bool existing : {false, true}) {
+    SCOPED_TRACE(existing);
+    if (existing) {
+      ASSERT_NO_FATAL_FAILURE(Open());
+      ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+      ASSERT_OK(db_->Close());
+      db_.reset();
+    }
+    for (int conflict = 1; conflict <= 3; ++conflict) {
+      SCOPED_TRACE(conflict);
+      Options invalid = o_;
+      invalid.enable_blob_direct_write = (conflict & 1) != 0;
+      invalid.allow_concurrent_memtable_write = false;
+      MetaBypassOptions bypass = m_;
+      if (conflict & 2) {
+        bypass.staging_dir = root_ + "/staging";
+        bypass.staging_capacity = 8192;
+      }
+      const auto before = SnapshotTree(root_);
+      ASSERT_TRUE(
+          MetaBypassDB::Open(invalid, bypass, index_, &db_).IsNotSupported());
+      ASSERT_FALSE(db_);
+      ASSERT_EQ(SnapshotTree(root_), before);
+      ASSERT_TRUE(
+          MetaBypassDB::Restore(invalid, bypass, index_).IsNotSupported());
+      ASSERT_EQ(SnapshotTree(root_), before);
+    }
+  }
+}
+TEST_F(MetaBypassNonBlobTest, RandomizedRoundTrip) {
+  const uint32_t seed = o_.env->NowMicros() & 0xffffffffU;
+  SCOPED_TRACE("seed=" + std::to_string(seed));
+  Random random(seed);
+  std::map<std::string, std::string> expected;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (int step = 0; step < 100; ++step) {
+    WriteBatch batch;
+    for (int operation = 0; operation < 2; ++operation) {
+      const std::string key = std::to_string(random.Uniform(30));
+      if (random.OneIn(4)) {
+        ASSERT_OK(batch.Delete(key));
+        expected.erase(key);
+      } else {
+        expected[key] =
+            std::string(random.Uniform(2048), 'a' + random.Uniform(26));
+        ASSERT_OK(batch.Put(key, expected[key]));
+      }
+    }
+    WriteOptions write;
+    write.sync = step % 31 == 0;
+    ASSERT_OK(db_->Write(write, &batch));
+    if (step % 23 == 0) {
+      ASSERT_OK(db_->Flush(FlushOptions()));
+    }
+  }
+  ASSERT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, true));
+}
+TEST_F(MetaBypassNonBlobTest, ConcurrentBackupAllowsWritesAndFlush) {
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
+  ASSERT_OK(db_->SyncBackup());
+  TestGate validating;
+  std::atomic<bool> first{true}, returned{false};
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
+                                        [&](void*) {
+                                          if (first.exchange(false))
+                                            validating.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  ASSERT_OK(db_->Put(WriteOptions(), "candidate", "value"));
+  Status synced;
+  std::thread backup([&] {
+    synced = db_->SyncBackup();
+    returned = true;
+  });
+  validating.WaitUntilBlocked();
+  std::map<std::string, std::string> expected{{"old", "retained"},
+                                              {"candidate", "value"}};
+  for (int i = 0; i < 32; ++i) {
+    const std::string key = "tail" + std::to_string(i);
+    expected[key] = std::string(2048, 'v');
+    EXPECT_OK(db_->Put(WriteOptions(), key, expected[key]));
+  }
+  EXPECT_OK(db_->Flush(FlushOptions()));
+  EXPECT_OK(db_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
+  EXPECT_FALSE(returned.load());
+  validating.Release();
+  backup.join();
+  ASSERT_OK(synced);
+  SyncPoint::GetInstance()->DisableProcessing();
+  SyncPoint::GetInstance()->ClearAllCallBacks();
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_NO_FATAL_FAILURE(ReopenContents(expected, true));
+}
+
 TEST_F(MetaBypassTest, RecoveryProgressIdentityAndClosedState) {
   ASSERT_NO_FATAL_FAILURE(Open());
   MetaBypassRecoveryProgress before, after;
@@ -9572,6 +9845,7 @@ int main(int argc, char** argv) {
   if (argc == 7 && std::string(argv[1]) == "--direct-write-crash-writer") {
     Options options;
     options.create_if_missing = true;
+    options.enable_blob_files = true;
     options.enable_blob_direct_write = true;
     options.allow_concurrent_memtable_write = false;
     options.blob_direct_write_partitions = 1;
@@ -9789,6 +10063,7 @@ int main(int argc, char** argv) {
   if (argc == 7 && std::string(argv[1]) == "--blob-gc-crash-writer") {
     Options options;
     options.create_if_missing = true;
+    options.enable_blob_files = true;
     options.blob_file_size = 128;
     MetaBypassOptions bypass;
     bypass.data_dir = argv[3];
@@ -9829,6 +10104,7 @@ int main(int argc, char** argv) {
     using ROCKSDB_NAMESPACE::SstTieringMode;
     Options options;
     options.create_if_missing = true;
+    options.enable_blob_files = true;
     MetaBypassOptions bypass;
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
@@ -9864,6 +10140,7 @@ int main(int argc, char** argv) {
   if (argc == 7 && std::string(argv[1]) == "--tiered-crash-writer") {
     Options options;
     options.create_if_missing = true;
+    options.enable_blob_files = true;
     MetaBypassOptions m;
     m.data_dir = argv[3];
     m.backup_dir = argv[4];
@@ -9907,6 +10184,7 @@ int main(int argc, char** argv) {
       std::string(argv[1]) == "--metabypass-crash-writer") {
     Options options;
     options.create_if_missing = true;
+    options.enable_blob_files = true;
     MetaBypassOptions bypass;
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];

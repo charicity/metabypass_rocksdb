@@ -52,7 +52,8 @@ struct SstTieringStats {
 enum class MetaBypassStagingPolicy { kAlways, kAdaptive };
 
 struct MetaBypassOptions {
-  // Absolute, normalized, disjoint directories.
+  // Absolute, normalized, disjoint directories. Both remain required when
+  // Options::enable_blob_files is false; data_dir retains identity and locks.
   std::string data_dir;
   std::string backup_dir;
   // Charged pending event memory, including the event being applied. A single
@@ -65,7 +66,8 @@ struct MetaBypassOptions {
   // file change. Later work does not postpone the deadline. Idle databases
   // have no checkpoint timer. Explicit barriers bypass this batching delay.
   uint64_t checkpoint_interval_ms = 5000;
-  // Optional fast blob staging. Empty preserves the original storage mode.
+  // Optional fast blob staging. Requires Options::enable_blob_files=true.
+  // Empty routes blobs directly to data_dir when blob files are enabled.
   // With staging enabled, data_dir and backup_dir must survive staging loss.
   std::string staging_dir;
   // Required when staging_dir is set. Logical bytes, excluding filesystem
@@ -324,12 +326,18 @@ struct MetaBypassRecoveryProgress {
 // other operations except GetRecoveryProgress; destruction remains exclusive.
 class MetaBypassDB {
  public:
-  // Uses Integrated BlobDB with min_blob_size=0. Direct Write follows
+  // Follows Options::enable_blob_files (default false). When disabled, full
+  // values stay in SSTs in index_dir, subject to sst_tiering placement. When
+  // enabled, uses Integrated BlobDB with min_blob_size=0 and no value
+  // relocation. Direct Write and nonempty staging_dir require
+  // enable_blob_files=true. Direct Write follows
   // Options::enable_blob_direct_write and requires concurrent memtable writes
   // and MemPurge to be disabled. Direct Write checkpoints flush through the
   // native engine and omit WALs; otherwise checkpoints retain full-value WALs.
   // Crash recovery with Direct Write is guaranteed through Restore of a
   // published point, not through unregistered active blobs in the primary DB.
+  // New databases, same-mode reopen and Restore are supported; switching an
+  // existing database between BlobDB and non-BlobDB modes is not guaranteed.
   // Options::env must outlive this object.
   static Status Open(const Options& options, const MetaBypassOptions& bypass,
                      const std::string& index_dir,
@@ -344,7 +352,7 @@ class MetaBypassDB {
   static Status Restore(const Options& options, const MetaBypassOptions& bypass,
                         const std::string& empty_index_dir);
   ~MetaBypassDB();
-  // In both storage modes, sync=true waits for a complete backup point.
+  // In all supported modes, sync=true waits for a complete backup point.
   // A failed remote barrier can follow a successful primary mutation.
   Status Put(const WriteOptions&, const Slice& key, const Slice& value);
   Status Delete(const WriteOptions&, const Slice& key);
@@ -356,7 +364,7 @@ class MetaBypassDB {
   Status Flush(const FlushOptions&);
   Status CompactRange(const CompactRangeOptions&, const Slice*, const Slice*);
   // Publishes a point covering writes completed before this call. Direct Write
-  // permits a native flush; the ordinary BlobDB path does not force one.
+  // permits a native flush; other modes do not force one.
   // Concurrent writes may or may not be included.
   Status SyncBackup();
   MetaBypassStats GetBackupStats() const;

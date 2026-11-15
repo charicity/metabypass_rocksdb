@@ -57,6 +57,10 @@ Status WriteFormat(FileSystem* fs, const std::string& path) {
 Status Validate(const Options& o, const MetaBypassOptions& m,
                 const std::string& index) {
   if (!o.env) return Status::InvalidArgument("null Env");
+  if (!o.enable_blob_files &&
+      (o.enable_blob_direct_write || !m.staging_dir.empty()))
+    return Status::NotSupported(
+        "Metabypass Direct Write and blob staging require enable_blob_files");
   auto valid_path = [](const std::string& p) {
     const std::filesystem::path path(p);
     return path.is_absolute() && !path.filename().empty() &&
@@ -370,11 +374,12 @@ Status MetaBypassDB::Open(const Options& options, const MetaBypassOptions& m,
   impl->env = NewCompositeEnv(impl->backup);
   Options configured = options;
   configured.env = impl->env.get();
-  configured.enable_blob_files = true;
   configured.listeners.push_back(
       std::make_shared<BackupListener>(impl->backup));
-  configured.min_blob_size = 0;
-  configured.enable_blob_garbage_collection = false;
+  if (configured.enable_blob_files) {
+    configured.min_blob_size = 0;
+    configured.enable_blob_garbage_collection = false;
+  }
   s = DB::Open(configured, index, &impl->db);
   if (s.ok()) {
     s = metabypass::Read(fs.get(), index + "/IDENTITY", &identity);

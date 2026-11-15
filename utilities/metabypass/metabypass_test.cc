@@ -2998,11 +2998,9 @@ TEST_F(MetaBypassTest, CheckpointDeadlineDoesNotSlideWithLaterWrites) {
           if (second_written.load()) clock = first_deadline;
         }
       });
-  SyncPoint::GetInstance()->SetCallBack("MetaBypass::CheckpointWaitMicros",
-                                        [&](void* p) {
-                                          if (clock.load())
-                                            *static_cast<uint64_t*>(p) = 0;
-                                        });
+  SyncPoint::GetInstance()->SetCallBack(
+      "MetaBypass::CheckpointWaitMicros",
+      [&](void* p) { *static_cast<uint64_t*>(p) = 0; });
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::CheckpointBoundary",
                                         [&](void*) { captured.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
@@ -3011,8 +3009,8 @@ TEST_F(MetaBypassTest, CheckpointDeadlineDoesNotSlideWithLaterWrites) {
   first_wait.Release();
   EXPECT_OK(db_->Put(WriteOptions(), "second", "v"));
   second_written = true;
-  // Mirror completion wakes the unchanged deadline. The callback advances the
-  // scheduler clock; a further event makes it observe that time without sleep.
+  // Further traffic must not move the original deadline. The callbacks advance
+  // and poll the scheduler clock without depending on a mirror wakeup.
   EXPECT_OK(db_->Put(WriteOptions(), "third", "v"));
   captured.WaitUntilBlocked();
   captured.Release();

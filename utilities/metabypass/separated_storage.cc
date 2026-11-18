@@ -137,11 +137,16 @@ Status SeparatedStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
     if (!s.ok()) return s;
     if (size != blob.second)
       return Status::Corruption("native blob size mismatch");
+    const auto previous = persisted_lengths_.find(blob.first);
+    if (previous != persisted_lengths_.end() && previous->second == blob.second)
+      continue;
     s = target()->SyncFile(BlobPath(blob.first), FileOptions(), IOOptions(),
                            true, nullptr);
     if (!s.ok()) return s;
   }
-  return SyncDir(target(), data_);
+  Status s = SyncDir(target(), data_);
+  if (s.ok()) persisted_lengths_ = lengths;
+  return s;
 }
 Status SeparatedStorage::ReclaimBlob(uint64_t number, uint64_t* bytes) {
   if (tier_) return tier_->ReclaimBlob(number, bytes);

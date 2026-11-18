@@ -304,6 +304,39 @@ class ReplacementFileSystem : public FileSystemWrapper {
     }
     return hook ? hook(key) : IOStatus::OK();
   }
+  IOStatus GetFileSize(const std::string& path, const IOOptions& o,
+                       uint64_t* size, IODebugContext* d) override {
+    IOStatus s = Operation("size." + path);
+    return s.ok() ? target()->GetFileSize(path, o, size, d) : s;
+  }
+  IOStatus SyncFile(const std::string& path, const FileOptions& f,
+                    const IOOptions& o, bool full, IODebugContext* d) override {
+    IOStatus s = Operation("sync." + path);
+    return s.ok() ? target()->SyncFile(path, f, o, full, d) : s;
+  }
+  IOStatus NewDirectory(const std::string& path, const IOOptions& o,
+                        std::unique_ptr<FSDirectory>* out,
+                        IODebugContext* d) override {
+    class Directory : public FSDirectoryWrapper {
+     public:
+      Directory(std::unique_ptr<FSDirectory> dir, ReplacementFileSystem* fs,
+                std::string path)
+          : FSDirectoryWrapper(std::move(dir)),
+            fs_(fs),
+            path_(std::move(path)) {}
+      IOStatus Fsync(const IOOptions& options, IODebugContext* dbg) override {
+        IOStatus s = fs_->Operation("dirsync." + path_);
+        return s.ok() ? FSDirectoryWrapper::Fsync(options, dbg) : s;
+      }
+
+     private:
+      ReplacementFileSystem* fs_;
+      std::string path_;
+    };
+    IOStatus s = target()->NewDirectory(path, o, out, d);
+    if (s.ok()) out->reset(new Directory(std::move(*out), this, path));
+    return s;
+  }
   class File : public FSWritableFileWrapper {
    public:
     using FSWritableFileWrapper::Append;
@@ -4224,6 +4257,127 @@ TEST_F(MetaBypassTest, RepeatedNativeDeletionDoesNotPoisonMirror) {
                              &retained));
   ASSERT_EQ(retained, "wal-bytes");
   ASSERT_OK(backup->Error());
+}
+TEST_F(MetaBypassTest, PersistReusesOnlyLastSuccessfulSealedBlobs) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  metabypass::SeparatedStorage storage(observed, index_, m_.data_dir);
+  ASSERT_OK(storage.Lock());
+  const auto first = storage.BlobPath(1), second = storage.BlobPath(2);
+  ASSERT_OK(metabypass::Write(fs_.get(), first, "one"));
+  ASSERT_OK(metabypass::Write(fs_.get(), second, "second"));
+  ASSERT_OK(storage.Persist({{1, 3}}));
+  ASSERT_OK(storage.Persist({{1, 3}}));
+  ASSERT_EQ(observed->Count("sync." + first), 1U);
+  ASSERT_EQ(observed->Count("size." + first), 2U);
+  ASSERT_EQ(observed->Count("dirsync." + m_.data_dir), 2U);
+  ASSERT_OK(storage.Persist({{1, 3}, {2, 6}}));
+  ASSERT_EQ(observed->Count("sync." + first), 1U);
+  ASSERT_EQ(observed->Count("sync." + second), 1U);
+  ASSERT_TRUE(storage.Persist({{1, 4}, {2, 6}}).IsCorruption());
+  ASSERT_OK(storage.Persist({{1, 3}, {2, 6}}));
+  ASSERT_EQ(observed->Count("sync." + first), 1U);
+  ASSERT_EQ(observed->Count("sync." + second), 1U);
+  // Even a cache hit must detect a truncated or missing file.
+  std::unique_ptr<FSWritableFile> truncated;
+  ASSERT_OK(
+      fs_->ReopenWritableFile(second, FileOptions(), &truncated, nullptr));
+  ASSERT_OK(truncated->Truncate(3, IOOptions(), nullptr));
+  ASSERT_OK(truncated->Close(IOOptions(), nullptr));
+  truncated.reset();
+  ASSERT_TRUE(storage.Persist({{1, 3}, {2, 6}}).IsCorruption());
+  ASSERT_OK(fs_->DeleteFile(second, IOOptions(), nullptr));
+  Status missing = storage.Persist({{1, 3}, {2, 6}});
+  ASSERT_TRUE(missing.IsNotFound() || missing.IsPathNotFound());
+  ASSERT_OK(storage.Persist({}));
+  ASSERT_OK(storage.Persist({{1, 3}}));
+  ASSERT_EQ(observed->Count("sync." + first), 2U);
+  // A cold storage object does not inherit another object's successful cache.
+  metabypass::SeparatedStorage cold(observed, index_, m_.data_dir);
+  ASSERT_OK(cold.Persist({{1, 3}}));
+  ASSERT_EQ(observed->Count("sync." + first), 3U);
+}
+TEST_F(MetaBypassTest, PersistFailuresDoNotCachePartialSuccess) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  metabypass::SeparatedStorage storage(observed, index_, m_.data_dir);
+  ASSERT_OK(storage.Lock());
+  for (uint64_t number : {1, 2, 3})
+    ASSERT_OK(metabypass::Write(fs_.get(), storage.BlobPath(number), "blob"));
+  ASSERT_OK(storage.Persist({{1, 4}}));
+  const auto first = storage.BlobPath(1), second = storage.BlobPath(2);
+  const auto third = storage.BlobPath(3);
+  for (const auto& failure : {"sync." + third, "dirsync." + m_.data_dir}) {
+    SCOPED_TRACE(failure);
+    observed->hook = [&](const std::string& key) {
+      return key == failure ? IOStatus::IOError("persist failure")
+                            : IOStatus::OK();
+    };
+    ASSERT_TRUE(storage.Persist({{1, 4}, {2, 4}, {3, 4}}).IsIOError());
+    observed->hook = nullptr;
+    const auto second_syncs = observed->Count("sync." + second);
+    const auto third_syncs = observed->Count("sync." + third);
+    ASSERT_OK(storage.Persist({{1, 4}, {2, 4}, {3, 4}}));
+    ASSERT_EQ(observed->Count("sync." + first), 1U);
+    ASSERT_EQ(observed->Count("sync." + second), second_syncs + 1);
+    ASSERT_EQ(observed->Count("sync." + third), third_syncs + 1);
+    // Replace the cache with the first root before testing the next failure.
+    ASSERT_OK(storage.Persist({{1, 4}}));
+  }
+}
+TEST_F(MetaBypassTest, PersistNativeCaptureBlobsStaySealed) {
+  for (bool direct : {false, true}) {
+    SCOPED_TRACE(direct);
+    if (direct) EnableDirectWrite();
+    o_.disable_auto_compactions = true;
+    m_.enable_blob_file_gc = false;
+    m_.checkpoint_interval_ms = 60000;
+    auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+    auto env = NewCompositeEnv(observed);
+    Options options = o_;
+    options.env = env.get();
+    ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
+    ASSERT_OK(db_->Put(WriteOptions(), "first", std::string(4096, 'a')));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+    ASSERT_OK(db_->SyncBackup());
+    const auto blobs = BlobFiles();
+    ASSERT_FALSE(blobs.empty());
+    std::map<std::string, std::string> sealed;
+    std::map<std::string, uint64_t> syncs;
+    for (const auto& name : blobs) {
+      const auto path = m_.data_dir + "/" + name;
+      // Only named-file syncs belong to Persist; an active DW file can also
+      // exist in the directory but is not part of the captured native root.
+      if (observed->Count("sync." + path) == 0) continue;
+      ASSERT_OK(metabypass::Read(fs_.get(), path, &sealed[path]));
+      ASSERT_GE(sealed[path].size(), BlobLogFooter::kSize);
+      BlobLogFooter footer;
+      ASSERT_OK(footer.DecodeFrom(Slice(
+          sealed[path].data() + sealed[path].size() - BlobLogFooter::kSize,
+          BlobLogFooter::kSize)));
+      syncs[path] = observed->Count("sync." + path);
+      ASSERT_GT(syncs[path], 0U);
+    }
+    ASSERT_FALSE(sealed.empty());
+    ASSERT_OK(db_->Put(WriteOptions(), "second", std::string(4096, 'b')));
+    ASSERT_OK(db_->Flush(FlushOptions()));
+    ASSERT_OK(db_->SyncBackup());
+    for (const auto& entry : sealed) {
+      std::string after;
+      ASSERT_OK(metabypass::Read(fs_.get(), entry.first, &after));
+      ASSERT_EQ(after, entry.second);
+      ASSERT_EQ(observed->Count("sync." + entry.first), syncs[entry.first]);
+    }
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(index_);
+    ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_));
+    ASSERT_NO_FATAL_FAILURE(Open());
+    Check("first", std::string(4096, 'a'));
+    Check("second", std::string(4096, 'b'));
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    Clean(root_);
+    ASSERT_OK(fs_->CreateDirIfMissing(root_, IOOptions(), nullptr));
+  }
 }
 TEST_F(MetaBypassTest, PreservesAppendVerificationInformation) {
   class VerificationFS : public FileSystemWrapper {

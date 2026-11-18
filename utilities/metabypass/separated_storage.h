@@ -27,6 +27,8 @@ class SeparatedStorage : public FileSystemWrapper {
   Status Lock();
   TieredStorage* tier() const { return tier_.get(); }
   SstStorage* sst() const { return sst_.get(); }
+  // The single backup validator calls Persist serially with sealed, immutable
+  // native snapshot blobs. File numbers are not reused during this lifetime.
   Status Persist(const std::map<uint64_t, uint64_t>& lengths);
   // Called only after the backup owner has excluded all recovery roots.
   Status ReclaimBlob(uint64_t number, uint64_t* bytes);
@@ -63,6 +65,9 @@ class SeparatedStorage : public FileSystemWrapper {
   std::string index_, data_;
   std::shared_ptr<TieredStorage> tier_;
   std::shared_ptr<SstStorage> sst_;
+  // Only the last complete successful Persist; new Open/Restore objects start
+  // empty. Tiered storage owns its separate persistence protocol.
+  std::map<uint64_t, uint64_t> persisted_lengths_;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

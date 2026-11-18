@@ -123,6 +123,44 @@ TEST_F(InlineSkipTest, Empty) {
   ASSERT_TRUE(!iter.Valid());
 }
 
+// Run these cases with NDEBUG and ROCKSDB_ASSERT_STATUS_CHECKED as well as
+// debug builds: assert(status.ok()) alone does not check Status in release.
+TEST_F(InlineSkipTest, SeekStatusChecked) {
+  Arena arena;
+  TestComparator cmp;
+  TestInlineSkipList list(cmp, &arena);
+  TestInlineSkipList::Iterator iter(&list);
+  Key query = 10;
+  iter.Seek(Encode(&query));
+  ASSERT_FALSE(iter.Valid());
+
+  Insert(&list, 20);
+  Insert(&list, 40);
+  for (Key key : {10, 20, 30, 40, 50}) {
+    iter.Seek(Encode(&key));
+    if (key > 40) {
+      ASSERT_FALSE(iter.Valid());
+    } else {
+      ASSERT_TRUE(iter.Valid());
+      ASSERT_EQ(key <= 20 ? 20 : 40, Decode(iter.key()));
+    }
+  }
+}
+
+TEST_F(InlineSkipTest, ContainsStatusChecked) {
+  Arena arena;
+  TestComparator cmp;
+  TestInlineSkipList list(cmp, &arena);
+  Key query = 10;
+  ASSERT_FALSE(list.Contains(Encode(&query)));
+
+  Insert(&list, 20);
+  Insert(&list, 40);
+  for (Key key : {10, 20, 30, 40, 50}) {
+    ASSERT_EQ(key == 20 || key == 40, list.Contains(Encode(&key)));
+  }
+}
+
 TEST_F(InlineSkipTest, InsertAndLookup) {
   const int N = 2000;
   const int R = 5000;

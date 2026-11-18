@@ -1377,10 +1377,7 @@ void Backup::GarbageCollectLoop() {
     TEST_SYNC_POINT("MetaBypass::BlobGCClaimed");
     const uint64_t started = Now();
     Status s;
-    for (uint64_t number : batch) {
-      uint64_t bytes = 0;
-      s = storage_->ReclaimBlob(number, &bytes);
-      if (!s.ok()) break;
+    const auto account = [&](uint64_t number, uint64_t bytes) {
       lock.lock();
       stats_.pending_blob_gc_bytes -= pending_blobs_.at(number).bytes;
       --stats_.pending_blob_gc_files;
@@ -1390,7 +1387,21 @@ void Backup::GarbageCollectLoop() {
       stats_.reclaimed_blob_bytes += bytes;
       lock.unlock();
       TEST_SYNC_POINT("MetaBypass::BlobReclaimed");
+    };
+    if (storage_->tier()) {
+      for (uint64_t number : batch) {
+        uint64_t bytes = 0;
+        s = storage_->ReclaimBlob(number, &bytes);
+        if (!s.ok()) break;
+        account(number, bytes);
+      }
+    } else {
+      std::vector<std::pair<uint64_t, uint64_t>> durable;
+      s = storage_->ReclaimBlobs(batch, &durable);
+      for (const auto& blob : durable) account(blob.first, blob.second);
     }
+    // Fail takes mutex_ itself. Publish the sticky error before releasing the
+    // capture gate, including when an earlier prefix was durably reclaimed.
     if (!s.ok()) Fail(s);
     lock.lock();
     stats_.blob_gc_micros += Now() - started;

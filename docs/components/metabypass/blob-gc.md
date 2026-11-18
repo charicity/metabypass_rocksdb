@@ -12,7 +12,13 @@ after every root releases it. Native iterators and read pins retain their normal
 read lifetimes. GC cannot race a newly captured file set into referencing removed
 payloads.
 
-A dedicated worker completes physical deletion and directory sync. Tiered GC
+A dedicated worker completes physical deletion and directory sync. Ordinary
+blobs use one data-directory sync per claimed batch (at most 16 files). A later
+deletion failure still syncs the completed prefix; only that durable prefix is
+removed from pending statistics. A directory-sync failure accounts no files.
+Missing files still require directory sync, and the first error remains sticky
+before the worker releases the capture gate. Close joins an already claimed
+batch through its directory sync. Tiered GC
 removes the descriptor and all extents while retaining in-flight local/remote
 read lifetimes. Cancellation and Close wait for an already claimed deletion to
 finish. Interrupted deletion is rediscovered by native obsolete-file cleanup and

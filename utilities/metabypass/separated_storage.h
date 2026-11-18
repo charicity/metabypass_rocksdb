@@ -5,6 +5,8 @@
 #pragma once
 
 #include <map>
+#include <utility>
+#include <vector>
 
 #include "rocksdb/file_system.h"
 #include "utilities/metabypass/native_files.h"
@@ -32,6 +34,10 @@ class SeparatedStorage : public FileSystemWrapper {
   Status Persist(const std::map<uint64_t, uint64_t>& lengths);
   // Called only after the backup owner has excluded all recovery roots.
   Status ReclaimBlob(uint64_t number, uint64_t* bytes);
+  // Ordinary blobs only. Return the durably deleted prefix and its file sizes,
+  // even if a later deletion fails. Directory sync failure returns no prefix.
+  Status ReclaimBlobs(const std::vector<uint64_t>& numbers,
+                      std::vector<std::pair<uint64_t, uint64_t>>* durable);
   std::string BlobPath(uint64_t number) const;
   std::string Map(const std::string& path) const;
   bool IsBlob(const std::string& path) const;

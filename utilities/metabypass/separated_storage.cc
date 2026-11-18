@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <limits>
 
 #include "file/filename.h"
@@ -150,15 +151,38 @@ Status SeparatedStorage::Persist(const std::map<uint64_t, uint64_t>& lengths) {
 }
 Status SeparatedStorage::ReclaimBlob(uint64_t number, uint64_t* bytes) {
   if (tier_) return tier_->ReclaimBlob(number, bytes);
-  *bytes = 0;
-  Status s =
-      target()->GetFileSize(BlobPath(number), IOOptions(), bytes, nullptr);
-  if (s.IsNotFound() || s.IsPathNotFound()) return SyncDir(target(), data_);
-  if (!s.ok()) return s;
-  TEST_SYNC_POINT("MetaBypass::BeforeBlobDelete");
-  s = target()->DeleteFile(BlobPath(number), IOOptions(), nullptr);
-  if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
-  if (s.ok()) s = SyncDir(target(), data_);
+  std::vector<std::pair<uint64_t, uint64_t>> durable;
+  Status s = ReclaimBlobs({number}, &durable);
+  *bytes = durable.empty() ? 0 : durable.front().second;
+  return s;
+}
+Status SeparatedStorage::ReclaimBlobs(
+    const std::vector<uint64_t>& numbers,
+    std::vector<std::pair<uint64_t, uint64_t>>* durable) {
+  assert(!tier_);
+  durable->clear();
+  durable->reserve(numbers.size());
+  Status s;
+  for (uint64_t number : numbers) {
+    uint64_t bytes = 0;
+    s = target()->GetFileSize(BlobPath(number), IOOptions(), &bytes, nullptr);
+    if (s.IsNotFound() || s.IsPathNotFound()) {
+      s = Status::OK();
+      bytes = 0;
+    } else {
+      if (!s.ok()) break;
+      TEST_SYNC_POINT("MetaBypass::BeforeBlobDelete");
+      s = target()->DeleteFile(BlobPath(number), IOOptions(), nullptr);
+      if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
+      if (!s.ok()) break;
+    }
+    durable->emplace_back(number, bytes);
+  }
+  if (!durable->empty()) {
+    Status synced = SyncDir(target(), data_);
+    if (!synced.ok()) durable->clear();
+    s.UpdateIfOk(synced);
+  }
   return s;
 }
 }  // namespace metabypass

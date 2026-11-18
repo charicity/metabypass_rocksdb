@@ -45,6 +45,22 @@ namespace metabypass {
 // Internal protocol tests use the real selector, apply path, and drain loop.
 class BackupTestAccess {
  public:
+  static void SeedBlobGC(Backup* backup, uint64_t count) {
+    backup->points_.push_back({"point", 0, {}, count + 1, 1});
+    backup->published_ = 1;
+    for (uint64_t number = 1; number <= count; ++number) {
+      backup->pending_blobs_[number] = {1, 4};
+      backup->retiring_blobs_.insert(number);
+    }
+    backup->stats_.pending_blob_gc_files = count;
+    backup->stats_.pending_blob_gc_bytes = count * 4;
+  }
+  static void FinishBlobGC(Backup* backup) {
+    std::lock_guard<std::mutex> lock(backup->mutex_);
+    backup->validator_done_ = true;
+    backup->gc_cv_.notify_all();
+  }
+  static void RunBlobGC(Backup* backup) { backup->GarbageCollectLoop(); }
   static void CheckIdlePrune(Backup* backup) {
     ASSERT_OK(EnsureDir(backup->disk_, backup->options_.backup_dir));
     ASSERT_OK(EnsureDir(backup->disk_, backup->work_));
@@ -309,6 +325,11 @@ class ReplacementFileSystem : public FileSystemWrapper {
     IOStatus s = Operation("size." + path);
     return s.ok() ? target()->GetFileSize(path, o, size, d) : s;
   }
+  IOStatus DeleteFile(const std::string& path, const IOOptions& o,
+                      IODebugContext* d) override {
+    IOStatus s = Operation("delete." + path);
+    return s.ok() ? target()->DeleteFile(path, o, d) : s;
+  }
   IOStatus SyncFile(const std::string& path, const FileOptions& f,
                     const IOOptions& o, bool full, IODebugContext* d) override {
     IOStatus s = Operation("sync." + path);
@@ -562,6 +583,28 @@ class MetaBypassTest : public testing::Test {
     }
     SyncPoint::GetInstance()->DisableProcessing();
     SyncPoint::GetInstance()->ClearAllCallBacks();
+  }
+  void BlockBlobGCDirSync(const std::shared_ptr<ReplacementFileSystem>& fs,
+                          TestGate* gate) {
+    struct State {
+      std::mutex mutex;
+      std::thread::id owner;
+    };
+    auto state = std::make_shared<State>();
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::BlobGCClaimed", [state](void*) {
+          std::lock_guard<std::mutex> lock(state->mutex);
+          state->owner = std::this_thread::get_id();
+        });
+    fs->hook = [state, gate, dir = m_.data_dir](const std::string& key) {
+      bool gc;
+      {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        gc = state->owner == std::this_thread::get_id();
+      }
+      if (gc && key == "dirsync." + dir) gate->Block();
+      return IOStatus::OK();
+    };
   }
   void Open() { ASSERT_OK(MetaBypassDB::Open(o_, m_, index_, &db_)); }
   std::set<std::string> BlobFiles() {
@@ -2421,6 +2464,97 @@ TEST_F(MetaBypassTest, RecoveryProgressCloseSerialization) {
   ASSERT_OK(closed);
   ASSERT_EQ(failures.load(), 0U);
 }
+TEST_F(MetaBypassTest, BlobGCBatchesAtMost16DirectorySyncs) {
+  for (uint64_t count : {16, 17}) {
+    SCOPED_TRACE(count);
+    auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+    auto storage = std::make_shared<metabypass::SeparatedStorage>(
+        observed, index_, m_.data_dir);
+    ASSERT_OK(storage->Lock());
+    for (uint64_t number = 1; number <= count; ++number)
+      ASSERT_OK(
+          metabypass::Write(fs_.get(), storage->BlobPath(number), "blob"));
+    metabypass::Backup backup(storage, index_, m_, o_);
+    metabypass::BackupTestAccess::SeedBlobGC(&backup, count);
+    uint64_t reclaimed = 0;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::BlobReclaimed", [&](void*) {
+          if (++reclaimed == count)
+            metabypass::BackupTestAccess::FinishBlobGC(&backup);
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    metabypass::BackupTestAccess::RunBlobGC(&backup);
+    ASSERT_OK(backup.Error());
+    ASSERT_EQ(observed->Count("dirsync." + m_.data_dir), (count + 15) / 16);
+    auto stats = backup.Stats();
+    ASSERT_OK(stats.error);
+    ASSERT_EQ(stats.reclaimed_blob_files, count);
+    ASSERT_EQ(stats.reclaimed_blob_bytes, count * 4);
+    ASSERT_EQ(stats.pending_blob_gc_files, 0U);
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+  }
+}
+TEST_F(MetaBypassTest, BlobGCBatchFailureAccountsOnlyDurablePrefix) {
+  for (bool sync_failure : {false, true}) {
+    SCOPED_TRACE(sync_failure);
+    auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+    auto storage = std::make_shared<metabypass::SeparatedStorage>(
+        observed, index_, m_.data_dir);
+    ASSERT_OK(storage->Lock());
+    for (uint64_t number = 1; number <= 3; ++number)
+      ASSERT_OK(
+          metabypass::Write(fs_.get(), storage->BlobPath(number), "blob"));
+    observed->hook = [&](const std::string& key) {
+      if (key == "delete." + storage->BlobPath(3))
+        return IOStatus::IOError("first deletion failure");
+      if (sync_failure && key == "dirsync." + m_.data_dir)
+        return IOStatus::IOError("later directory failure");
+      return IOStatus::OK();
+    };
+    metabypass::Backup backup(storage, index_, m_, o_);
+    metabypass::BackupTestAccess::SeedBlobGC(&backup, 3);
+    metabypass::BackupTestAccess::RunBlobGC(&backup);
+    const Status error = backup.Error();
+    ASSERT_TRUE(error.IsIOError());
+    ASSERT_NE(error.ToString().find("first deletion failure"),
+              std::string::npos);
+    ASSERT_EQ(observed->Count("dirsync." + m_.data_dir), 1U);
+    auto stats = backup.Stats();
+    ASSERT_TRUE(stats.error.IsIOError());
+    ASSERT_EQ(stats.reclaimed_blob_files, sync_failure ? 0U : 2U);
+    ASSERT_EQ(stats.reclaimed_blob_bytes, sync_failure ? 0U : 8U);
+    ASSERT_EQ(stats.pending_blob_gc_files, sync_failure ? 3U : 1U);
+    ASSERT_EQ(stats.pending_blob_gc_bytes, sync_failure ? 12U : 4U);
+    ASSERT_OK(fs_->FileExists(storage->BlobPath(3), IOOptions(), nullptr));
+  }
+}
+TEST_F(MetaBypassTest, BlobGCBatchMissingStillSyncsAndPropagatesErrors) {
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  metabypass::SeparatedStorage storage(observed, index_, m_.data_dir);
+  ASSERT_OK(storage.Lock());
+  std::vector<std::pair<uint64_t, uint64_t>> durable;
+  ASSERT_OK(storage.ReclaimBlobs({1, 2}, &durable));
+  ASSERT_EQ(durable.size(), 2U);
+  ASSERT_EQ(durable[0].second, 0U);
+  ASSERT_EQ(observed->Count("dirsync." + m_.data_dir), 1U);
+  observed->hook = [&](const std::string& key) {
+    return key == "dirsync." + m_.data_dir
+               ? IOStatus::IOError("missing directory sync")
+               : IOStatus::OK();
+  };
+  ASSERT_TRUE(storage.ReclaimBlobs({1}, &durable).IsIOError());
+  ASSERT_TRUE(durable.empty());
+  observed->hook = [&](const std::string& key) {
+    return key == "size." + storage.BlobPath(2)
+               ? IOStatus::IOError("size failure")
+               : IOStatus::OK();
+  };
+  ASSERT_TRUE(storage.ReclaimBlobs({1, 2}, &durable).IsIOError());
+  ASSERT_EQ(durable.size(), 1U);
+  ASSERT_EQ(durable.front().first, 1U);
+  ASSERT_EQ(observed->Count("dirsync." + m_.data_dir), 3U);
+}
 TEST_F(MetaBypassTest, BlobGCWholeFileAndRestore) {
   BlobGCScenario(false, false, true);
 }
@@ -2638,19 +2772,26 @@ TEST_F(MetaBypassTest, BlobGCCaptureWaitsForPhysicalDeletion) {
   m_.interval_ms = 1;
   m_.checkpoint_interval_ms = m_.interval_ms;
   o_.blob_file_size = 128;
-  Open();
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  TestGate claimed, applied;
+  BlockBlobGCDirSync(observed, &claimed);
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
   ASSERT_OK(db_->Put(WriteOptions(), "old", std::string(256, 'a')));
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(db_->SyncBackup());
-  TestGate claimed, applied;
-  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BlobGCClaimed",
-                                        [&](void*) { claimed.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   ASSERT_OK(db_->Delete(WriteOptions(), "old"));
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(CompactBlobFiles());
   ASSERT_OK(db_->SyncBackup());
   claimed.WaitUntilBlocked();
+  auto waiting_stats = db_->GetBackupStats();
+  EXPECT_OK(waiting_stats.error);
+  EXPECT_EQ(waiting_stats.reclaimed_blob_files, 0U);
+  EXPECT_GT(waiting_stats.pending_blob_gc_files, 0U);
   std::atomic<int> captures{0};
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::BeforeCaptureFiles",
                                         [&](void*) { ++captures; });
@@ -2756,19 +2897,26 @@ TEST_F(MetaBypassTest, BlobGCCloseDrainsClaimedDeletion) {
   m_.interval_ms = 1;
   m_.checkpoint_interval_ms = m_.interval_ms;
   o_.blob_file_size = 128;
-  Open();
+  auto observed = std::make_shared<ReplacementFileSystem>(fs_);
+  auto env = NewCompositeEnv(observed);
+  Options options = o_;
+  options.env = env.get();
+  TestGate claimed, joining;
+  BlockBlobGCDirSync(observed, &claimed);
+  ASSERT_OK(MetaBypassDB::Open(options, m_, index_, &db_));
   ASSERT_OK(db_->Put(WriteOptions(), "old", std::string(256, 'a')));
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(db_->SyncBackup());
-  TestGate claimed, joining;
-  SyncPoint::GetInstance()->SetCallBack("MetaBypass::BlobGCClaimed",
-                                        [&](void*) { claimed.Block(); });
   SyncPoint::GetInstance()->EnableProcessing();
   ASSERT_OK(db_->Delete(WriteOptions(), "old"));
   ASSERT_OK(db_->Flush(FlushOptions()));
   ASSERT_OK(CompactBlobFiles());
   ASSERT_OK(db_->SyncBackup());
   claimed.WaitUntilBlocked();
+  auto waiting_stats = db_->GetBackupStats();
+  EXPECT_OK(waiting_stats.error);
+  EXPECT_EQ(waiting_stats.reclaimed_blob_files, 0U);
+  EXPECT_GT(waiting_stats.pending_blob_gc_files, 0U);
   // Close begins with a backup barrier while the claimed deletion still owns
   // the capture gate. Install this callback after the setup SyncBackup calls.
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::SyncWaiting",
@@ -2788,6 +2936,7 @@ TEST_F(MetaBypassTest, BlobGCCloseDrainsClaimedDeletion) {
   auto stats = db_->GetBackupStats();
   ASSERT_OK(stats.error);
   ASSERT_GT(stats.reclaimed_blob_files, 0);
+  db_.reset();
   SyncPoint::GetInstance()->DisableProcessing();
   SyncPoint::GetInstance()->ClearAllCallBacks();
 }

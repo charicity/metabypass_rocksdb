@@ -12,6 +12,7 @@ import unittest
 import hdd_sync_compare as hc
 import prepare_driver as build
 from optcore_compare_test import accepted
+import write_breakdown as wb
 
 
 def sample(spec):
@@ -32,6 +33,24 @@ def document(rnd):
         build_manifests={group: dict(adapter_commit='d' * 40,
             core_commit=hc.CORE if group == 'baseline' else 'f' * 40) for group in hc.GROUPS},
         rows=[sample(r) for r in hc.matrix(round_number=rnd)])
+
+
+def add_breakdown_samples(row):
+    final = row['final_stats']
+    begin, end = final['measure_begin_ns'], final['measure_end_ns']
+    events = row['writer']['events']
+    events[0]['write_breakdown'] = True
+    for timestamp, value in ((begin-10, 1), (begin+10, 10),
+                             (end-100, 30), (end, 999)):
+        counters = dict.fromkeys(wb.BACKGROUND, value)
+        counters.update(background_begin_ns=timestamp, background_end_ns=timestamp+1,
+                        foreground_snapshot_ns=timestamp+2, sampled_calls=1,
+                        sampled_records=row['batch_size'], sampled_api_ns=100,
+                        sampled_wal_ns=20, sampled_memtable_ns=30)
+        event = dict.fromkeys(wb.MB, value)
+        event.update(event='sample', monotonic_begin_ns=timestamp, monotonic_end_ns=timestamp+3,
+                     measure_calls=final['measure_calls'], write_breakdown=counters)
+        events.append(event)
 
 
 class HddSyncTests(unittest.TestCase):
@@ -68,6 +87,59 @@ class HddSyncTests(unittest.TestCase):
                             'keyspace_bytes', 'mirror_interval_ms', 'mirror_batch_bytes', 'mirror_queue_capacity', 'interval_ms'):
                     self.assertIn('--%s=%s' % (key, row[key]), command)
                 self.assertIn('--recovery_time_sampling=' + str(int(row['recovery_time_sampling'])), command)
+        runner.args.write_breakdown = True
+        self.assertIn('--write_breakdown=1', runner.command(row, 'write', '/d', '/b', '/p', '/s'))
+        self.assertNotIn('--write_breakdown=1', runner.command(row, 'recover', '/d', '/b', '/p', '/s'))
+
+    def test_write_breakdown_window_and_pairs(self):
+        doc = document(1)
+        doc['write_breakdown'] = True
+        for row in doc['rows']:
+            add_breakdown_samples(row)
+        doc['rows'][1]['writer']['events'][-2]['write_breakdown']['mirror_wal_append_ns'] += 100
+        result = hc.aggregate([doc], write_breakdown=True)
+        self.assertEqual((len(result['rows']), len(result['local_comparison'])), (24, 12))
+        self.assertEqual(result['cross_round_comparison'], [])
+        self.assertEqual(result['run_status'], 'completed')
+        for row in result['rows']:
+            self.assertEqual(row['sampled_wal_ns_per_call'], 20)
+            self.assertEqual(row['sampled_memtable_ns_per_call'], 30)
+            self.assertEqual(row['flush_us'], 20)
+            self.assertEqual(row['mirrored_wal_bytes'], 20)
+            self.assertEqual(row['mirror_wal_append_calls'], 20)
+            self.assertEqual(row['mirror_wal_append_bytes'], 20)
+            self.assertEqual(row['breakdown_backup_count'], 20)
+            self.assertEqual(row['backup_count'], 2)
+            self.assertEqual(row['blob_write_bytes'], 20 if row['blob'] else None)
+            self.assertEqual(row['background_observed_seconds'], (180 * 10**9 - 110) / 1e9)
+            self.assertGreater(row['background_unexported_tail_seconds'], 0)
+        self.assertGreater(result['local_comparison'][0]['mirror_wal_append_ms_per_s_delta'], 0)
+        doc['rows'][0]['status'] = 'failed'
+        result = hc.aggregate([doc], write_breakdown=True)
+        self.assertEqual(result['run_status'], 'incomplete')
+        self.assertIsNone(result['rows'][0].get('sampled_wal_ns_per_call'))
+        self.assertIsNone(result['local_comparison'][0]['sampled_wal_ns_per_call_delta'])
+        with self.assertRaises(ValueError):
+            hc.aggregate([doc])
+
+    def test_short_breakdown_requires_observed_paths(self):
+        row = sample(next(r for r in hc.matrix(hc.CASES[1]) if r['blob']))
+        add_breakdown_samples(row)
+        samples = [e['write_breakdown'] for e in row['writer']['events']
+                   if e.get('event') == 'sample' and 'write_breakdown' in e]
+        for s in samples:
+            # Prefill wrote the Blob. No short-window flush or compaction occurred.
+            s.update(blob_write_bytes=100, flush_count=1, compaction_count=0)
+        self.assertEqual(wb.summarize(row)['flush_count'], 0)
+        self.assertEqual(wb.summarize(row)['blob_write_bytes'], 0)
+        samples[-2]['mirror_wal_append_calls'] = samples[1]['mirror_wal_append_calls']
+        with self.assertRaisesRegex(ValueError, 'mirror WAL append'):
+            wb.summarize(row)
+        samples[-2]['mirror_wal_append_calls'] += 1
+        for s in samples:
+            s['blob_write_bytes'] = 0
+        with self.assertRaisesRegex(ValueError, 'native Blob bytes'):
+            wb.summarize(row)
 
     def test_acceptance(self):
         for spec in hc.matrix() + hc.matrix(hc.CASES[1]):

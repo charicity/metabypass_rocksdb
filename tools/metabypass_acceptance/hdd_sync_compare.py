@@ -14,6 +14,7 @@ from statistics import median
 import optcore_compare as frozen
 from node_workload import NodeRunner
 from run import ResourceStop
+import write_breakdown as breakdown
 
 CORE = frozen.CORE
 CASES = ('hdd-sync', 'hdd-sync-preflight')
@@ -44,6 +45,9 @@ def matrix(case=CASES[0], round_number=None):
 
 def validate_args(args):
     matrix(args.case, args.round)
+    if args.write_breakdown and (args.round not in (None, 1) or
+            (args.action == 'aggregate' and len(args.round_ledgers or ()) != 1)):
+        raise ValueError('write breakdown uses one formal round')
     if args.phase_timeout != 1800:
         raise ValueError('phase timeout must remain 1800')
     if args.action == 'run':
@@ -102,6 +106,8 @@ class HddSyncRunner(NodeRunner):
         self.ledger.update(optimization_case=args.case, round=args.round,
             retention='Both MB arms retain one point',
             comparison_direction='optimized/baseline')
+        if args.write_breakdown:
+            self.ledger['write_breakdown'] = True
         for row in self.ledger['rows']:
             row.update(source_commit=args.baseline_source_commit if row['group'] == 'baseline' else args.source_commit,
                        driver_source_commit=args.driver_source_commit, harness_commit=args.harness_commit)
@@ -116,8 +122,11 @@ class HddSyncRunner(NodeRunner):
         return self.args.baseline_driver if row['group'] == 'baseline' else self.args.driver
 
     def command(self, row, mode, front, blob, backup, stats):
-        return super().command(row, mode, front, blob, backup, stats) + [
+        cmd = super().command(row, mode, front, blob, backup, stats) + [
             '--fixed_tail=0', '--recovery_time_sampling=' + str(int(row['recovery_time_sampling']))]
+        if self.args.write_breakdown and mode == 'write':
+            cmd.append('--write_breakdown=1')
+        return cmd
 
     def validate_storage(self):
         super().validate_storage()
@@ -129,6 +138,8 @@ class HddSyncRunner(NodeRunner):
 
     def validate_completed_sample(self, row):
         validate_sample(row)
+        if self.args.write_breakdown:
+            breakdown.summarize(row)
 
     def run(self):
         manifests = {}
@@ -155,12 +166,13 @@ class HddSyncRunner(NodeRunner):
         return super().run()
 
 
-def aggregate(documents):
+def aggregate(documents, write_breakdown=False):
     from report import local_pairs, memory_fields, summarize
     rounds, identities = {}, None
     for document in documents:
         observed = {r['round'] for r in document['rows']}
-        if document.get('optimization_case') != CASES[0] or len(observed) != 1:
+        if (document.get('optimization_case') != CASES[0] or len(observed) != 1 or
+                bool(document.get('write_breakdown')) != write_breakdown):
             raise ValueError('one formal round per ledger required')
         rnd = next(iter(observed))
         if rnd not in (1, 2) or rnd in rounds:
@@ -187,20 +199,24 @@ def aggregate(documents):
             if row['status'] == 'passed':
                 validate_sample(row)
         rounds[rnd] = document
+    if write_breakdown and set(rounds) != {1}:
+        raise ValueError('expected only round 1 for write breakdown')
     if not rounds:
         raise ValueError('at least one ledger required')
+    expected_rounds = (1,) if write_breakdown else (1, 2)
     combined = copy.deepcopy(next(iter(rounds.values())))
-    combined['rows'] = [copy.deepcopy(row) for rnd in (1, 2) for row in
+    combined['rows'] = [copy.deepcopy(row) for rnd in expected_rounds for row in
                         (rounds[rnd]['rows'] if rnd in rounds else matrix(round_number=rnd))]
-    combined['status'] = 'completed' if len(rounds) == 2 and all(
+    combined['status'] = 'completed' if len(rounds) == len(expected_rounds) and all(
         row['status'] == 'passed' for row in combined['rows']) else 'incomplete'
     summaries = []
-    for rnd in (1, 2):
+    for rnd in expected_rounds:
         part = dict(combined, rows=[r for r in combined['rows'] if r['round'] == rnd])
         summaries.append(summarize(part))
     result = summaries[0]
-    for name in ('rows', 'publication_events', 'memory_samples', 'rpo_samples'):
-        result[name] = result[name] + summaries[1][name]
+    for summary in summaries[1:]:
+        for name in ('rows', 'publication_events', 'memory_samples', 'rpo_samples'):
+            result[name].extend(summary[name])
     result['counts'] = dict(Counter(r['status'] for r in result['rows']))
     result['run_status'] = combined['status']
     result['optimization_case'] = CASES[0]
@@ -210,11 +226,13 @@ def aggregate(documents):
         for key in ('round', 'group', 'recovery_time_sampling', 'source_commit', 'driver_source_commit', 'harness_commit'):
             row[key] = source.get(key)
         row['raw_recovery'] = source.get('recovery_result', {})
+        if write_breakdown and row['status'] == 'passed':
+            row.update(breakdown.summarize(source))
         if source['group'] == 'optimized':
             for key in row:
                 if key.startswith('rpo_'):
                     row[key] = 'disabled_recovery_time_sampling' if key.endswith('_status') else None
-    for rnd in (1, 2):
+    for rnd in expected_rounds:
         pairs = local_pairs([r for r in result['rows'] if r['round'] == rnd], 'main',
                             (('optimized', 'baseline'),), memory_fields(result))
         result['local_comparison'].extend(dict(p, round=rnd) for p in pairs)
@@ -236,23 +254,54 @@ def aggregate(documents):
         'Sampled full values and batch-aligned sequence checks do not certify global continuity.',
         'Failures retain raw evidence; no automatic performance retries. Medians/min/max are observations, not confidence intervals.',
         'Cgroup v1 32GiB; SSD/HDD task caps 64/128GiB; minimum free 20/100GiB. Raw sampled memory is retained.']
+    if write_breakdown:
+        result['notes'][0] = '24 samples / 12 within-round pairs; ratios are optimized/baseline.'
+        result['notes'][-2] = 'Failures retain raw evidence. Each configuration has one observation.'
+        result['notes'].extend(breakdown.NOTES)
+        result['cross_round_comparison'] = []
+        by_id = {r['id']: r for r in result['rows']}
+        for pair in result['local_comparison']:
+            for metric in breakdown.COMPARISON:
+                old = by_id[pair['reference_id']].get(metric)
+                new = by_id[pair['current_id']].get(metric)
+                pair.update({'reference_' + metric: old, 'current_' + metric: new,
+                             metric + '_delta': new - old if old is not None and new is not None else None})
     return result
 
 
-def export(paths, output):
+def export(paths, output, write_breakdown=False):
     from mb40_report import write_csv
     from report import md_table, number
-    result = aggregate([json.loads(Path(p).read_text()) for p in paths])
+    result = aggregate([json.loads(Path(p).read_text()) for p in paths], write_breakdown)
     out = Path(output)
     out.mkdir(parents=True, exist_ok=False)
-    for name in ('rows', 'local_comparison', 'cross_round_comparison', 'memory_samples', 'publication_events', 'rpo_samples'):
+    names = ('rows', 'local_comparison', 'memory_samples', 'publication_events', 'rpo_samples')
+    if not write_breakdown:
+        names += ('cross_round_comparison',)
+    for name in names:
         write_csv(out / (name + '.csv'), result[name])
     (out / 'summary.json').write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
     lines = ['# HDD sync: final / core52', '', 'Status: ' + result['run_status'], '']
     lines += ['- ' + note for note in result['notes']] + ['']
-    md_table(lines, ('Config', 'Final/baseline MiB/s median', 'Min', 'Max', 'Valid rounds'),
-        [(r['config_id'], number(r['mib_per_s_ratio_median']), number(r['mib_per_s_ratio_min']),
-          number(r['mib_per_s_ratio_max']), r['mib_per_s_ratio_valid_n']) for r in result['cross_round_comparison']])
+    if write_breakdown:
+        md_table(lines, ('Config', 'Baseline MiB/s', 'Optimized MiB/s', 'Change %'),
+            [(r['config_id'], number(r['reference_mib_per_s']), number(r['current_mib_per_s']),
+              number(100 * r['mib_per_s_change_fraction'] if r['mib_per_s_change_fraction'] is not None else None))
+             for r in result['local_comparison']])
+        lines.append('')
+        md_table(lines, ('Config', 'Arm', 'WAL ns/call', 'MemTable ns/call', 'Flush ms/s',
+                         'Compaction ms/s', 'Mirror WAL append MiB/s', 'Mirror WAL append ms/s',
+                         'Checkpoint publish ms/s',
+                         'Blob HDD MiB/s', 'Blob append ms/s', 'Blob sync ms/s'),
+            [(r['config_id'], r['group'], *(number(r.get(k)) for k in (
+                'sampled_wal_ns_per_call', 'sampled_memtable_ns_per_call', 'flush_ms_per_s',
+                'compaction_ms_per_s', 'mirror_wal_append_mib_per_s', 'mirror_wal_append_ms_per_s',
+                'checkpoint_publish_ms_per_s',
+                'blob_write_mib_per_s', 'blob_append_ms_per_s', 'blob_sync_ms_per_s'))) for r in result['rows']])
+    else:
+        md_table(lines, ('Config', 'Final/baseline MiB/s median', 'Min', 'Max', 'Valid rounds'),
+            [(r['config_id'], number(r['mib_per_s_ratio_median']), number(r['mib_per_s_ratio_min']),
+              number(r['mib_per_s_ratio_max']), r['mib_per_s_ratio_valid_n']) for r in result['cross_round_comparison']])
     (out / 'report.md').write_text('\n'.join(lines) + '\n')
     return result
 
@@ -262,6 +311,7 @@ def parser():
     p.add_argument('--baseline-driver')
     p.add_argument('--baseline-build-manifest')
     p.add_argument('--baseline-source-commit', default=CORE)
+    p.add_argument('--write-breakdown', action='store_true')
     return p
 
 
@@ -271,10 +321,13 @@ def main(argv=None):
     try:
         validate_args(args)
         if args.action == 'plan':
-            print(json.dumps(dict(case=args.case, rows=matrix(args.case, args.round), resources=RESOURCES), indent=2))
+            rnd = 1 if args.write_breakdown and args.case == CASES[0] else args.round
+            print(json.dumps(dict(case=args.case, rows=matrix(args.case, rnd), resources=RESOURCES,
+                                  write_breakdown=args.write_breakdown), indent=2))
             return 0
         if args.action == 'aggregate':
-            return 0 if export(args.round_ledgers, args.output)['run_status'] == 'completed' else 1
+            result = export(args.round_ledgers, args.output, args.write_breakdown)
+            return 0 if result['run_status'] == 'completed' else 1
         return HddSyncRunner(args).run()
     except (ValueError, RuntimeError) as exc:
         p.error(str(exc))

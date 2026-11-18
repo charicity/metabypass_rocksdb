@@ -1,0 +1,254 @@
+--- a/tools/metabypass_acceptance/driver.cc
++++ b/tools/metabypass_acceptance/driver.cc
+@@ -43,0 +44,3 @@
++#include "rocksdb/perf_context.h"
++#include "rocksdb/perf_level.h"
++#include "rocksdb/statistics.h"
+@@ -159,0 +163 @@
++                                       {"write_breakdown", "0"},
+@@ -197,0 +202,3 @@
++    if (N("write_breakdown") > 1 ||
++        (N("write_breakdown") && (S("mode") != "write" || S("engine") != "mb")))
++      throw std::runtime_error("write_breakdown requires an MB writer");
+@@ -535,0 +543,169 @@
++// The writer and sampler use the same mutex as the acknowledged-call snapshot.
++struct WriteBreakdown {
++  uint64_t calls = 0, records = 0, api_ns = 0, wal_ns = 0, memtable_ns = 0;
++
++  void Add(uint64_t count, uint64_t elapsed,
++           const ROCKSDB_NAMESPACE::PerfContext& perf) {
++    ++calls;
++    records += count;
++    api_ns += elapsed;
++    wal_ns += perf.write_wal_time;
++    memtable_ns += perf.write_memtable_time;
++  }
++
++  std::string Fields(uint64_t snapshot_ns) const {
++    return "\"foreground_snapshot_ns\":" + std::to_string(snapshot_ns) +
++           ",\"sampled_calls\":" + std::to_string(calls) +
++           ",\"sampled_records\":" + std::to_string(records) +
++           ",\"sampled_api_ns\":" + std::to_string(api_ns) +
++           ",\"sampled_wal_ns\":" + std::to_string(wal_ns) +
++           ",\"sampled_memtable_ns\":" + std::to_string(memtable_ns);
++  }
++};
++
++struct MirrorWalAppendStats {
++  uint64_t calls = 0, bytes = 0, ns = 0;
++};
++
++class MirrorWalMeter {
++ public:
++  void Record(uint64_t elapsed_ns, size_t bytes) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    ++stats_.calls;
++    stats_.bytes += bytes;
++    stats_.ns += elapsed_ns;
++  }
++
++  MirrorWalAppendStats Snapshot() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return stats_;
++  }
++
++ private:
++  std::mutex mutex_;
++  MirrorWalAppendStats stats_;
++};
++
++class MeasuredMirrorWal : public ROCKSDB_NAMESPACE::FSWritableFileOwnerWrapper {
++ public:
++  MeasuredMirrorWal(std::unique_ptr<FSWritableFile> file,
++                    std::shared_ptr<MirrorWalMeter> meter)
++      : FSWritableFileOwnerWrapper(std::move(file)), meter_(std::move(meter)) {}
++
++  IOStatus Append(const ROCKSDB_NAMESPACE::Slice& data,
++                  const IOOptions& options, IODebugContext* dbg) override {
++    return Measure(data.size(),
++                   [&] { return target()->Append(data, options, dbg); });
++  }
++
++  IOStatus Append(const ROCKSDB_NAMESPACE::Slice& data,
++                  const IOOptions& options,
++                  const ROCKSDB_NAMESPACE::DataVerificationInfo& verification,
++                  IODebugContext* dbg) override {
++    return Measure(data.size(), [&] {
++      return target()->Append(data, options, verification, dbg);
++    });
++  }
++
++ private:
++  template <typename AppendCall>
++  IOStatus Measure(size_t size, AppendCall append) {
++    const uint64_t start = Now();
++    auto status = append();
++    const uint64_t elapsed = Now() - start;
++    meter_->Record(elapsed, status.ok() ? size : 0);
++    return status;
++  }
++
++  std::shared_ptr<MirrorWalMeter> meter_;
++};
++
++class MirrorWalFileSystem : public FileSystemWrapper {
++ public:
++  MirrorWalFileSystem(const std::shared_ptr<FileSystem>& fs,
++                      const std::string& backup_dir,
++                      std::shared_ptr<MirrorWalMeter> meter)
++      : FileSystemWrapper(fs),
++        prefix_(backup_dir + "/work/"),
++        meter_(std::move(meter)) {}
++
++  const char* Name() const override { return "AcceptanceMirrorWalFileSystem"; }
++
++  IOStatus NewWritableFile(const std::string& path, const FileOptions& options,
++                           std::unique_ptr<FSWritableFile>* file,
++                           IODebugContext* dbg) override {
++    auto status = target()->NewWritableFile(path, options, file, dbg);
++    if (status.ok()) WrapMirrorWal(path, file);
++    return status;
++  }
++
++  IOStatus ReopenWritableFile(const std::string& path,
++                              const FileOptions& options,
++                              std::unique_ptr<FSWritableFile>* file,
++                              IODebugContext* dbg) override {
++    auto status = target()->ReopenWritableFile(path, options, file, dbg);
++    if (status.ok()) WrapMirrorWal(path, file);
++    return status;
++  }
++
++ private:
++  void WrapMirrorWal(const std::string& path,
++                     std::unique_ptr<FSWritableFile>* file) {
++    // Only a numeric WAL basename under the active mirror's work directory.
++    // The primary WAL, checkpoint candidates and PROGRESS remain unwrapped.
++    const size_t suffix = path.find_first_not_of("0123456789", prefix_.size());
++    if (path.compare(0, prefix_.size(), prefix_) == 0 &&
++        suffix != std::string::npos && suffix > prefix_.size() &&
++        path.compare(suffix, std::string::npos, ".log") == 0) {
++      *file = std::make_unique<MeasuredMirrorWal>(std::move(*file), meter_);
++    }
++  }
++
++  const std::string prefix_;
++  std::shared_ptr<MirrorWalMeter> meter_;
++};
++
++// These counters are lifetime totals. Jobs can run across sample boundaries;
++// the exporter timestamps when it reads them, not when each job starts.
++std::string WriteBackgroundFields(
++    const ROCKSDB_NAMESPACE::Statistics& statistics,
++    const ROCKSDB_NAMESPACE::MetaBypassStats& mb,
++    const MirrorWalAppendStats& mirror) {
++  using namespace ROCKSDB_NAMESPACE;
++  std::ostringstream out;
++  auto histogram = [&](const char* count_name, const char* time_name,
++                       Histograms type) {
++    HistogramData data{};
++    statistics.histogramData(type, &data);
++    out << ",\"" << count_name << "\":" << data.count << ",\"" << time_name
++        << "\":" << data.sum;
++  };
++  histogram("flush_count", "flush_us", FLUSH_TIME);
++  histogram("compaction_count", "compaction_us", COMPACTION_TIME);
++  histogram("blob_append_count", "blob_append_us",
++            BLOB_DB_BLOB_FILE_WRITE_MICROS);
++  histogram("blob_sync_count", "blob_sync_us", BLOB_DB_BLOB_FILE_SYNC_MICROS);
++  out << ",\"flush_write_bytes\":"
++      << statistics.getTickerCount(FLUSH_WRITE_BYTES)
++      << ",\"compaction_read_bytes\":"
++      << statistics.getTickerCount(COMPACT_READ_BYTES)
++      << ",\"compaction_write_bytes\":"
++      << statistics.getTickerCount(COMPACT_WRITE_BYTES)
++      << ",\"blob_write_bytes\":"
++      << statistics.getTickerCount(BLOB_DB_BLOB_FILE_BYTES_WRITTEN)
++      << ",\"wal_write_bytes\":" << statistics.getTickerCount(WAL_FILE_BYTES)
++      << ",\"stall_us\":" << statistics.getTickerCount(STALL_MICROS)
++      << ",\"backpressure_us\":" << mb.backpressure_micros
++      << ",\"hdd_append_calls\":" << mb.hdd_append_calls
++      << ",\"hdd_append_us\":" << mb.hdd_append_micros
++      << ",\"hdd_sync_calls\":" << mb.hdd_sync_calls
++      << ",\"hdd_sync_us\":" << mb.hdd_sync_micros
++      << ",\"hdd_dirsync_calls\":" << mb.hdd_dirsync_calls
++      << ",\"hdd_dirsync_us\":" << mb.hdd_dirsync_micros
++      << ",\"blob_gc_us\":" << mb.blob_gc_micros
++      << ",\"mirror_wal_append_calls\":" << mirror.calls
++      << ",\"mirror_wal_append_bytes\":" << mirror.bytes
++      << ",\"mirror_wal_append_ns\":" << mirror.ns;
++  return out.str();
++}
++
+@@ -537,0 +714 @@
++  std::shared_ptr<MirrorWalMeter> mirror_wal_meter;
+@@ -563,0 +741,11 @@
++    if (c.N("write_breakdown")) {
++      options.statistics = ROCKSDB_NAMESPACE::CreateDBStatistics();
++      options.statistics->set_stats_level(
++          ROCKSDB_NAMESPACE::kExceptDetailedTimers);
++      options.stats_dump_period_sec = 0;
++      options.stats_persist_period_sec = 0;
++      mirror_wal_meter = std::make_shared<MirrorWalMeter>();
++      env = NewCompositeEnv(std::make_shared<MirrorWalFileSystem>(
++          options.env->GetFileSystem(), c.S("backup_dir"), mirror_wal_meter));
++      options.env = env.get();
++    }
+@@ -836,0 +1025 @@
++          ",\"write_breakdown\":" + (db.options.statistics ? "true" : "false") +
+@@ -861,0 +1051,2 @@
++  const bool write_breakdown = db.options.statistics != nullptr;
++  WriteBreakdown foreground;
+@@ -889,0 +1081,2 @@
++        uint64_t background_end = 0, foreground_snapshot = 0;
++        std::string background_fields;
+@@ -907,0 +1101,5 @@
++          if (write_breakdown) {
++            background_fields = WriteBackgroundFields(
++                *db.options.statistics, stats, db.mirror_wal_meter->Snapshot());
++            background_end = Now();
++          }
+@@ -909,0 +1108 @@
++        WriteBreakdown foreground_copy;
+@@ -917,0 +1117,4 @@
++          if (write_breakdown) {
++            foreground_copy = foreground;
++            foreground_snapshot = end;
++          }
+@@ -961 +1164,9 @@
+-                 Histogram(copy.measure_latency_ns_hist));
++                 Histogram(copy.measure_latency_ns_hist) +
++                 (write_breakdown
++                      ? ",\"write_breakdown\":{" +
++                            foreground_copy.Fields(foreground_snapshot) +
++                            ",\"background_begin_ns\":" +
++                            std::to_string(begin) + ",\"background_end_ns\":" +
++                            std::to_string(background_end) + background_fields +
++                            "}"
++                      : ""));
+@@ -1007,0 +1219,2 @@
++    uint32_t sample_state = 0x1269f65d;
++    const auto previous_perf_level = ROCKSDB_NAMESPACE::GetPerfLevel();
+@@ -1035,0 +1249,14 @@
++      ROCKSDB_NAMESPACE::PerfContext* write_perf = nullptr;
++      if (write_breakdown) {
++        // Xorshift32 gives a reproducible pseudo-random sample per API call.
++        sample_state ^= sample_state << 13;
++        sample_state ^= sample_state >> 17;
++        sample_state ^= sample_state << 5;
++        if ((sample_state & 63) == 0) {
++          write_perf = ROCKSDB_NAMESPACE::get_perf_context();
++          write_perf->write_wal_time = 0;
++          write_perf->write_memtable_time = 0;
++          ROCKSDB_NAMESPACE::SetPerfLevel(
++              ROCKSDB_NAMESPACE::kEnableTimeExceptForMutex);
++        }
++      }
+@@ -1038 +1265 @@
+-      Check(count == 1 ? db.Put(key, value) : db.Write(&batch));
++      const auto status = count == 1 ? db.Put(key, value) : db.Write(&batch);
+@@ -1040,0 +1268,2 @@
++      if (write_perf) ROCKSDB_NAMESPACE::SetPerfLevel(previous_perf_level);
++      Check(status);
+@@ -1055,0 +1285 @@
++          if (write_perf) foreground.Add(count, ack - call_begin, *write_perf);

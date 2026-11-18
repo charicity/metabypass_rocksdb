@@ -31,8 +31,9 @@ def prepare(destination):
     target.mkdir(parents=True, exist_ok=False)
     for name in ('driver.cc', 'protocol.h'):
         shutil.copy2(DRIVER / name, target / name)
-    subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(HERE / 'driver.patch')],
-                   cwd=destination, check=True)
+    for name in ('driver.patch', 'write_breakdown.patch'):
+        subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(HERE / name)],
+                       cwd=destination, check=True)
     if digest(target / 'protocol.h') != digest(DRIVER / 'protocol.h'):
         raise RuntimeError('shared protocol changed')
     return target
@@ -53,6 +54,8 @@ def main():
     p.add_argument('--cc', default='clang-14')
     p.add_argument('--cxx', default='clang++-14')
     p.add_argument('--jobs', type=int, choices=(48, 32, 16, 8), default=48)
+    p.add_argument('--reuse-core-artifacts', type=Path,
+                   help='compile only the driver against a previous strict build')
     p.add_argument('--plan', action='store_true')
     args = p.parse_args()
     core, build, artifacts = (getattr(args, k).resolve() for k in ('core', 'build', 'artifacts'))
@@ -63,17 +66,36 @@ def main():
         p.error('core must be a clean checkout at --core-commit')
     if core == build or core in build.parents or core == artifacts or core in artifacts.parents:
         p.error('build and artifacts must be outside core source')
-    steps = build_commands(core, build, artifacts, capability, args.cc, args.cxx, args.jobs)
+    steps = dict(enumerate(build_commands(core, build, artifacts, capability,
+                                         args.cc, args.cxx, args.jobs)))
+    library_dir = build
+    if args.reuse_core_artifacts:
+        library_dir = args.reuse_core_artifacts.resolve(strict=True)
+        previous = json.loads((library_dir / 'build-manifest.json').read_text())
+        core_configure_command = previous.get('core_configure_command') or previous['commands'][0]
+        if (previous['status'] != 'built' or previous['core_commit'] != args.core_commit or
+                previous['mb_has_recovery_time_sampling'] != capability or
+                previous['assert_status_checked'] is not True or
+                previous['diagnostics_enabled'] is not False or
+                core_configure_command != steps[0] or
+                digest((library_dir / 'librocksdb.so').resolve(strict=True)) != previous['library_sha256']):
+            p.error('reused core artifacts must match the requested core and build configuration')
+        steps = {2: steps[2]}
     if args.plan:
-        print(json.dumps(steps, indent=2))
+        print(json.dumps(list(steps.values()), indent=2))
         return
     artifacts.mkdir(parents=True, exist_ok=False)
     source = prepare(artifacts / 'driver-source')
     manifest = dict(status='building', core_commit=args.core_commit,
         mb_has_recovery_time_sampling=capability, adapter_commit=git(ROOT, 'rev-parse', 'HEAD'),
-        assert_status_checked=True, diagnostics_enabled=False, commands=steps,
+        assert_status_checked=True, diagnostics_enabled=False, commands=list(steps.values()),
         driver_source_sha256=digest(source / 'driver.cc'), protocol_sha256=digest(source / 'protocol.h'),
-        driver_patch_sha256=digest(HERE / 'driver.patch'))
+        driver_patch_sha256=digest(HERE / 'driver.patch'),
+        write_breakdown_patch_sha256=digest(HERE / 'write_breakdown.patch'))
+    if args.reuse_core_artifacts:
+        manifest.update(reused_core_artifacts=str(library_dir),
+                        reused_library_sha256=previous['library_sha256'],
+                        core_configure_command=core_configure_command)
     path = artifacts / 'build-manifest.json'
     def save():
         path.write_text(json.dumps(manifest, indent=2) + '\n')
@@ -81,14 +103,16 @@ def main():
     env = dict(os.environ)
     for key in ('LD_LIBRARY_PATH', 'CXXFLAGS', 'CFLAGS', 'LDFLAGS'):
         env.pop(key, None)
-    for index, command in enumerate(steps):
+    for index, command in steps.items():
         if index == 2:
-            compiled = json.loads((build / 'compile_commands.json').read_text())
+            compiled_file = library_dir / ('core-compile-commands.json' if args.reuse_core_artifacts
+                                           else 'compile_commands.json')
+            compiled = json.loads(compiled_file.read_text())
             if not compiled or any('ROCKSDB_ASSERT_STATUS_CHECKED' not in r['command'] or
                     'METABYPASS_PERF_DIAGNOSTICS' in r['command'] for r in compiled):
                 raise RuntimeError('core strict Status / diagnostics OFF flags mismatch')
-            shutil.copy2(build / 'compile_commands.json', artifacts / 'core-compile-commands.json')
-            for library in sorted(build.glob('librocksdb.so*')):
+            shutil.copy2(compiled_file, artifacts / 'core-compile-commands.json')
+            for library in sorted(library_dir.glob('librocksdb.so*')):
                 if library.is_symlink():
                     (artifacts / library.name).symlink_to(library.resolve().name)
                 else:

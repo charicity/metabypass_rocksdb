@@ -93,3 +93,46 @@ Outputs include 48 observation rows, 24 within-round pairs and 12 cross-round
 summaries. Failed samples keep evidence, with no automatic performance retry.
 Two rounds' median/min/max are descriptive observations, not confidence
 intervals. Recovery checks sample full values and do not certify every key.
+
+## One-round write breakdown
+
+Add `--write-breakdown` to the short-check and round-1 controller commands.
+The driver collects these measurements during the write phase only. Report
+the 24 formal rows and 12 paired comparisons with:
+
+```sh
+python3 tools/metabypass_acceptance/hdd_sync_compare.py aggregate \
+  --write-breakdown --round-ledgers=/HDD_TASK/write-round1/results.json \
+  --output=/HDD_TASK/write-summary
+```
+
+The same driver source is used for both cores. To build only the driver, add
+`--reuse-core-artifacts=/SSD_PREVIOUS/ARTIFACTS` to `prepare_driver.py`, with
+that arm's original `--core`, `--core-commit`, and `--build` values and a new
+`--artifacts` directory. The reused core library and compile records stay
+associated with the original core commit. Enable the writer's measurements
+with `--write_breakdown=1` when invoking the driver directly.
+
+- WAL and MemTable timings come from the writer's PerfContext on a reproducible
+  pseudo-random sample of about one in 64 calls. Native WAL timing includes
+  synchronous mirror admission. Calls are assigned by successful return time.
+- Flush and compaction use native RocksDB Statistics job times and byte counts.
+  The report gives the first and last in-window snapshot times and the gap to
+  SIGKILL. A job can run across a snapshot boundary. Cumulative background
+  task time can overlap foreground time and other tasks.
+- Redundancy conversion covers WAL mirroring and checkpoints. The driver
+  observes both Append overloads on active HDD mirror WAL files, including
+  buffered write time. Reports retain native mirror bytes, queue backpressure,
+  checkpoint copy bytes, phase times and observed publication durations.
+  Checkpoint publish includes Persist. Aggregate HDD calls cover other paths.
+- Data offload covers ordinary Blob values written directly to HDD. The report
+  includes Blob append/sync durations and bytes within flush and compaction.
+  These timings and bytes overlap the native jobs. Blob-off is not applicable.
+
+Short checks require positive foreground WAL and MemTable times and observed
+mirror WAL append calls, bytes, and time during the measurement window. Blob-on
+also requires positive native Blob bytes since the writer opened, including
+prefill, and the original check for nonempty Blob files.
+
+Both arms enable the same counters. Statistics and sampling can affect measured
+throughput, so compare this round's arms under the same instrumentation.

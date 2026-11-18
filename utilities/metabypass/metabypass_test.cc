@@ -1739,9 +1739,10 @@ class MetaBypassIncrementalTest : public MetaBypassTest {
     if (!keep_index) Clean(index_);
     if (!keep_index && !m_.staging_dir.empty()) Clean(m_.staging_dir);
   }
-  void Verify(uint64_t expected_x) {
+  void Verify(uint64_t expected_x, MetaBypassRecoveryReport* result = nullptr) {
     MetaBypassRecoveryReport report;
     ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_, &report));
+    if (result) *result = report;
     ASSERT_EQ(report.checkpoint_sequence, 3U);
     ASSERT_EQ(report.recovered_sequence, expected_x) << report.stop_reason;
     ASSERT_NO_FATAL_FAILURE(Open());
@@ -1795,6 +1796,59 @@ class MetaBypassIncrementalTest : public MetaBypassTest {
     return logs;
   }
 };
+TEST_F(MetaBypassIncrementalTest, RecoverySamplingIgnoresExistingProgress) {
+  ASSERT_NO_FATAL_FAILURE(Crash(0));
+  ASSERT_OK(metabypass::Write(fs_.get(), m_.backup_dir + "/PROGRESS",
+                              "100 100 3 101 101\n200 200 10 201 201\n"));
+  m_.enable_recovery_time_sampling = false;
+  MetaBypassRecoveryReport report;
+  ASSERT_NO_FATAL_FAILURE(Verify(9, &report));
+  ASSERT_FALSE(report.has_time_lower_bound);
+  ASSERT_FALSE(report.has_time_upper_bound);
+  ASSERT_EQ(report.time_lower_bound_micros, 0U);
+  ASSERT_EQ(report.time_upper_bound_micros, 0U);
+  std::string progress;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/PROGRESS", &progress));
+  ASSERT_TRUE(progress.empty());
+}
+TEST_F(MetaBypassIncrementalTest, RecoverySamplingClearsResumedBounds) {
+  ASSERT_NO_FATAL_FAILURE(Crash(0));
+  ASSERT_OK(metabypass::Write(fs_.get(), m_.backup_dir + "/PROGRESS",
+                              "100 100 3 101 101\n200 200 10 201 201\n"));
+  const pid_t child = fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    execl(executable.c_str(), executable.c_str(), "--incremental-restore",
+          index_.c_str(), m_.data_dir.c_str(), m_.backup_dir.c_str(),
+          m_.staging_dir.c_str(), "MetaBypass::RecoveryPersisted", nullptr);
+    _exit(127);
+  }
+  int status;
+  ASSERT_EQ(waitpid(child, &status, 0), child);
+  ASSERT_TRUE(WIFSIGNALED(status));
+  ASSERT_EQ(WTERMSIG(status), SIGKILL);
+  std::string persisted, point;
+  ASSERT_OK(metabypass::Read(fs_.get(), index_ + "/METABYPASS-RECOVERED",
+                             &persisted));
+  std::istringstream marker(persisted);
+  std::getline(marker, point);
+  uint64_t checkpoint, sequence, lower, upper;
+  bool has_lower, has_upper;
+  ASSERT_TRUE(bool(marker >> checkpoint >> sequence >> has_lower >> lower >>
+                   has_upper >> upper));
+  ASSERT_TRUE(has_lower);
+  ASSERT_TRUE(has_upper);
+  ASSERT_EQ(lower, 100U);
+  ASSERT_EQ(upper, 201U);
+  m_.enable_recovery_time_sampling = false;
+  MetaBypassRecoveryReport report;
+  ASSERT_NO_FATAL_FAILURE(Verify(9, &report));
+  ASSERT_FALSE(report.has_time_lower_bound);
+  ASSERT_FALSE(report.has_time_upper_bound);
+  ASSERT_EQ(report.time_lower_bound_micros, 0U);
+  ASSERT_EQ(report.time_upper_bound_micros, 0U);
+}
 TEST_F(MetaBypassIncrementalTest, WalOnlyContinuousPrefix) {
   ASSERT_NO_FATAL_FAILURE(Crash(0));
   ASSERT_NO_FATAL_FAILURE(Verify(9));
@@ -2061,6 +2115,34 @@ TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
   ASSERT_EQ(report.checkpoint_sequence, 1U);
   ASSERT_NO_FATAL_FAILURE(Open());
   Check("fenced", "value");
+}
+TEST_F(MetaBypassTest, RecoverySamplingThreadOption) {
+  ASSERT_TRUE(m_.enable_recovery_time_sampling);
+  for (bool enabled : {true, false}) {
+    SCOPED_TRACE(enabled);
+    m_.enable_recovery_time_sampling = enabled;
+    bool observed = false;
+    SyncPoint::GetInstance()->SetCallBack(
+        "MetaBypass::SamplerStarted", [&](void* arg) {
+          observed = true;
+          EXPECT_EQ(static_cast<std::thread*>(arg)->joinable(), enabled);
+        });
+    SyncPoint::GetInstance()->EnableProcessing();
+    ASSERT_NO_FATAL_FAILURE(Open());
+    ASSERT_TRUE(observed);
+    ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+    ASSERT_OK(db_->SyncBackup());
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    if (!enabled) {
+      ASSERT_TRUE(
+          fs_->FileExists(m_.backup_dir + "/PROGRESS", IOOptions(), nullptr)
+              .IsNotFound());
+    }
+    SyncPoint::GetInstance()->DisableProcessing();
+    Clean(root_);
+    ASSERT_OK(fs_->CreateDirIfMissing(root_, IOOptions(), nullptr));
+  }
 }
 TEST(MetaBypassRecoveryTimeTest, MockClockVisibilityBrackets) {
   MockSystemClock clock(Env::Default()->GetSystemClock());
@@ -10919,7 +11001,7 @@ int main(int argc, char** argv) {
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.staging_dir = argv[5];
-    bypass.staging_capacity = 8192;
+    bypass.staging_capacity = bypass.staging_dir.empty() ? 0 : 8192;
     SyncPoint::GetInstance()->SetCallBack(
         argv[6], [](void*) { kill(getpid(), SIGKILL); });
     SyncPoint::GetInstance()->EnableProcessing();

@@ -169,3 +169,14 @@ the native checkpoint implementation without rerunning the experiments.
 
 See [历史实验分类与证据索引](experiments/history.zh-CN.md) for the classified
 reports, source data, protocol boundaries, retained failures, and evidence availability.
+
+### Recovery time sampling
+
+`MetaBypassOptions::enable_recovery_time_sampling` defaults to `true`.
+Set it to `false` before Open and Restore to omit the sampler thread and its
+periodic PROGRESS append/fsync. Restore then ignores existing samples and clears
+time flags and values loaded from a resumable METABYPASS-RECOVERED marker.
+Checkpoint selection, replay, recovered sequence and data are unchanged.
+Restore still clears PROGRESS once when finalizing the new sequence timeline.
+`db_bench --metabypass_recovery_time_sampling=false` selects this behavior and
+prints the effective setting.

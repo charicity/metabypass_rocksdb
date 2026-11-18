@@ -683,6 +683,10 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
             report->time_lower_bound_micros >> report->has_time_upper_bound >>
             report->time_upper_bound_micros))
         return Status::Corruption("restore time marker");
+      if (!m.enable_recovery_time_sampling) {
+        report->has_time_lower_bound = report->has_time_upper_bound = false;
+        report->time_lower_bound_micros = report->time_upper_bound_micros = 0;
+      }
       std::getline(in, report->stop_reason);
       if (!report->stop_reason.empty()) report->stop_reason.erase(0, 1);
     } else {
@@ -759,11 +763,13 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
       native.reset();
       if (!status.ok()) return status;
       TEST_SYNC_POINT("MetaBypass::RecoveryNativeClosed");
-      std::string samples;
-      Status sample_status =
-          metabypass::Read(fs.get(), m.backup_dir + "/PROGRESS", &samples);
-      if (sample_status.ok())
-        metabypass::Backup::EstimateRecoveryTime(samples, report);
+      if (m.enable_recovery_time_sampling) {
+        std::string samples;
+        Status sample_status =
+            metabypass::Read(fs.get(), m.backup_dir + "/PROGRESS", &samples);
+        if (sample_status.ok())
+          metabypass::Backup::EstimateRecoveryTime(samples, report);
+      }
       status = metabypass::Write(
           fs.get(), index + "/METABYPASS-RECOVERED.tmp",
           point + "\n" + std::to_string(report->checkpoint_sequence) + " " +

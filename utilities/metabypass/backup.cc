@@ -333,7 +333,9 @@ Status Backup::Start(bool existing) {
   garbage_collector_ = std::thread(&Backup::GarbageCollectLoop, this);
   validator_ = std::thread(&Backup::ValidateLoop, this);
   thread_ = std::thread(&Backup::Run, this);
-  sampler_ = std::thread(&Backup::SampleLoop, this);
+  if (options_.enable_recovery_time_sampling)
+    sampler_ = std::thread(&Backup::SampleLoop, this);
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::SamplerStarted", &sampler_);
   return Status::OK();
 }
 Status Backup::Activate(const std::string& identity, DB* db) {

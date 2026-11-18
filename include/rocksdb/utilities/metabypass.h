@@ -84,6 +84,10 @@ struct MetaBypassOptions {
   // Set before Open. Disabling retains remaining files, not deleted history.
   bool enable_blob_file_gc = true;
   SstTieringOptions sst_tiering;
+  // Set before Open/Restore. Disable the periodic PROGRESS sampler and
+  // recovery time estimation, including bounds in a resumed restore marker.
+  // Sequence recovery is unchanged; Restore still clears old samples once.
+  bool enable_recovery_time_sampling = true;
 };
 struct MetaBypassStats {
   Status error;

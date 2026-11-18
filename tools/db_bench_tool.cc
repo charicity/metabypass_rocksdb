@@ -1139,6 +1139,8 @@ DEFINE_uint64(
     metabypass_checkpoint_interval_ms, 5000,
     "Recovery point trigger interval, independent of mirror interval");
 DEFINE_bool(metabypass_blob_file_gc, true, "Reclaim obsolete whole blob files");
+DEFINE_bool(metabypass_recovery_time_sampling, true,
+            "Sample PROGRESS and estimate recovery time bounds");
 DEFINE_string(metabypass_sst_action, "legacy",
               "SST protocol: legacy, seed, run, rpo_write, rpo_restore");
 DEFINE_uint64(metabypass_sst_warmup_seconds, 60,
@@ -12004,12 +12006,16 @@ static int RunMetaBypassBenchmark() {
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
   bypass.checkpoint_interval_ms = FLAGS_metabypass_checkpoint_interval_ms;
   bypass.enable_blob_file_gc = FLAGS_metabypass_blob_file_gc;
+  bypass.enable_recovery_time_sampling =
+      FLAGS_metabypass_recovery_time_sampling;
   printf(
       "metabypass effective_options enable_blob_direct_write=%d"
       " allow_concurrent_memtable_write=%d mirror_interval_ms=%" PRIu64
-      " checkpoint_interval_ms=%" PRIu64 " sync=%d\n",
+      " checkpoint_interval_ms=%" PRIu64
+      " recovery_time_sampling=%d sync=%d\n",
       options.enable_blob_direct_write, options.allow_concurrent_memtable_write,
-      bypass.interval_ms, bypass.checkpoint_interval_ms, FLAGS_sync);
+      bypass.interval_ms, bypass.checkpoint_interval_ms,
+      bypass.enable_recovery_time_sampling, FLAGS_sync);
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();

@@ -136,3 +136,48 @@ prefill, and the original check for nonempty Blob files.
 
 Both arms enable the same counters. Statistics and sampling can affect measured
 throughput, so compare this round's arms under the same instrumentation.
+
+## BE40 repeat and MB40 supplement
+
+The instrumented BE40 campaign uses the same two strict Release builds and the
+same run arguments as above. The baseline MB and BE40 share the core52 driver.
+The optimized MB uses core `0330a5e84`. Do not pass the MB recovery-time option
+to BE. The new cases automatically enable write breakdown for all writers.
+
+- `plan --case=hdd-sync-be40` lists 48 formal samples. Round 1 runs the three
+  groups together (36 samples), rotating the first arm each configuration.
+  Round 2 repeats only BE40 (12 samples).
+- `run --case=hdd-sync-be40-preflight` performs 12 small recovery checks with
+  the real periods. BE must restore its initial backup and observe real SST,
+  metadata, file sync and directory sync operations. Blob-on must also observe
+  native Blob writing and copied Blob bytes. MB checks mirror WAL and recovery
+  past its initial sequence.
+- Once short checks pass, run `--case=hdd-sync-be40 --round=1` and then
+  `--case=hdd-sync-be40 --round=2` in separate output directories. All formal
+  workloads use 65 seconds of warmup plus 180 seconds of measurement. Require
+  actual periodic backup completion. BE uses WAL backup, sync publication,
+  shared files, no pre-backup flush and one point after each completed purge.
+  Retain crash-window inventory observations separately.
+
+BE uses a backup-only Env to observe rolling cumulative destination Append
+calls, successful bytes and time by file type (WAL, SST, Blob, other data files,
+and metadata). File Sync/Fsync and directory sync have separate counters.
+Business Blob placement is still measured with the native Blob statistics.
+BE's backup Blob writes belong to the backup breakdown. BE create interval
+includes capture, copy and publication, and purge covers cleanup. MB mirror
+and checkpoint counters keep their original semantics. Engine-specific values
+are kept in separate columns.
+
+```sh
+python3 tools/metabypass_acceptance/hdd_sync_compare.py aggregate \
+  --case=hdd-sync-be40 \
+  --round-ledgers=/HDD_TASK/round1/results.json /HDD_TASK/round2/results.json \
+  --mb-history-ledger=/PATH/TO/PREVIOUS_MB_BREAKDOWN/round1/results.json \
+  --output=/HDD_TASK/summary
+```
+
+Use the instrumented `dfab99721` MB round-1 ledger as history. The report exports
+48 new rows, 36 same-round pairs, 12 same-configuration BE repeats and 24
+same-version MB historical comparisons. Repeat comparisons retain both raw
+observations, observed ranges and valid counts. Historical rows stay outside
+the new sample ledger and pass counts.

@@ -7,6 +7,7 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstring>
 #include <limits>
 #include <sstream>
 
@@ -153,14 +154,29 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
     std::lock_guard<std::mutex> serial(channel_.operations);
     MB_WAL_END(wait);
     MB_WAL_SPAN(build, event_build, wal_probe::mirror_append);
-    Backup::Event e{Backup::Kind::kAppend, name_, {}, {}};
-    e.charge = sizeof(e) + name_.size() + bytes.size();
+    Backup::Event e{Backup::Kind::kAppend, name_, {}};
+    e.charge = sizeof(Backup::ChargedEventLayout) + name_.size() + bytes.size();
     MB_WAL_END(build);
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) return AsIO(s);
     TEST_SYNC_POINT_CALLBACK("MetaBypass::PrimaryReserved", &e.name);
     MB_WAL_SPAN(copy, payload_copy, wal_probe::mirror_append);
-    e.bytes.assign(bytes.data(), bytes.size());
+    if (&channel_ == &backup_->wal_channel_ && bytes.size() >= 32 &&
+        bytes.size() <= 1024) {
+      auto& block = backup_->wal_block_;
+      auto& used = backup_->wal_block_used_;
+      if (!block || sizeof(block->data) - used < bytes.size()) {
+        block = std::make_shared<Backup::WalBlock>();
+        used = 0;
+      }
+      char* dest = block->data + used;
+      std::memcpy(dest, bytes.data(), bytes.size());
+      used += bytes.size();
+      e.shared_bytes = std::shared_ptr<const char>(block, dest);
+      e.size = bytes.size();
+    } else {
+      e.contents.assign(bytes.data(), bytes.size());
+    }
     MB_WAL_END(copy);
     IOStatus primary = verification
                            ? target()->Append(bytes, o, *verification, d)
@@ -171,9 +187,9 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   IOStatus Control(Backup::Kind kind, uint64_t n, const IOOptions& o,
                    IODebugContext* d) {
     std::lock_guard<std::mutex> serial(channel_.operations);
-    Backup::Event e{kind, name_, {}, {}};
+    Backup::Event e{kind, name_, {}};
     e.size = n;
-    e.charge = sizeof(e) + name_.size();
+    e.charge = sizeof(Backup::ChargedEventLayout) + name_.size();
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) {
       if (kind == Backup::Kind::kClose)
@@ -451,8 +467,8 @@ IOStatus Backup::NewWritableFile(const std::string& p, const FileOptions& o,
   if (!Tracked(p)) return target()->NewWritableFile(p, o, r, d);
   Channel& channel = ChannelFor(Base(p));
   std::lock_guard<std::mutex> serial(channel.operations);
-  Event e{Kind::kCreate, Base(p), {}, {}};
-  e.charge = sizeof(e) + e.name.size();
+  Event e{Kind::kCreate, Base(p), {}};
+  e.charge = sizeof(Backup::ChargedEventLayout) + e.name.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->NewWritableFile(p, o, r, d);
@@ -494,9 +510,9 @@ IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
       std::lock_guard<std::mutex> lock(mutex_);
       if (!retiring_blobs_.insert(number).second) return IOStatus::OK();
     }
-    Event e{Kind::kRetireBlob, Base(p), {}, {}};
+    Event e{Kind::kRetireBlob, Base(p), {}};
     e.size = number;
-    e.charge = sizeof(e) + e.name.size();
+    e.charge = sizeof(Backup::ChargedEventLayout) + e.name.size();
     Status s = Reserve(channel, e.charge);
     if (!s.ok()) return AsIO(s);
     Finish(channel, std::move(e), Status::OK());
@@ -505,8 +521,8 @@ IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
   if (!Tracked(p)) return target()->DeleteFile(p, o, d);
   Channel& channel = ChannelFor(Base(p));
   std::lock_guard<std::mutex> serial(channel.operations);
-  Event e{Kind::kDelete, Base(p), {}, {}};
-  e.charge = sizeof(e) + e.name.size();
+  Event e{Kind::kDelete, Base(p), {}};
+  e.charge = sizeof(Backup::ChargedEventLayout) + e.name.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->DeleteFile(p, o, d);
@@ -540,8 +556,9 @@ IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
   // A cross-channel rename is one globally ordered control event. Holding
   // both operation locks prevents either file from being modified around it.
   Channel& channel = &source == &destination ? source : metadata_channel_;
-  Event e{Kind::kRename, Base(a), Base(b), {}};
-  e.charge = sizeof(e) + e.name.size() + e.other.size();
+  Event e{Kind::kRename, Base(a), Base(b)};
+  e.charge =
+      sizeof(Backup::ChargedEventLayout) + e.name.size() + e.contents.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->RenameFile(a, b, o, d);
@@ -576,7 +593,7 @@ Status Backup::Append(const std::string& name, const Slice& bytes) {
 Status Backup::Apply(const Event& e) {
   Status injected = BeforeApply(e);
   if (!injected.ok()) return injected;
-  if (e.kind == Kind::kAppend) return Append(e.name, e.bytes);
+  if (e.kind == Kind::kAppend) return Append(e.name, e.Payload());
   if (e.kind == Kind::kRetireBlob) {
     uint64_t size = 0;
     Status s = storage_->GetFileSize(index_ + "/" + e.name, IOOptions(), &size,
@@ -639,7 +656,8 @@ Status Backup::Apply(const Event& e) {
     }
     return s;
   }
-  return disk_->RenameFile(path, work_ + "/" + e.other, IOOptions(), nullptr);
+  return disk_->RenameFile(path, work_ + "/" + e.contents, IOOptions(),
+                           nullptr);
 }
 Status Backup::Capture(Candidate* candidate) {
   candidate->name = "point-" + std::to_string(++generation_);
@@ -951,20 +969,20 @@ void Backup::TakeBatch(Channel* channel, uint64_t boundary,
   constexpr size_t kMaxBytes = 64 * 1024;
   constexpr size_t kMaxEvents = 64;
   if (channel != &wal_channel_ || first.kind != Kind::kAppend ||
-      first.bytes.empty() || first.bytes.size() > kMaxBytes)
+      first.Payload().empty() || first.Payload().size() > kMaxBytes)
     return;
   // Control events delimit file lifetimes. Global adjacency also excludes
   // interleaved metadata operations. Capture still runs after the full drain.
   if (candidate_ && !capture_done_ && first.seq <= candidate_->seq)
     boundary = std::min(boundary, candidate_->seq);
-  size_t bytes = first.bytes.size();
+  size_t bytes = first.Payload().size();
   while (batch->size() < kMaxEvents && NextChannel() == channel) {
     const Event& next = channel->queue.front();
     if (next.seq > boundary || next.seq != batch->back().seq + 1 ||
         next.kind != Kind::kAppend || next.name != batch->front().name ||
-        next.bytes.empty() || next.bytes.size() > kMaxBytes - bytes)
+        next.Payload().empty() || next.Payload().size() > kMaxBytes - bytes)
       break;
-    bytes += next.bytes.size();
+    bytes += next.Payload().size();
     batch->push_back(std::move(channel->queue.front()));
     channel->queue.pop_front();
   }
@@ -985,7 +1003,8 @@ Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
     // physical batch boundary; later logical hooks do not imply prior I/O.
     injected = BeforeApply(event);
     if (!injected.ok()) break;
-    scratch->append(event.bytes);
+    const Slice payload = event.Payload();
+    scratch->append(payload.data(), payload.size());
     ++ready;
   }
   if (ready != 0) {
@@ -1045,9 +1064,11 @@ void Backup::Run() {
         assert(stats_.queued_bytes >= e.charge);
         stats_.queued_bytes -= e.charge;
         if (i < completed) {
-          stats_.mirrored_bytes += e.bytes.size();
-          if (channel == &wal_channel_ && e.kind == Kind::kAppend)
-            stats_.mirrored_wal_bytes += e.bytes.size();
+          if (e.kind == Kind::kAppend) {
+            const size_t bytes = e.Payload().size();
+            stats_.mirrored_bytes += bytes;
+            if (channel == &wal_channel_) stats_.mirrored_wal_bytes += bytes;
+          }
           assert(e.seq == applied_ + 1);
           applied_ = e.seq;
         }

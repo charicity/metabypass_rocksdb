@@ -87,6 +87,13 @@ class BackupTestAccess {
     ASSERT_OK(backup->disk_->FileExists(backup->work_ + "/000002.log",
                                         IOOptions(), nullptr));
   }
+  static std::weak_ptr<void> CurrentWalBlock(Backup* backup) {
+    std::lock_guard<std::mutex> lock(backup->wal_channel_.operations);
+    return backup->wal_block_;
+  }
+  static size_t EventHeaderCharge() {
+    return sizeof(Backup::ChargedEventLayout);
+  }
   struct Input {
     std::string name = "000001.log";
     std::string bytes = "x";
@@ -123,9 +130,10 @@ class BackupTestAccess {
     for (const auto& item : input) {
       Backup::Kind kind =
           item.operation == 'a' ? Backup::Kind::kAppend : Backup::Kind::kClose;
-      Backup::Event event{kind, item.name, {}, item.bytes};
+      Backup::Event event{kind, item.name, item.bytes};
       event.seq = ++backup->accepted_;
-      event.charge = sizeof(event) + event.name.size() + event.bytes.size();
+      event.charge = sizeof(Backup::ChargedEventLayout) + event.name.size() +
+                     item.bytes.size();
       backup->stats_.queued_bytes += event.charge;
       backup->ChannelFor(event.name).queue.push_back(std::move(event));
     }
@@ -189,7 +197,7 @@ class BackupTestAccess {
     backup->requested_ = 1;
     // A request without events must not spin; Capture is a separate trigger.
     EXPECT_FALSE(backup->MirrorReady());
-    Backup::Event event{Backup::Kind::kAppend, "000001.log", {}, "x"};
+    Backup::Event event{Backup::Kind::kAppend, "000001.log", "x"};
     backup->wal_channel_.queue.push_back(std::move(event));
     EXPECT_TRUE(backup->MirrorReady());
     backup->applied_ = 1;
@@ -5902,6 +5910,88 @@ TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
   db_.reset();
   ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 2));
   CheckContents({{"key", "new"}});
+}
+
+#ifndef NDEBUG
+TEST_F(MetaBypassTest, WalPayloadSlicesSurviveRollover) {
+  m_.batch_bytes = 1;
+  m_.queue_capacity = 256 * 1024;
+  TestGate applying;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ApplySequence",
+                                        [&](void* arg) {
+                                          if (*static_cast<uint64_t*>(arg) == 3)
+                                            applying.Block();
+                                        });
+  SyncPoint::GetInstance()->EnableProcessing();
+  using Access = metabypass::BackupTestAccess;
+  const std::string name = "000001.log";
+  const size_t header = Access::EventHeaderCharge() + name.size();
+  std::string expected;
+  size_t charge = 0;
+  auto append = [&](size_t size) {
+    std::string source(size, static_cast<char>(expected.size() % 127));
+    expected += source;
+    EXPECT_OK(wal->Append(source, IOOptions(), nullptr));
+    std::fill(source.begin(), source.end(), '!');
+    charge += header + size;
+  };
+  append(32);
+  applying.WaitUntilBlocked();
+  const auto first = Access::CurrentWalBlock(backup.get());
+  EXPECT_FALSE(first.expired());
+  // The 32- and 992-byte slices plus 63 KiB exactly fill the first block.
+  // The other three append sizes must not consume any block space.
+  for (size_t size : {0, 31, 1025, 992}) append(size);
+  for (size_t i = 0; i < 63; ++i) append(1024);
+  const auto full = Access::CurrentWalBlock(backup.get());
+  EXPECT_FALSE(first.owner_before(full) || full.owner_before(first));
+  append(32);
+  const auto current = Access::CurrentWalBlock(backup.get());
+  EXPECT_TRUE(first.owner_before(current) || current.owner_before(first));
+  EXPECT_FALSE(first.expired());
+  auto stats = backup->Stats();
+  EXPECT_OK(stats.error);
+  EXPECT_EQ(stats.queued_bytes, charge);
+  EXPECT_OK(wal->Close(IOOptions(), nullptr));
+  EXPECT_OK(metadata->Close(IOOptions(), nullptr));
+  applying.Release();
+  EXPECT_OK(backup->Stop());
+  SyncPoint::GetInstance()->DisableProcessing();
+  EXPECT_TRUE(first.expired());
+  stats = backup->Stats();
+  EXPECT_OK(stats.error);
+  EXPECT_EQ(stats.queued_bytes, 0U);
+  EXPECT_EQ(stats.mirrored_wal_bytes, expected.size());
+  std::string mirrored;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/" + name, &mirrored));
+  EXPECT_EQ(mirrored, expected);
+}
+#endif
+
+TEST_F(MetaBypassTest, WalPayloadPrimaryFailureReleasesReservation) {
+  auto fault = std::make_shared<FaultInjectionTestFS>(fs_);
+  fs_ = fault;
+  m_.interval_ms = 60000;
+  m_.batch_bytes = m_.queue_capacity;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+
+  fault->SetFilesystemActive(false, IOStatus::IOError("primary WAL append"));
+  EXPECT_TRUE(
+      wal->Append(std::string(512, 'x'), IOOptions(), nullptr).IsIOError());
+  fault->SetFilesystemActive(true);
+  EXPECT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
+  EXPECT_TRUE(backup->Stop().IsIOError());
+  auto stats = backup->Stats();
+  EXPECT_TRUE(stats.error.IsIOError());
+  EXPECT_EQ(stats.queued_bytes, 0U);
+  EXPECT_EQ(stats.mirrored_wal_bytes, 0U);
 }
 
 TEST_F(MetaBypassTest, WalCoalescingControlsAndRecreatedFile) {

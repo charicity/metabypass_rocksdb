@@ -5,8 +5,10 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <shared_mutex>
@@ -82,12 +84,32 @@ class Backup : public FileSystemWrapper {
     kRename,
     kRetireBlob
   };
-  struct Event {
+  // Preserve the queue capacity contract across changes to payload storage.
+  struct ChargedEventLayout {
     Kind kind;
     std::string name, other, bytes;
     uint64_t size = 0;
     uint64_t seq = 0;
     size_t charge = 0;
+  };
+  struct Event {
+    Kind kind;
+    std::string name;
+    std::string contents;  // Rename target or unpooled append bytes.
+    std::shared_ptr<const char> shared_bytes{};
+    // Shared payload length, truncate offset, or retired blob number.
+    uint64_t size = 0;
+    uint64_t seq = 0;
+    size_t charge = 0;
+    Slice Payload() const {
+      assert(kind == Kind::kAppend);
+      return shared_bytes ? Slice(shared_bytes.get(), size) : Slice(contents);
+    }
+  };
+  struct WalBlock {
+    // Each slice is fully initialized before its event is enqueued.
+    WalBlock() {}
+    char data[64 * 1024];
   };
   struct Channel {
     // Serializes primary operations through enqueue. Never acquired by workers.
@@ -156,6 +178,9 @@ class Backup : public FileSystemWrapper {
   const MetaBypassOptions options_;
   const Options db_options_;
   const std::string work_;
+  // Only WAL producers access the current block and cursor, under operations.
+  std::shared_ptr<WalBlock> wal_block_;
+  size_t wal_block_used_ = 0;
   Channel wal_channel_, metadata_channel_;
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.

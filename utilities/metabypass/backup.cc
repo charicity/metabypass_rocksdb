@@ -12,9 +12,16 @@
 
 #include "file/filename.h"
 #include "test_util/sync_point.h"
+#include "utilities/metabypass/wal_breakdown.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+#ifdef ROCKSDB_MB_WAL_BREAKDOWN
+namespace wal_probe {
+thread_local Trace* active = nullptr;
+thread_local bool mirror_append = false;
+}  // namespace wal_probe
+#endif
 namespace {
 uint64_t Now() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -138,13 +145,23 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   IOStatus AppendInternal(const Slice& bytes, const IOOptions& o,
                           const DataVerificationInfo* verification,
                           IODebugContext* d) {
+#ifdef ROCKSDB_MB_WAL_BREAKDOWN
+    wal_probe::MirrorAppend append(wal_probe::active &&
+                                   &channel_ == &backup_->wal_channel_);
+#endif
+    MB_WAL_SPAN(wait, operations_wait, wal_probe::mirror_append);
     std::lock_guard<std::mutex> serial(channel_.operations);
+    MB_WAL_END(wait);
+    MB_WAL_SPAN(build, event_build, wal_probe::mirror_append);
     Backup::Event e{Backup::Kind::kAppend, name_, {}, {}};
     e.charge = sizeof(e) + name_.size() + bytes.size();
+    MB_WAL_END(build);
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) return AsIO(s);
     TEST_SYNC_POINT_CALLBACK("MetaBypass::PrimaryReserved", &e.name);
+    MB_WAL_SPAN(copy, payload_copy, wal_probe::mirror_append);
     e.bytes.assign(bytes.data(), bytes.size());
+    MB_WAL_END(copy);
     IOStatus primary = verification
                            ? target()->Append(bytes, o, *verification, d)
                            : target()->Append(bytes, o, d);
@@ -360,7 +377,10 @@ Status Backup::Activate(const std::string& identity, DB* db) {
   return Status::OK();
 }
 Status Backup::Reserve(Channel& channel, size_t charge) {
+  MB_WAL_SPAN(wait, reserve_wait, wal_probe::mirror_append);
   std::unique_lock<std::mutex> lock(mutex_);
+  MB_WAL_END(wait);
+  MB_WAL_SPAN(bookkeeping, reserve_bookkeeping, wal_probe::mirror_append);
   if (charge > options_.queue_capacity)
     return Status::InvalidArgument(
         "file operation exceeds Metabypass queue capacity");
@@ -373,10 +393,12 @@ Status Backup::Reserve(Channel& channel, size_t charge) {
     // Drain immediately rather than waiting for the batching timer.
     WakeMirror();
     TEST_SYNC_POINT("MetaBypass::Backpressure");
+    MB_WAL_SPAN(capacity, capacity_wait, wal_probe::mirror_append);
     channel.capacity.wait(lock, [&] {
       return stopping_ || !stats_.error.ok() ||
              stats_.queued_bytes <= options_.queue_capacity - charge;
     });
+    MB_WAL_END(capacity);
     channel.waiting_charge = 0;
     stats_.backpressure_micros += Now() - start;
   }
@@ -403,7 +425,10 @@ void Backup::Fail(const Status& status) {
 }
 void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
   if (!primary.ok()) Fail(primary);
+  MB_WAL_SPAN(wait, finish_wait, wal_probe::mirror_append);
   std::lock_guard<std::mutex> lock(mutex_);
+  MB_WAL_END(wait);
+  MB_WAL_SPAN(bookkeeping, finish_bookkeeping, wal_probe::mirror_append);
   if (primary.ok() && stats_.error.ok() && !stopping_) {
     e.seq = ++accepted_;
     if (e.kind == Kind::kRetireBlob) {
@@ -1414,7 +1439,10 @@ void Backup::GarbageCollectLoop() {
   gc_cv_.notify_all();
 }
 void Backup::WriteCompleted() {
+  MB_WAL_SPAN(wait, completed_wait, true);
   std::lock_guard<std::mutex> lock(mutex_);
+  MB_WAL_END(wait);
+  MB_WAL_SPAN(bookkeeping, completed_bookkeeping, true);
   ++completed_writes_;
   MarkDirty();
 }

@@ -22,6 +22,7 @@
 #include "rocksdb/write_batch.h"
 #include "test_util/sync_point.h"
 #include "utilities/metabypass/backup.h"
+#include "utilities/metabypass/wal_breakdown.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace {
@@ -842,15 +843,21 @@ Status MetaBypassDB::WriteImpl(const WriteOptions& o, WriteBatch* b,
         "Metabypass requires the complete batch in WAL");
   Status s;
   if (check_batch) {
+    MB_WAL_SPAN(validation, batch_validation, true);
     SupportedBatch check;
     s = b->Iterate(&check);
     if (s.ok() && !check.supported)
       s = Status::NotSupported("Metabypass LogData");
   }
-  if (s.ok()) s = impl_->backup->Error();
+  if (s.ok()) {
+    MB_WAL_SPAN(error, error_check, true);
+    s = impl_->backup->Error();
+  }
   if (!s.ok()) return s;
   {
+    MB_WAL_SPAN(wait, write_fence_wait, true);
     std::shared_lock<std::shared_mutex> fence(impl_->backup->WriteFence());
+    MB_WAL_END(wait);
     s = impl_->db->Write(o, b);
     if (s.ok()) impl_->backup->WriteCompleted();
   }

@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import fine_wal as fw
 import hdd_sync_compare as hc
 import prepare_driver as build
 from optcore_compare_test import accepted
@@ -50,8 +51,24 @@ def add_breakdown_samples(row):
                         sampled_wal_ns=20, sampled_memtable_ns=30)
         event = dict.fromkeys(wb.MB, value) if mb else {}
         event.update(event='sample', monotonic_begin_ns=timestamp, monotonic_end_ns=timestamp+3,
-                     measure_calls=final['measure_calls'], write_breakdown=counters)
+                     **{key: final[key] for key in fw.RUN_FIELDS}, write_breakdown=counters)
         events.append(event)
+
+
+def add_fine_samples(row):
+    add_breakdown_samples(row)
+    row['writer']['events'][0].update(fine_wal=row['fine_wal'], fine_wal_clock_p95_ns=26)
+    if not row['fine_wal']:
+        for event in row['writer']['events'][-4:]:
+            event['fine_wal_reference'] = dict(calls=1, records=row['batch_size'], api_ns=100,
+                                               wal_ns=20, memtable_ns=30)
+        return
+    stages = fw.STAGES if row['engine'] == 'mb' else ('primary_append',)
+    stages = [stage for stage in stages if stage != 'batch_validation' or row['batch_size'] > 1]
+    for event in row['writer']['events'][-4:]:
+        event['fine_wal'] = dict(calls=1, records=row['batch_size'], api_ns=100, wal_ns=20,
+            memtable_ns=30, primary_append_bytes=88,
+            stages={stage: dict(calls=2 if stage == 'primary_append' else 1, ns=10) for stage in stages})
 
 
 class HddSyncTests(unittest.TestCase):
@@ -219,6 +236,94 @@ class HddSyncTests(unittest.TestCase):
         self.assertIsNone(repeat['be_backup_wal_append_bytes_delta'])
         self.assertEqual(result['run_status'], 'incomplete')
 
+    def test_fine_wal_matrix_and_commands(self):
+        formal = hc.matrix(hc.FINE_FORMAL)
+        short = hc.matrix(hc.FINE_PREFLIGHT)
+        self.assertEqual((len(formal), len(short)), (9, 3))
+        runner = hc.FineWalRunner.__new__(hc.FineWalRunner)
+        runner.args = hc.parser().parse_args(['run', '--case', hc.FINE_FORMAL, '--driver', '/ssd/driver',
+            '--build-manifest', '/ssd/build.json', '--source-commit', 'f'*40, '--driver-source-commit', 'd'*40,
+            '--harness-commit', 'a'*40, '--ssd-root', '/ssd', '--hdd-root', '/hdd', '--ssd-accounting-root', '/ssd',
+            '--hdd-accounting-root', '/hdd', '--output', '/hdd/output'])
+        hc.validate_args(runner.args)
+        for index, batch in enumerate((1, 8, 128)):
+            group = formal[index*3:(index+1)*3]
+            self.assertEqual(tuple(r['group'] for r in group), fw.GROUPS[index:] + fw.GROUPS[:index])
+            self.assertEqual({(r['value_size'], r['blob'], r['batch_size'], r['measure_seconds'],
+                               r['key_count'], r['sample_count']) for r in group},
+                             {(64, False, batch, 180, 1048576, 4096)})
+        for spec in short:
+            self.assertEqual((spec['batch_size'], spec['warm_seconds'], spec['measure_seconds'],
+                              spec['key_count'], spec['sample_count']), (8, 1, 7, 16384, 256))
+        for spec in formal + short:
+            hc.validate_sample(sample(spec))
+            writer = runner.command(spec, 'write', '/db', '/blob', '/backup', '/stats')
+            self.assertEqual(writer[0], '/ssd/driver')
+            self.assertIn('--write_breakdown=1', writer)
+            self.assertIn('--fine_wal=' + str(int(spec['fine_wal'])), writer)
+            recovery = runner.command(spec, 'recover', '/db', '/blob', '/backup', '/stats')
+            self.assertFalse(any(flag.startswith('--fine_wal=') for flag in recovery))
+            if spec['engine'] == 'mb':
+                self.assertIn('--recovery_time_sampling=0', recovery)
+            else:
+                self.assertIn('--be_retained_points=1', recovery)
+
+    def test_fine_wal_interval_and_probe_scope(self):
+        spec = next(row for row in hc.matrix(hc.FINE_FORMAL) if row['group'] == fw.MB_ON)
+        row = sample(spec)
+        add_fine_samples(row)
+        begin = row['final_stats']['measure_begin_ns']
+        # Move the second endpoint to one second. The next sampled interval
+        # covers a backup, so keep the first interval only.
+        row['writer']['events'][-3]['write_breakdown']['foreground_snapshot_ns'] = begin + 10**9
+        row['writer']['events'][-2].update(last_backup_begin_ns=begin + 10*10**9,
+                                           last_backup_end_ns=begin + 11*10**9)
+        (full, filtered), intervals = fw.summarize(row)
+        self.assertEqual(full['duration_seconds'], 180)
+        self.assertEqual(filtered['duration_seconds'], 1)
+        self.assertEqual([r['near_observed_backup'] for r in intervals], [False, True])
+        append = next(r for r in fw.stage_rows((full,)) if r['stage'] == 'primary_append')
+        self.assertEqual((append['calls'], append['sample_calls'], append['append_bytes']), (2, 1, 88))
+        self.assertEqual(append['ns_per_call'], 10)
+        self.assertEqual(append['ns_per_occurrence'], 5)
+        self.assertEqual(append['resolution_status'], 'at_or_below_clock_p95')
+        row['writer']['events'][-2]['fine_wal']['calls'] = 2
+        with self.assertRaisesRegex(ValueError, 'outside the coarse sample'):
+            fw.summarize(row)
+
+    def test_fine_wal_disturbance_thresholds(self):
+        rows = [dict(config_id='put', group=group, mib_per_s=rate, sampled_api_ns_per_call=latency)
+                for group, rate, latency in zip(fw.GROUPS, (10, 10.29, 15), (100, 109, 60))]
+        self.assertEqual(fw.disturbance(rows, ['put'])[0]['status'], 'within_threshold')
+        rows[1]['mib_per_s'] = 10.3
+        self.assertEqual(fw.disturbance(rows, ['put'])[0]['status'], 'within_threshold')
+        rows[1]['sampled_api_ns_per_call'] = 90
+        self.assertEqual(fw.disturbance(rows, ['put'])[0]['status'], 'disturbed')
+        rows[1].update(mib_per_s=9.69, sampled_api_ns_per_call=100)
+        self.assertEqual(fw.disturbance(rows, ['put'])[0]['status'], 'disturbed')
+        rows[1]['mib_per_s'] = None
+        self.assertEqual(fw.disturbance(rows, ['put'])[0]['status'], 'unknown')
+
+    def test_fine_wal_report(self):
+        doc = document(1, hc.FINE_FORMAL)
+        doc['write_breakdown'] = True
+        manifest = dict(adapter_commit='d' * 40, core_commit=hc.FINAL, fine_wal=True)
+        doc['build_manifests'] = dict.fromkeys(fw.GROUPS, manifest)
+        for row in doc['rows']:
+            row['source_commit'] = hc.FINAL
+            add_fine_samples(row)
+        result = fw.aggregate(doc, hc.validate_sample, hc.validate_source_records, hc.write_pairs)
+        self.assertEqual((len(result['rows']), len(result['local_comparison']),
+                          len(result['fine_wal_disturbance']), len(result['fine_wal_windows'])), (9, 9, 3, 18))
+        self.assertTrue(result['backup_retention_events'])
+        self.assertEqual({r['stage'] for r in result['fine_wal_stages'] if r['group'] == fw.BE_ON}, {'primary_append'})
+        self.assertFalse(any(r['group'] == fw.MB_OFF for r in result['fine_wal_stages']))
+        self.assertEqual(len(result['fine_wal_window_pairs']), 18)
+        matched = next(r for r in result['fine_wal_window_pairs'] if
+                       r['current_group'] == fw.MB_ON and r['reference_group'] == fw.MB_OFF)
+        self.assertEqual(matched['matched_api_ns_per_call_delta'], 0)
+        self.assertEqual(matched['matched_wal_ns_per_call_delta'], 0)
+
     def test_acceptance(self):
         for spec in hc.matrix() + hc.matrix(hc.CASES[1]):
             hc.validate_sample(sample(spec))
@@ -269,12 +374,21 @@ class HddSyncTests(unittest.TestCase):
             self.assertIn('mb_options.enable_recovery_time_sampling =', text)
             self.assertIn('db.RecoveryTimeSampling()', text)
             self.assertEqual((target / 'protocol.h').read_bytes(), (build.DRIVER / 'protocol.h').read_bytes())
+        with tempfile.TemporaryDirectory() as tmp:
+            target = build.prepare(Path(tmp), fine_wal=True)
+            rendered = (target / 'driver.cc').read_text()
+            self.assertIn('fine_wal_reference', rendered)
+            self.assertIn('fine_wal_clock_p95_ns', rendered)
+            self.assertEqual((target / 'protocol.h').read_bytes(), (build.DRIVER / 'protocol.h').read_bytes())
         for capability in (0, 1):
             steps = build.build_commands(Path('/core'), Path('/build'), Path('/artifacts'), capability)
             self.assertIn('-DMB_HAS_RECOVERY_TIME_SAMPLING=' + str(capability), steps[2])
             self.assertIn('-I/core/include', steps[2])
             self.assertIn('-L/artifacts', steps[2])
             self.assertNotIn('-DMETABYPASS_PERF_DIAGNOSTICS', steps[2])
+        fine_steps = build.build_commands(Path('/core'), Path('/build'), Path('/artifacts'), 1, fine_wal=True)
+        self.assertIn('-DCMAKE_CXX_FLAGS=-DROCKSDB_MB_WAL_BREAKDOWN', fine_steps[0])
+        self.assertIn('-DROCKSDB_MB_WAL_BREAKDOWN', fine_steps[2])
 
 
 if __name__ == '__main__':

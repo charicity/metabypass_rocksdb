@@ -181,3 +181,52 @@ Use the instrumented `dfab99721` MB round-1 ledger as history. The report export
 same-version MB historical comparisons. Repeat comparisons retain both raw
 observations, observed ranges and valid counts. Historical rows stay outside
 the new sample ledger and pass counts.
+
+## Foreground WAL stages
+
+Use the same instrumented Release library and driver for all three groups.
+Build them with `prepare_driver.py --fine-wal` so the library and driver both
+include the diagnostic gate. The runtime writer flag selects whether that gate
+records stage timings. The driver manifest must have `fine_wal: true`.
+The single-core case uses
+`--driver`, `--build-manifest`, and the core, driver, and harness commit
+arguments above. It has no separate baseline driver. The three groups are:
+
+| Group | Engine | Fine mode | Recovery sampling |
+| --- | --- | --- | --- |
+| mb40-fine-off | MB40 | Matched reference | Off |
+| mb40-fine-on | MB40 | All foreground stages | Off |
+| be40-fine-on | BE40 | Primary append only | N/A |
+
+`plan --case=hdd-sync-fine-wal` lists nine formal samples, with the three
+groups rotating within each 64B Blob-off Put/Batch8/Batch128 configuration.
+`run --case=hdd-sync-fine-wal-preflight` uses Batch8, 16,384 keys, and the
+existing short recovery settings in all three groups. It verifies the same
+recovery and backup-I/O requirements plus positive fine counts on active
+paths. Use `run --case=hdd-sync-fine-wal` once those short checks pass. The
+formal case uses the same large MB queue and 65s/180s workload intervals.
+
+```sh
+python3 tools/metabypass_acceptance/hdd_sync_compare.py aggregate \
+  --case=hdd-sync-fine-wal --round-ledgers=/HDD_TASK/results.json \
+  --output=/HDD_TASK/summary
+```
+
+The coarse timing remains enabled for all groups. Fine timers cover a
+deterministic approximately 1/1024 subset of the same samples. The fine-off
+reference records native API, WAL and MemTable counters for the same selection
+without stage timers. The report keeps those matched means separate from
+the coarse means used for the disturbance check.
+
+- Full-window throughput uses final ACK counters. Fine timing and the
+  backup-filtered observation use the sampled ACK intervals through the last
+  exported snapshot. For the filtered view, drop whole intervals that overlap
+  observed backup intervals, extended by two seconds on either side.
+- Report stage occurrence counts, raw nanoseconds, per-sampled-call and
+  per-sampled-record means, and primary Append bytes. Keep p95 empty-clock
+  timing with the raw results. Stage means at or below that interval remain
+  unresolved. Native stopwatch scopes can overlap individual stage timers.
+- Defer attributing stage costs whenever fine-on changes MB throughput by
+  more than 3% in either direction or changes the coarse mean API latency by
+  at least one quarter of the absolute MB-off/BE gap. The report always
+  retains observed timings and coverage for both windows.

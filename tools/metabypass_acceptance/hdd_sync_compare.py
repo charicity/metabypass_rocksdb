@@ -13,12 +13,16 @@ from statistics import median
 import optcore_compare as frozen
 from node_workload import NodeRunner
 from run import ResourceStop
+import fine_wal
 import write_breakdown as breakdown
 
 CORE = frozen.CORE
 FORMAL, PREFLIGHT = 'hdd-sync', 'hdd-sync-preflight'
 BE_FORMAL, BE_PREFLIGHT = 'hdd-sync-be40', 'hdd-sync-be40-preflight'
-CASES = (FORMAL, PREFLIGHT, BE_FORMAL, BE_PREFLIGHT)
+FINE_FORMAL, FINE_PREFLIGHT = fine_wal.FORMAL, fine_wal.PREFLIGHT
+FINE_CASES = (FINE_FORMAL, FINE_PREFLIGHT)
+ALWAYS_BREAKDOWN = (BE_FORMAL, BE_PREFLIGHT) + FINE_CASES
+CASES = (FORMAL, PREFLIGHT) + ALWAYS_BREAKDOWN
 GROUPS = ('baseline', 'optimized')
 BE = 'be40'
 FINAL = '0330a5e84936e2e222cdce4de666d4698e0b936d'
@@ -29,6 +33,8 @@ RESOURCES = frozen.RESOURCES
 def matrix(case=CASES[0], round_number=None):
     if case not in CASES or round_number not in (None, 1, 2):
         raise ValueError('unknown case or round')
+    if case in FINE_CASES:
+        return fine_wal.matrix(case, round_number)
     short = case in (PREFLIGHT, BE_PREFLIGHT)
     with_be = case in (BE_FORMAL, BE_PREFLIGHT)
     if short and round_number is not None:
@@ -62,21 +68,28 @@ def validate_args(args):
     if args.action == 'run':
         if args.case in (FORMAL, BE_FORMAL) and args.round is None:
             raise ValueError('run one formal --round at a time')
-        if (args.baseline_source_commit != CORE or args.source_commit == CORE or
-                not all(frozen.full_commit(x) for x in
-                    (args.source_commit, args.driver_source_commit, args.harness_commit))):
-            raise ValueError('requires core52 baseline and full final/driver/adapter commits')
+        fine = args.case in FINE_CASES
+        if (not all(frozen.full_commit(x) for x in
+                    (args.source_commit, args.driver_source_commit, args.harness_commit)) or
+                args.source_commit == CORE or (not fine and args.baseline_source_commit != CORE)):
+            raise ValueError('fine WAL requires full core/driver/adapter commits' if fine else
+                             'requires core52 baseline and full final/driver/adapter commits')
         if args.case in (BE_FORMAL, BE_PREFLIGHT) and args.source_commit != FINAL:
             raise ValueError('BE40 comparison requires the three-fix core')
-        for name in ('driver', 'baseline_driver', 'build_manifest', 'baseline_build_manifest',
-                     'ssd_root', 'hdd_root', 'ssd_accounting_root', 'hdd_accounting_root', 'output'):
+        names = ('driver', 'build_manifest', 'ssd_root', 'hdd_root', 'ssd_accounting_root',
+                 'hdd_accounting_root', 'output')
+        if not fine:
+            names += ('baseline_driver', 'baseline_build_manifest')
+        for name in names:
             if not getattr(args, name) or not Path(getattr(args, name)).is_absolute():
                 raise ValueError('run requires absolute ' + name)
-    if args.action == 'aggregate' and (args.case not in (FORMAL, BE_FORMAL) or args.round is not None or
+    if args.action == 'aggregate' and (args.case not in (FORMAL, BE_FORMAL, FINE_FORMAL) or args.round is not None or
                                       not args.round_ledgers or not args.output):
         raise ValueError('aggregate requires formal ledgers and new output')
     if args.action == 'aggregate' and args.case == BE_FORMAL and not args.mb_history_ledger:
         raise ValueError('BE40 aggregate requires --mb-history-ledger')
+    if args.action == 'aggregate' and args.case == FINE_FORMAL and len(args.round_ledgers) != 1:
+        raise ValueError('fine WAL aggregate requires exactly one formal ledger')
 
 
 def validate_sample(row):
@@ -123,7 +136,7 @@ class HddSyncRunner(NodeRunner):
         self.ledger.update(optimization_case=args.case, round=args.round,
             retention='All groups retain one point',
             comparison_direction='first-round groups and same-group repeats' if args.case == BE_FORMAL else 'optimized/baseline')
-        if args.write_breakdown or args.case in (BE_FORMAL, BE_PREFLIGHT):
+        if args.write_breakdown or args.case in ALWAYS_BREAKDOWN:
             self.ledger['write_breakdown'] = True
         for row in self.ledger['rows']:
             row.update(source_commit=args.source_commit if row['group'] == 'optimized' else args.baseline_source_commit,
@@ -142,7 +155,7 @@ class HddSyncRunner(NodeRunner):
         cmd = super().command(row, mode, front, blob, backup, stats) + ['--fixed_tail=0']
         if row['engine'] == 'mb':
             cmd.append('--recovery_time_sampling=' + str(int(row['recovery_time_sampling'])))
-        if (self.args.write_breakdown or self.args.case in (BE_FORMAL, BE_PREFLIGHT)) and mode == 'write':
+        if (self.args.write_breakdown or self.args.case in ALWAYS_BREAKDOWN) and mode == 'write':
             cmd.append('--write_breakdown=1')
         return cmd
 
@@ -152,7 +165,7 @@ class HddSyncRunner(NodeRunner):
         for _, binary in self.driver_paths():
             driver = Path(binary).resolve(strict=True)
             if root not in driver.parents or driver.stat().st_dev != self.ssd.parent.stat().st_dev:
-                raise ResourceStop('Both drivers and adjacent libraries must be in accounted SSD root')
+                raise ResourceStop('Drivers and adjacent libraries must be in accounted SSD root')
 
     def validate_completed_sample(self, row):
         validate_sample(row)
@@ -164,16 +177,8 @@ class HddSyncRunner(NodeRunner):
         for group, name, commit, capability in (
                 ('baseline', 'baseline_build_manifest', self.args.baseline_source_commit, 0),
                 ('optimized', 'build_manifest', self.args.source_commit, 1)):
-            manifest = json.loads(Path(getattr(self.args, name)).read_text())
-            if (manifest['core_commit'] != commit or manifest['status'] != 'built' or
-                    manifest['mb_has_recovery_time_sampling'] != capability):
-                raise ValueError('build manifest does not match ' + group)
             driver = Path(self.args.baseline_driver if group == 'baseline' else self.args.driver)
-            library = driver.parent / manifest['library_name']
-            if (hashlib.sha256(driver.read_bytes()).hexdigest() != manifest['driver_sha256'] or
-                    hashlib.sha256(library.read_bytes()).hexdigest() != manifest['library_sha256']):
-                raise ValueError('driver/library digest mismatch for ' + group)
-            manifests[group] = manifest
+            manifests[group] = load_manifest(getattr(self.args, name), driver, commit, capability)
         if manifests['baseline']['driver_source_sha256'] != manifests['optimized']['driver_source_sha256']:
             raise ValueError('both arms must compile the same updated driver source')
         if manifests['baseline']['protocol_sha256'] != manifests['optimized']['protocol_sha256']:
@@ -182,6 +187,51 @@ class HddSyncRunner(NodeRunner):
         validate_source_records(self.ledger['rows'], harness_identity(), manifests)
         self.ledger['build_manifests'] = manifests
         return super().run()
+
+
+def load_manifest(path, driver, commit, capability):
+    manifest = json.loads(Path(path).read_text())
+    if (manifest['core_commit'] != commit or manifest['status'] != 'built' or
+            manifest['mb_has_recovery_time_sampling'] != capability):
+        raise ValueError('build manifest does not match ' + str(driver))
+    library = driver.parent / manifest['library_name']
+    if (hashlib.sha256(driver.read_bytes()).hexdigest() != manifest['driver_sha256'] or
+            hashlib.sha256(library.read_bytes()).hexdigest() != manifest['library_sha256']):
+        raise ValueError('driver/library digest mismatch for ' + str(driver))
+    return manifest
+
+
+class FineWalRunner(HddSyncRunner):
+    def __init__(self, args):
+        super().__init__(args)
+        self.ledger['comparison_direction'] = 'MB fine on and off; BE fine on'
+        for row in self.ledger['rows']:
+            row['source_commit'] = args.source_commit
+
+    def driver_paths(self):
+        return (('new', self.args.driver),)
+
+    def driver_for_row(self, row):
+        return self.args.driver
+
+    def command(self, row, mode, front, blob, backup, stats):
+        cmd = super().command(row, mode, front, blob, backup, stats)
+        if mode == 'write':
+            cmd.append('--fine_wal=' + str(int(row['fine_wal'])))
+        return cmd
+
+    def validate_completed_sample(self, row):
+        super().validate_completed_sample(row)
+        fine_wal.summarize(row)
+
+    def run(self):
+        from local_compare import harness_identity
+        manifest = load_manifest(self.args.build_manifest, Path(self.args.driver), self.args.source_commit, 1)
+        if manifest.get('fine_wal') is not True:
+            raise ValueError('build manifest is missing fine WAL support')
+        self.ledger['build_manifests'] = {group: manifest for group in fine_wal.GROUPS}
+        validate_source_records(self.ledger['rows'], harness_identity(), self.ledger['build_manifests'])
+        return NodeRunner.run(self)
 
 
 def write_pairs(pairs, rows, with_be=False):
@@ -443,12 +493,17 @@ def main(argv=None):
         if args.action == 'plan':
             rnd = 1 if args.write_breakdown and args.case == FORMAL else args.round
             print(json.dumps(dict(case=args.case, rows=matrix(args.case, rnd), resources=RESOURCES,
-                                  write_breakdown=args.write_breakdown or args.case in (BE_FORMAL, BE_PREFLIGHT)), indent=2))
+                                  write_breakdown=args.write_breakdown or args.case in ALWAYS_BREAKDOWN), indent=2))
             return 0
         if args.action == 'aggregate':
-            result = export(args.round_ledgers, args.output, args.write_breakdown, args.case, args.mb_history_ledger)
+            if args.case == FINE_FORMAL:
+                result = fine_wal.export(args.round_ledgers[0], args.output, validate_sample,
+                                         validate_source_records, write_pairs)
+            else:
+                result = export(args.round_ledgers, args.output, args.write_breakdown, args.case, args.mb_history_ledger)
             return 0 if result['run_status'] == 'completed' else 1
-        return HddSyncRunner(args).run()
+        runner = FineWalRunner if args.case in FINE_CASES else HddSyncRunner
+        return runner(args).run()
     except (ValueError, RuntimeError) as exc:
         p.error(str(exc))
 

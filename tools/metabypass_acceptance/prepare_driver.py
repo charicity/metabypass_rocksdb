@@ -12,8 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from build_optcore import commands, git
-from hdd_sync_compare import CORE
+from build_optcore import CORE, commands, git
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -26,12 +25,15 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def prepare(destination):
+def prepare(destination, fine_wal=False):
     target = destination / 'tools/metabypass_acceptance'
     target.mkdir(parents=True, exist_ok=False)
     for name in ('driver.cc', 'protocol.h'):
         shutil.copy2(DRIVER / name, target / name)
-    for name in ('driver.patch', 'write_breakdown.patch'):
+    patches = ['driver.patch', 'write_breakdown.patch']
+    if fine_wal:
+        patches.append('fine_wal.patch')
+    for name in patches:
         subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(HERE / name)],
                        cwd=destination, check=True)
     if digest(target / 'protocol.h') != digest(DRIVER / 'protocol.h'):
@@ -39,9 +41,12 @@ def prepare(destination):
     return target
 
 
-def build_commands(core, build, artifacts, capability, cc='clang-14', cxx='clang++-14', jobs=48):
+def build_commands(core, build, artifacts, capability, cc='clang-14', cxx='clang++-14', jobs=48, fine_wal=False):
     steps = commands(core, build, artifacts, CONTROLLER, cc, cxx, jobs, artifacts / 'driver-source')
     steps[2].insert(1, '-DMB_HAS_RECOVERY_TIME_SAMPLING=' + str(capability))
+    if fine_wal:
+        steps[0].append('-DCMAKE_CXX_FLAGS=-DROCKSDB_MB_WAL_BREAKDOWN')
+        steps[2].insert(1, '-DROCKSDB_MB_WAL_BREAKDOWN')
     return steps
 
 
@@ -56,6 +61,7 @@ def main():
     p.add_argument('--jobs', type=int, choices=(48, 32, 16, 8), default=48)
     p.add_argument('--reuse-core-artifacts', type=Path,
                    help='compile only the driver against a previous strict build')
+    p.add_argument('--fine-wal', action='store_true')
     p.add_argument('--plan', action='store_true')
     args = p.parse_args()
     core, build, artifacts = (getattr(args, k).resolve() for k in ('core', 'build', 'artifacts'))
@@ -67,7 +73,7 @@ def main():
     if core == build or core in build.parents or core == artifacts or core in artifacts.parents:
         p.error('build and artifacts must be outside core source')
     steps = dict(enumerate(build_commands(core, build, artifacts, capability,
-                                         args.cc, args.cxx, args.jobs)))
+                                         args.cc, args.cxx, args.jobs, args.fine_wal)))
     library_dir = build
     if args.reuse_core_artifacts:
         library_dir = args.reuse_core_artifacts.resolve(strict=True)
@@ -85,13 +91,16 @@ def main():
         print(json.dumps(list(steps.values()), indent=2))
         return
     artifacts.mkdir(parents=True, exist_ok=False)
-    source = prepare(artifacts / 'driver-source')
+    source = prepare(artifacts / 'driver-source', args.fine_wal)
     manifest = dict(status='building', core_commit=args.core_commit,
         mb_has_recovery_time_sampling=capability, adapter_commit=git(ROOT, 'rev-parse', 'HEAD'),
         assert_status_checked=True, diagnostics_enabled=False, commands=list(steps.values()),
         driver_source_sha256=digest(source / 'driver.cc'), protocol_sha256=digest(source / 'protocol.h'),
         driver_patch_sha256=digest(HERE / 'driver.patch'),
         write_breakdown_patch_sha256=digest(HERE / 'write_breakdown.patch'))
+    manifest['fine_wal'] = args.fine_wal
+    if args.fine_wal:
+        manifest['fine_wal_patch_sha256'] = digest(HERE / 'fine_wal.patch')
     if args.reuse_core_artifacts:
         manifest.update(reused_core_artifacts=str(library_dir),
                         reused_library_sha256=previous['library_sha256'],
@@ -111,6 +120,9 @@ def main():
             if not compiled or any('ROCKSDB_ASSERT_STATUS_CHECKED' not in r['command'] or
                     'METABYPASS_PERF_DIAGNOSTICS' in r['command'] for r in compiled):
                 raise RuntimeError('core strict Status / diagnostics OFF flags mismatch')
+            if any(('ROCKSDB_MB_WAL_BREAKDOWN' in r['command']) != args.fine_wal
+                   for r in compiled if r['file'].endswith(('.cc', '.cpp'))):
+                raise RuntimeError('fine WAL core compilation flag mismatch')
             shutil.copy2(compiled_file, artifacts / 'core-compile-commands.json')
             for library in sorted(library_dir.glob('librocksdb.so*')):
                 if library.is_symlink():

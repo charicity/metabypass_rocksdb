@@ -52,9 +52,14 @@ def matrix(case, round_number):
     return rows
 
 
+def coarse_snapshot(event, row, stamp):
+    coarse = event['write_breakdown']
+    return dict(time_ns=stamp, **{k: event[k] for k in RUN_FIELDS}, **{k: coarse[k] for k in COARSE_FIELDS})
+
+
 def snapshot(event, row, stamp):
     coarse = event['write_breakdown']
-    data = dict(time_ns=stamp, **{k: event[k] for k in RUN_FIELDS}, **{k: coarse[k] for k in COARSE_FIELDS})
+    data = coarse_snapshot(event, row, stamp)
     if not row['fine_wal']:
         if event.get('fine_wal') is not None:
             raise ValueError('fine WAL timing present with probe disabled')
@@ -99,41 +104,33 @@ def window_row(row, kind, intervals, fields, clock_p95, duration_ns=None, total=
                 window=kind, duration_seconds=duration_ns / 1e9, intervals=len(intervals),
                 clock_p95_ns=clock_p95, **total)
     info['mib_per_s'] = total['measure_bytes'] / MIB / info['duration_seconds'] if duration_ns else None
-    for prefix in ('sampled_', 'fine_', 'reference_'):
+    prefixes = ('sampled_', 'fine_', 'reference_') if 'fine_wal' in row else ('sampled_',)
+    for prefix in prefixes:
         calls = total.get(prefix + 'calls')
         for metric in ('api_ns', 'wal_ns', 'memtable_ns'):
             key = prefix + metric
             info[key + '_per_call'] = total[key] / calls if calls else None
-    matched = 'reference_' if row['group'] == MB_OFF else 'fine_'
-    info['matched_calls'] = total.get(matched + 'calls')
-    for metric in ('api', 'wal', 'memtable'):
-        info['matched_' + metric + '_ns_per_call'] = info[matched + metric + '_ns_per_call']
+    if 'fine_wal' in row:
+        matched = 'reference_' if row['group'] == MB_OFF else 'fine_'
+        info['matched_calls'] = total.get(matched + 'calls')
+        for metric in ('api', 'wal', 'memtable'):
+            info['matched_' + metric + '_ns_per_call'] = info[matched + metric + '_ns_per_call']
     return info
 
 
-def summarize(row):
+def foreground_windows(row, collect=coarse_snapshot, clock_p95=None):
     stats = row['final_stats']
     begin, end = stats['measure_begin_ns'], stats['measure_end_ns']
-    events = row['writer']['events']
-    ready = next(e for e in events if e.get('event') == 'ready')
-    if ready.get('fine_wal') is not row['fine_wal']:
-        raise ValueError('effective fine WAL option mismatch')
-    clock_p95 = ready.get('fine_wal_clock_p95_ns')
-    if row['fine_wal'] and (type(clock_p95) is not int or clock_p95 <= 0):
-        raise ValueError('fine WAL clock baseline is missing')
-    if not row['fine_wal']:
-        clock_p95 = None
-
     windows = padded_backup_windows(row, begin, end)
     samples = []
-    for event in events:
+    for event in row['writer']['events']:
         if event.get('event') != 'sample' or 'write_breakdown' not in event:
             continue
         time_ns = event['write_breakdown']['foreground_snapshot_ns']
         if begin <= time_ns < end:
-            samples.append(snapshot(event, row, time_ns))
+            samples.append(collect(event, row, time_ns))
     if not samples:
-        raise ValueError('no in-window fine WAL snapshots')
+        raise ValueError('no in-window WAL snapshots')
 
     coverage_end = samples[-1]['time_ns']
     fields = tuple(k for k in samples[0] if k != 'time_ns')
@@ -147,35 +144,46 @@ def summarize(row):
         if stamp == begin == prev and not any(delta.values()):
             continue
         if stamp <= prev or any(value < 0 for value in delta.values()):
-            raise ValueError('fine WAL snapshots are non-monotonic')
+            raise ValueError('WAL snapshots are non-monotonic')
         intervals.append(dict(sample_id=row['id'], config_id=row['config_id'], group=row['group'],
                               begin_ns=prev, end_ns=stamp, duration_ns=stamp - prev,
                               near_observed_backup=any(prev < right and stamp > left for left, right in windows),
                               **delta))
         previous = sample
 
-    last = samples[-1]
-    if row['fine_wal'] and any(last.get(key, 0) <= 0 for key in
-            ('fine_calls', 'fine_api_ns', 'fine_wal_ns', 'fine_memtable_ns', 'primary_append_calls',
-             'primary_append_ns', 'fine_primary_append_bytes')):
-        raise ValueError('fine primary WAL Appends or foreground timing were not observed')
-    if not row['fine_wal'] and any(last.get('reference_' + key, 0) <= 0 for key in MATCHED_FIELDS):
-        raise ValueError('matched fine WAL reference samples were not observed')
-    needed_stages = ('event_build', 'reserve_bookkeeping', 'payload_copy', 'finish_bookkeeping',
-                     'error_check', 'completed_bookkeeping')
-    if row['batch_size'] > 1:
-        needed_stages += ('batch_validation',)
-    if row['fine_wal'] and row['engine'] == 'mb' and any(last[key + '_calls'] <= 0 for key in
-                                                         needed_stages):
-        raise ValueError('fine MB admission stages were not observed')
-
-    totals = {k: last[k] for k in fields}
+    totals = {k: samples[-1][k] for k in fields}
     totals.update({k: stats[k] for k in RUN_FIELDS})
     full = window_row(row, 'full', intervals, fields, clock_p95, end - begin, totals)
     full['sample_coverage_seconds'] = (coverage_end - begin) / 1e9
     without_backup = [s for s in intervals if not s['near_observed_backup']]
     filtered = window_row(row, 'outside_observed_backups', without_backup, fields, clock_p95)
     return (full, filtered), intervals
+
+
+def summarize(row):
+    ready = next(e for e in row['writer']['events'] if e.get('event') == 'ready')
+    if ready.get('fine_wal') is not row['fine_wal']:
+        raise ValueError('effective fine WAL option mismatch')
+    clock_p95 = ready.get('fine_wal_clock_p95_ns')
+    if row['fine_wal'] and (type(clock_p95) is not int or clock_p95 <= 0):
+        raise ValueError('fine WAL clock baseline is missing')
+    windows, intervals = foreground_windows(row, snapshot, clock_p95 if row['fine_wal'] else None)
+    full = windows[0]
+    if row['fine_wal'] and any(full.get(key, 0) <= 0 for key in
+            ('fine_calls', 'fine_api_ns', 'fine_wal_ns', 'fine_memtable_ns', 'primary_append_calls',
+             'primary_append_ns', 'fine_primary_append_bytes')):
+        raise ValueError('fine primary WAL Appends or foreground timing were not observed')
+    if not row['fine_wal'] and any(full.get('reference_' + key, 0) <= 0 for key in MATCHED_FIELDS):
+        raise ValueError('matched fine WAL reference samples were not observed')
+    needed_stages = ('event_build', 'reserve_bookkeeping', 'payload_copy', 'finish_bookkeeping',
+                     'error_check', 'completed_bookkeeping')
+    if row['batch_size'] > 1:
+        needed_stages += ('batch_validation',)
+    if row['fine_wal'] and row['engine'] == 'mb' and any(full[key + '_calls'] <= 0 for key in
+                                                         needed_stages):
+        raise ValueError('fine MB admission stages were not observed')
+
+    return windows, intervals
 
 
 def stage_rows(windows):

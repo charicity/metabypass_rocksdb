@@ -14,6 +14,7 @@ import optcore_compare as frozen
 from node_workload import NodeRunner
 from run import ResourceStop
 import fine_wal
+import wal_payload
 import write_breakdown as breakdown
 
 CORE = frozen.CORE
@@ -21,7 +22,9 @@ FORMAL, PREFLIGHT = 'hdd-sync', 'hdd-sync-preflight'
 BE_FORMAL, BE_PREFLIGHT = 'hdd-sync-be40', 'hdd-sync-be40-preflight'
 FINE_FORMAL, FINE_PREFLIGHT = fine_wal.FORMAL, fine_wal.PREFLIGHT
 FINE_CASES = (FINE_FORMAL, FINE_PREFLIGHT)
-ALWAYS_BREAKDOWN = (BE_FORMAL, BE_PREFLIGHT) + FINE_CASES
+PAYLOAD_FORMAL, PAYLOAD_PREFLIGHT = wal_payload.FORMAL, wal_payload.PREFLIGHT
+PAYLOAD_CASES = (PAYLOAD_FORMAL, PAYLOAD_PREFLIGHT)
+ALWAYS_BREAKDOWN = (BE_FORMAL, BE_PREFLIGHT) + FINE_CASES + PAYLOAD_CASES
 CASES = (FORMAL, PREFLIGHT) + ALWAYS_BREAKDOWN
 GROUPS = ('baseline', 'optimized')
 BE = 'be40'
@@ -35,6 +38,8 @@ def matrix(case=CASES[0], round_number=None):
         raise ValueError('unknown case or round')
     if case in FINE_CASES:
         return fine_wal.matrix(case, round_number)
+    if case in PAYLOAD_CASES:
+        return wal_payload.select_matrix(case, round_number, matrix)
     short = case in (PREFLIGHT, BE_PREFLIGHT)
     with_be = case in (BE_FORMAL, BE_PREFLIGHT)
     if short and round_number is not None:
@@ -69,11 +74,15 @@ def validate_args(args):
         if args.case in (FORMAL, BE_FORMAL) and args.round is None:
             raise ValueError('run one formal --round at a time')
         fine = args.case in FINE_CASES
+        baseline = wal_payload.BASELINE if args.case in PAYLOAD_CASES else CORE
+        if args.baseline_source_commit is None:
+            args.baseline_source_commit = baseline
         if (not all(frozen.full_commit(x) for x in
                     (args.source_commit, args.driver_source_commit, args.harness_commit)) or
-                args.source_commit == CORE or (not fine and args.baseline_source_commit != CORE)):
+                args.source_commit in (CORE, baseline) or
+                (not fine and args.baseline_source_commit != baseline)):
             raise ValueError('fine WAL requires full core/driver/adapter commits' if fine else
-                             'requires core52 baseline and full final/driver/adapter commits')
+                             'requires baseline %s and full optimized/driver/adapter commits' % baseline)
         if args.case in (BE_FORMAL, BE_PREFLIGHT) and args.source_commit != FINAL:
             raise ValueError('BE40 comparison requires the three-fix core')
         names = ('driver', 'build_manifest', 'ssd_root', 'hdd_root', 'ssd_accounting_root',
@@ -83,13 +92,15 @@ def validate_args(args):
         for name in names:
             if not getattr(args, name) or not Path(getattr(args, name)).is_absolute():
                 raise ValueError('run requires absolute ' + name)
-    if args.action == 'aggregate' and (args.case not in (FORMAL, BE_FORMAL, FINE_FORMAL) or args.round is not None or
+    if args.action == 'aggregate' and (args.case not in (FORMAL, BE_FORMAL, FINE_FORMAL, PAYLOAD_FORMAL) or args.round is not None or
                                       not args.round_ledgers or not args.output):
         raise ValueError('aggregate requires formal ledgers and new output')
     if args.action == 'aggregate' and args.case == BE_FORMAL and not args.mb_history_ledger:
         raise ValueError('BE40 aggregate requires --mb-history-ledger')
     if args.action == 'aggregate' and args.case == FINE_FORMAL and len(args.round_ledgers) != 1:
         raise ValueError('fine WAL aggregate requires exactly one formal ledger')
+    if args.action == 'aggregate' and args.case == PAYLOAD_FORMAL and len(args.round_ledgers) != 1:
+        raise ValueError('WAL payload aggregate requires exactly one formal ledger')
 
 
 def validate_sample(row):
@@ -133,7 +144,7 @@ class HddSyncRunner(NodeRunner):
     def __init__(self, args):
         validate_args(args)
         super().__init__(args)
-        self.ledger.update(optimization_case=args.case, round=args.round,
+        self.ledger.update(optimization_case=args.case, round=(args.round or 1) if args.case == PAYLOAD_FORMAL else args.round,
             retention='All groups retain one point',
             comparison_direction='first-round groups and same-group repeats' if args.case == BE_FORMAL else 'optimized/baseline')
         if args.write_breakdown or args.case in ALWAYS_BREAKDOWN:
@@ -171,14 +182,19 @@ class HddSyncRunner(NodeRunner):
         validate_sample(row)
         if self.ledger.get('write_breakdown'):
             breakdown.summarize(row)
+        if self.args.case in PAYLOAD_CASES:
+            wal_payload.foreground(row)
 
     def run(self):
         manifests = {}
+        payload = self.args.case in PAYLOAD_CASES
         for group, name, commit, capability in (
-                ('baseline', 'baseline_build_manifest', self.args.baseline_source_commit, 0),
+                ('baseline', 'baseline_build_manifest', self.args.baseline_source_commit, int(payload)),
                 ('optimized', 'build_manifest', self.args.source_commit, 1)):
             driver = Path(self.args.baseline_driver if group == 'baseline' else self.args.driver)
             manifests[group] = load_manifest(getattr(self.args, name), driver, commit, capability)
+        if payload:
+            wal_payload.validate_manifests(manifests)
         if manifests['baseline']['driver_source_sha256'] != manifests['optimized']['driver_source_sha256']:
             raise ValueError('both arms must compile the same updated driver source')
         if manifests['baseline']['protocol_sha256'] != manifests['optimized']['protocol_sha256']:
@@ -292,7 +308,9 @@ def compare_be_rounds(result, mb_history):
 def aggregate(documents, write_breakdown=False, case=FORMAL, mb_history=None):
     from report import local_pairs, memory_fields, summarize
     with_be = case == BE_FORMAL
-    write_breakdown = write_breakdown or with_be
+    payload = case == PAYLOAD_FORMAL
+    write_breakdown = write_breakdown or with_be or payload
+    baseline = wal_payload.BASELINE if payload else CORE
     rounds, identities = {}, {}
     for document in documents:
         observed = {r['round'] for r in document['rows']}
@@ -315,9 +333,11 @@ def aggregate(documents, write_breakdown=False, case=FORMAL, mb_history=None):
         if len(identity) != len(groups) or any(not all(frozen.full_commit(x) for x in t[1:]) for t in identity):
             raise ValueError('invalid source identities')
         cores = {t[0]: t[1] for t in identity}
-        if any(cores[group] != CORE for group in groups - {'optimized'}) or (
-                'optimized' in cores and (cores['optimized'] == CORE or (with_be and cores['optimized'] != FINAL))):
+        if any(cores[group] != baseline for group in groups - {'optimized'}) or (
+                'optimized' in cores and (cores['optimized'] in (CORE, baseline) or (with_be and cores['optimized'] != FINAL))):
             raise ValueError('unexpected core commit')
+        if payload:
+            wal_payload.validate_manifests(document.get('build_manifests', {}))
         validate_source_records(document['rows'], document.get('harness_actual', {}),
                                 document.get('build_manifests', {}))
         for group, *commits in identity:
@@ -351,6 +371,7 @@ def aggregate(documents, write_breakdown=False, case=FORMAL, mb_history=None):
     result['available_rounds'] = sorted(rounds)
     result['local_comparison'] = []
     result['backup_retention_events'] = []
+    payload_windows, payload_intervals = [], []
     for source, row in zip(combined['rows'], result['rows']):
         for key in ('round', 'group', 'recovery_time_sampling', 'source_commit', 'driver_source_commit', 'harness_commit'):
             row[key] = source.get(key)
@@ -365,7 +386,12 @@ def aggregate(documents, write_breakdown=False, case=FORMAL, mb_history=None):
                 if event.get('event') == 'backup_retention')
         if write_breakdown and row['status'] == 'passed':
             row.update(breakdown.summarize(source))
-        if source['group'] == 'optimized':
+        if payload and row['status'] == 'passed':
+            row.update(wal_payload.peak_metrics(source))
+            windows, intervals = wal_payload.foreground(source)
+            payload_windows.extend(windows)
+            payload_intervals.extend(intervals)
+        if source.get('recovery_time_sampling') is False:
             for key in row:
                 if key.startswith('rpo_'):
                     row[key] = 'disabled_recovery_time_sampling' if key.endswith('_status') else None
@@ -406,6 +432,8 @@ def aggregate(documents, write_breakdown=False, case=FORMAL, mb_history=None):
         result['notes'][4] = 'Failures retain raw evidence. Repeats retain both values and observed ranges.'
         result['notes'].extend(breakdown.BE_NOTES)
         compare_be_rounds(result, mb_history)
+    if payload:
+        wal_payload.add_results(result, payload_windows, payload_intervals)
     return result
 
 
@@ -413,7 +441,8 @@ def export(paths, output, write_breakdown=False, case=FORMAL, mb_history_ledger=
     from mb40_report import write_csv
     from report import md_table, number
     with_be = case == BE_FORMAL
-    write_breakdown = write_breakdown or with_be
+    payload = case == PAYLOAD_FORMAL
+    write_breakdown = write_breakdown or with_be or payload
     history = json.loads(Path(mb_history_ledger).read_text()) if mb_history_ledger else None
     result = aggregate([json.loads(Path(p).read_text()) for p in paths], write_breakdown, case, history)
     out = Path(output)
@@ -421,11 +450,16 @@ def export(paths, output, write_breakdown=False, case=FORMAL, mb_history_ledger=
     names = ('rows', 'local_comparison', 'memory_samples', 'publication_events', 'rpo_samples')
     if with_be:
         names += ('be_across_rounds', 'mb_historical_comparison', 'backup_retention_events')
+    elif payload:
+        names += ('payload_windows', 'payload_intervals', 'payload_window_pairs')
     elif not write_breakdown:
         names += ('cross_round_comparison',)
     for name in names:
         write_csv(out / (name + '.csv'), result[name])
     (out / 'summary.json').write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
+    if payload:
+        (out / 'report.md').write_text(wal_payload.markdown(result))
+        return result
     title = 'Write breakdown: core52 MB40 / three-fix MB40 / BE40' if with_be else 'HDD sync: final / core52'
     lines = ['# ' + title, '', 'Status: ' + result['run_status'], '']
     lines += ['- ' + note for note in result['notes']] + ['']
@@ -479,7 +513,7 @@ def parser():
     p = frozen.parser(cases=CASES)
     p.add_argument('--baseline-driver')
     p.add_argument('--baseline-build-manifest')
-    p.add_argument('--baseline-source-commit', default=CORE)
+    p.add_argument('--baseline-source-commit')
     p.add_argument('--write-breakdown', action='store_true')
     p.add_argument('--mb-history-ledger')
     return p

@@ -230,3 +230,40 @@ the coarse means used for the disturbance check.
   more than 3% in either direction or changes the coarse mean API latency by
   at least one quarter of the absolute MB-off/BE gap. The report always
   retains observed timings and coverage for both windows.
+
+## MB40 WAL payload A/B
+
+Use `--case=hdd-sync-wal-payload` for the four formal rows. Put runs baseline
+then optimized. Batch8 runs optimized then baseline. Both workloads use 64B
+values, Blob off, and the same CP40s/mirror5s/512MiB-batch/1GiB-queue settings,
+with 65 seconds warmup and 180 seconds measurement. Recovery time sampling
+is disabled on both arms. The coarse write breakdown is enabled on both
+writers, with the fine WAL probes compiled out.
+
+Use two strict ordinary builds with the same derived driver source and
+protocol and with `--has-recovery-time-sampling=1` on each build. Supply the
+paths and manifests via `--baseline-driver`, `--baseline-build-manifest`,
+`--driver`, and `--build-manifest`. The default baseline is `1e7dd4903` in
+these cases. Pass the optimized core using `--source-commit`. The original
+controller, storage and cgroup options still apply.
+
+- `plan --case=hdd-sync-wal-payload` lists the four rows and exact order.
+- `run --case=hdd-sync-wal-payload-preflight` runs the two arms with Batch8,
+  16,384 keys, warmup 1s/measurement 7s and 256 full-value checks.
+- `run --case=hdd-sync-wal-payload` runs the four formal rows in a new output
+  directory after preflight. It verifies measured periodic publication and
+  recovery from the surviving HDD after isolating the SSD files, using the
+  same 4096 sampled full values and incremental range checks.
+
+```sh
+python3 tools/metabypass_acceptance/hdd_sync_compare.py aggregate \
+  --case=hdd-sync-wal-payload --round-ledgers=/HDD_TASK/results.json \
+  --output=/HDD_TASK/summary
+```
+
+The report compares full-window throughput and coarse API/WAL timing for
+each pair. A separate sampled view drops intervals overlapping observed
+checkpoint intervals padded by two seconds at each end. The raw interval
+table shows what was excluded. Queue and RSS peaks use sampled observations;
+writer wait4 RSS is also included as the lifetime high-water mark. Outputs
+retain publication events, recovery and resource metrics.

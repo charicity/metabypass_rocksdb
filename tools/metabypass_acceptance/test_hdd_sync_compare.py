@@ -13,6 +13,7 @@ import fine_wal as fw
 import hdd_sync_compare as hc
 import prepare_driver as build
 from optcore_compare_test import accepted
+import wal_payload as wp
 import write_breakdown as wb
 
 
@@ -323,6 +324,80 @@ class HddSyncTests(unittest.TestCase):
                        r['current_group'] == fw.MB_ON and r['reference_group'] == fw.MB_OFF)
         self.assertEqual(matched['matched_api_ns_per_call_delta'], 0)
         self.assertEqual(matched['matched_wal_ns_per_call_delta'], 0)
+
+    def test_wal_payload_matrix(self):
+        rows = hc.matrix(hc.PAYLOAD_FORMAL)
+        self.assertEqual([(r['batch_size'], r['group']) for r in rows],
+                         [(1, 'baseline'), (1, 'optimized'), (8, 'optimized'), (8, 'baseline')])
+        self.assertTrue(all((r['value_size'], r['blob'], r['round'], r['warm_seconds'],
+                             r['measure_seconds'], r['recovery_time_sampling']) ==
+                            (64, False, 1, 65, 180, False) for r in rows))
+        short = hc.matrix(hc.PAYLOAD_PREFLIGHT)
+        self.assertEqual([(r['group'], r['batch_size'], r['key_count'], r['warm_seconds'],
+                           r['measure_seconds'], r['sample_count']) for r in short],
+                         [('baseline', 8, 16384, 1, 7, 256), ('optimized', 8, 16384, 1, 7, 256)])
+        with self.assertRaises(ValueError):
+            hc.matrix(hc.PAYLOAD_FORMAL, 2)
+        runner = hc.HddSyncRunner.__new__(hc.HddSyncRunner)
+        runner.args = hc.parser().parse_args(['run', '--case', hc.PAYLOAD_FORMAL,
+            '--driver', '/ssd/optimized', '--baseline-driver', '/ssd/baseline',
+            '--build-manifest', '/ssd/optimized.json', '--baseline-build-manifest', '/ssd/baseline.json',
+            '--source-commit', 'f'*40, '--driver-source-commit', 'd'*40, '--harness-commit', 'a'*40,
+            '--ssd-root', '/ssd', '--hdd-root', '/hdd', '--ssd-accounting-root', '/ssd',
+            '--hdd-accounting-root', '/hdd', '--output', '/hdd/output'])
+        hc.validate_args(runner.args)
+        self.assertEqual(runner.args.baseline_source_commit, wp.BASELINE)
+        for row in rows + short:
+            for mode in ('write', 'recover'):
+                command = runner.command(row, mode, '/db', '/blob', '/backup', '/stats')
+                self.assertEqual(command[0], '/ssd/' + row['group'])
+                self.assertIn('--recovery_time_sampling=0', command)
+                self.assertIn('--mirror_queue_capacity=1073741824', command)
+                self.assertEqual('--write_breakdown=1' in command, mode == 'write')
+                self.assertFalse(any(arg.startswith('--fine_wal=') for arg in command))
+
+    def test_wal_payload_report(self):
+        doc = document(1, hc.PAYLOAD_FORMAL)
+        doc['write_breakdown'] = True
+        manifests = doc['build_manifests']
+        manifests['baseline']['core_commit'] = wp.BASELINE
+        for manifest in manifests.values():
+            manifest.update(fine_wal=False, mb_has_recovery_time_sampling=1,
+                            assert_status_checked=True, diagnostics_enabled=False,
+                            status='built', driver_source_sha256='source', protocol_sha256='protocol')
+        for row in doc['rows']:
+            row['source_commit'] = manifests[row['group']]['core_commit']
+            add_breakdown_samples(row)
+            begin = row['final_stats']['measure_begin_ns']
+            first, last = row['writer']['events'][-3:-1]
+            first.update(queued_bytes=11)
+            last.update(queued_bytes=20, last_backup_begin_ns=begin+10*10**9,
+                        last_backup_end_ns=begin+11*10**9)
+            first['write_breakdown']['foreground_snapshot_ns'] = begin+10**9
+            row['writer']['telemetry'] = [
+                dict(monotonic_ns=begin-10**9, status={'VmRSS': '512 kB', 'RssAnon': '400 kB'}),
+                dict(monotonic_ns=begin+10**9, status={'VmRSS': '123 kB', 'RssAnon': '100 kB'}),
+                dict(monotonic_ns=begin+2*10**9, status={'VmRSS': '125 kB'})]
+        result = hc.aggregate([doc], case=hc.PAYLOAD_FORMAL)
+        self.assertEqual((len(result['rows']), len(result['payload_windows']),
+                          len(result['payload_window_pairs']), len(result['local_comparison'])),
+                         (4, 8, 4, 2))
+        self.assertEqual(result['run_status'], 'completed')
+        for r in result['rows']:
+            self.assertEqual(r['mirror_queue_sample_peak_bytes'], 20)
+            self.assertEqual(r['writer_measurement_rss_sample_peak_kib'], 125)
+            self.assertEqual(r['writer_measurement_rss_anon_sample_peak_kib'], 100)
+            self.assertEqual(r['measurement_cp_completed'], 1)
+        self.assertEqual([r['duration_seconds'] for r in result['payload_windows'][:2]], [180, 1])
+        self.assertIn('Mirror queue sampled peak', wp.markdown(result))
+        doc['rows'][0]['status'] = 'failed'
+        result = hc.aggregate([doc], case=hc.PAYLOAD_FORMAL)
+        self.assertEqual(result['run_status'], 'incomplete')
+        p = next(r for r in result['payload_window_pairs'] if r['reference_id'] == doc['rows'][0]['id'])
+        self.assertIsNone(p['mib_per_s_change_fraction'])
+        manifests['baseline']['fine_wal'] = True
+        with self.assertRaisesRegex(ValueError, 'fine WAL disabled'):
+            hc.aggregate([doc], case=hc.PAYLOAD_FORMAL)
 
     def test_acceptance(self):
         for spec in hc.matrix() + hc.matrix(hc.CASES[1]):

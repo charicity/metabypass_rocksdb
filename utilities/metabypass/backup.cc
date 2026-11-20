@@ -24,6 +24,8 @@ thread_local bool mirror_append = false;
 }  // namespace wal_probe
 #endif
 namespace {
+constexpr size_t kMaxWalBatchEvents = 256;
+
 uint64_t Now() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
@@ -967,7 +969,6 @@ void Backup::TakeBatch(Channel* channel, uint64_t boundary,
   channel->queue.pop_front();
   const Event& first = batch->front();
   constexpr size_t kMaxBytes = 64 * 1024;
-  constexpr size_t kMaxEvents = 64;
   if (channel != &wal_channel_ || first.kind != Kind::kAppend ||
       first.Payload().empty() || first.Payload().size() > kMaxBytes)
     return;
@@ -976,7 +977,7 @@ void Backup::TakeBatch(Channel* channel, uint64_t boundary,
   if (candidate_ && !capture_done_ && first.seq <= candidate_->seq)
     boundary = std::min(boundary, candidate_->seq);
   size_t bytes = first.Payload().size();
-  while (batch->size() < kMaxEvents && NextChannel() == channel) {
+  while (batch->size() < kMaxWalBatchEvents && NextChannel() == channel) {
     const Event& next = channel->queue.front();
     if (next.seq > boundary || next.seq != batch->back().seq + 1 ||
         next.kind != Kind::kAppend || next.name != batch->front().name ||
@@ -1021,7 +1022,7 @@ Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
 void Backup::Run() {
   HddPurposeScope background(HddPurpose::kBulk);
   std::vector<Event> batch;
-  batch.reserve(64);
+  batch.reserve(kMaxWalBatchEvents);
   std::string scratch;
   scratch.reserve(64 * 1024);
   std::unique_lock<std::mutex> lock(mutex_);
@@ -1208,18 +1209,19 @@ void Backup::ValidateLoop() {
       validator_cv_.wait(lock);
       continue;
     }
-    if (completed_writes_ > published_writes_ ||
+    if (completed_writes_.load(std::memory_order_relaxed) > published_writes_ ||
         native_changes_ > published_native_changes_ || NeedsBlobCheckpoint())
       MarkDirty();
     const bool requested = requested_point_ > published_request_;
+    const uint64_t dirty_since =
+        dirty_since_micros_.load(std::memory_order_relaxed);
     if (!requested) {
-      if (!dirty_since_micros_) {
+      if (!dirty_since) {
         TEST_SYNC_POINT("MetaBypass::CheckpointIdle");
         validator_cv_.wait(lock);
         continue;
       }
-      uint64_t deadline =
-          dirty_since_micros_ + options_.checkpoint_interval_ms * 1000;
+      uint64_t deadline = dirty_since + options_.checkpoint_interval_ms * 1000;
       uint64_t now = Now();
       TEST_SYNC_POINT_CALLBACK("MetaBypass::CheckpointNow", &now);
       if (now < deadline) {
@@ -1234,10 +1236,9 @@ void Backup::ValidateLoop() {
     candidate_busy_ = true;
     auto candidate = std::make_unique<Candidate>();
     candidate->started = Now();
-    candidate->oldest =
-        dirty_since_micros_ ? dirty_since_micros_ : candidate->started;
-    dirty_since_micros_ = 0;
-    candidate->writes = completed_writes_;
+    candidate->oldest = dirty_since ? dirty_since : candidate->started;
+    dirty_since_micros_.store(0, std::memory_order_relaxed);
+    candidate->writes = completed_writes_.load(std::memory_order_relaxed);
     candidate->request = requested_point_;
     candidate->native_changes = native_changes_;
     DB* db = db_;
@@ -1304,7 +1305,7 @@ void Backup::ValidateLoop() {
       // after releasing the fence belong to the next checkpoint.
       std::lock_guard<std::mutex> boundary_lock(mutex_);
       candidate->seq = accepted_;
-      candidate->writes = completed_writes_;
+      candidate->writes = completed_writes_.load(std::memory_order_relaxed);
     }
     fence.unlock();
     TEST_SYNC_POINT("MetaBypass::NativeFilesCaptured");
@@ -1460,12 +1461,16 @@ void Backup::GarbageCollectLoop() {
   gc_cv_.notify_all();
 }
 void Backup::WriteCompleted() {
+  // If capture clears the observed deadline concurrently, its exclusive fence
+  // still waits for this write. A writer admitted after that fence sees the
+  // cleared deadline or one already installed for the next checkpoint.
   MB_WAL_SPAN(wait, completed_wait, true);
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+  if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) lock.lock();
   MB_WAL_END(wait);
   MB_WAL_SPAN(bookkeeping, completed_bookkeeping, true);
-  ++completed_writes_;
-  MarkDirty();
+  completed_writes_.fetch_add(1, std::memory_order_relaxed);
+  if (lock.owns_lock()) MarkDirty();
 }
 void Backup::NativeFilesChanged() {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -1473,8 +1478,8 @@ void Backup::NativeFilesChanged() {
   MarkDirty();
 }
 void Backup::MarkDirty() {
-  if (!dirty_since_micros_) {
-    dirty_since_micros_ = Now();
+  if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) {
+    dirty_since_micros_.store(Now(), std::memory_order_relaxed);
     validator_cv_.notify_one();
   }
 }
@@ -1483,7 +1488,7 @@ Status Backup::Sync() {
   if (!stats_.error.ok()) return stats_.error;
   if (!active_ || stopping_) return Status::ShutdownInProgress();
   const uint64_t goal = ++requested_point_;
-  const uint64_t writes = completed_writes_;
+  const uint64_t writes = completed_writes_.load(std::memory_order_relaxed);
   const uint64_t start = Now();
   requested_ = std::max(requested_, accepted_);
   validator_cv_.notify_one();

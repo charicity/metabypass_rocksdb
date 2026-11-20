@@ -9,6 +9,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <future>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -147,7 +148,6 @@ class BackupTestAccess {
       backup->candidate_->seq = capture;
     }
     std::vector<Backup::Event> batch;
-    batch.reserve(64);
     std::vector<size_t> sizes;
     while (auto* channel = backup->NextChannel()) {
       if (channel->queue.front().seq > boundary) break;
@@ -192,6 +192,30 @@ class BackupTestAccess {
     uint64_t published, requested, applied, accepted;
     bool ready, capture, capacity, size, empty, stopping, error;
   };
+  static void CheckDirtyWriteCompletions(Backup* backup) {
+    auto finish_write = [backup] {
+      std::shared_lock<std::shared_mutex> fence(backup->WriteFence());
+      backup->WriteCompleted();
+    };
+    finish_write();
+    std::unique_lock<std::mutex> queue(backup->mutex_);
+    const auto first_deadline = backup->dirty_since_micros_.load();
+    ASSERT_NE(first_deadline, 0U);
+    // While the event queue is locked, already-dirty writers must still
+    // complete and retain the first deadline.
+    auto a = std::async(std::launch::async, finish_write);
+    auto b = std::async(std::launch::async, finish_write);
+    const auto until =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    EXPECT_EQ(a.wait_until(until), std::future_status::ready);
+    EXPECT_EQ(b.wait_until(until), std::future_status::ready);
+    queue.unlock();
+    a.get();
+    b.get();
+    std::unique_lock<std::shared_mutex> fence(backup->WriteFence());
+    EXPECT_EQ(backup->completed_writes_.load(), 3U);
+    EXPECT_EQ(backup->dirty_since_micros_.load(), first_deadline);
+  }
   static void CheckIndependentReasons(Backup* backup) {
     EXPECT_FALSE(backup->MirrorReady());
     backup->requested_ = 1;
@@ -4695,6 +4719,12 @@ TEST_F(MetaBypassTest, BackgroundBlockedDoesNotBlockSmallForegroundWrite) {
   SyncPoint::GetInstance()->DisableProcessing();
   ASSERT_OK(db_->SyncBackup());
 }
+TEST_F(MetaBypassTest, DirtyWriteCompletionsBypassQueueMutex) {
+  auto storage =
+      std::make_shared<metabypass::SeparatedStorage>(fs_, index_, m_.data_dir);
+  metabypass::Backup backup(storage, index_, m_, o_);
+  metabypass::BackupTestAccess::CheckDirtyWriteCompletions(&backup);
+}
 TEST_F(MetaBypassTest, MirrorReadinessIndependentProgressReasons) {
   auto storage =
       std::make_shared<metabypass::SeparatedStorage>(fs_, index_, m_.data_dir);
@@ -6037,7 +6067,7 @@ TEST_F(MetaBypassTest,
 }
 TEST_F(MetaBypassTest, WalCoalescingSelectionBoundaries) {
   using Input = metabypass::BackupTestAccess::Input;
-  CoalesceSelector(std::vector<Input>(65), {64, 1});
+  CoalesceSelector(std::vector<Input>(257), {256, 1});
   CoalesceSelector(
       std::vector<Input>(3, Input{"000001.log", std::string(32768, 'a')}),
       {2, 1});
@@ -6066,7 +6096,9 @@ TEST_F(MetaBypassTest, WalCoalescingContentAndLogicalHooks) {
   EXPECT_EQ(sequences, (std::vector<uint64_t>{1, 2, 3}));
 }
 TEST_F(MetaBypassTest, WalCoalescingLogicalFailuresPreservePrefix) {
-  for (size_t fail_at : {1U, 2U, 3U}) {
+  constexpr size_t kEvents = 256;
+  const std::vector<metabypass::BackupTestAccess::Input> input(kEvents);
+  for (size_t fail_at : {size_t{1}, kEvents / 2, kEvents}) {
     SCOPED_TRACE(fail_at);
     size_t seen = 0;
     SyncPoint::GetInstance()->SetCallBack(
@@ -6077,8 +6109,7 @@ TEST_F(MetaBypassTest, WalCoalescingLogicalFailuresPreservePrefix) {
     SyncPoint::GetInstance()->EnableProcessing();
     std::vector<std::string> calls;
     if (fail_at > 1) calls.push_back(std::string(fail_at - 1, 'x'));
-    CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(3), false,
-                  fail_at - 1, calls);
+    CoalesceDrain(input, false, fail_at - 1, calls);
     EXPECT_EQ(seen, fail_at);
     SyncPoint::GetInstance()->DisableProcessing();
   }
@@ -6097,8 +6128,8 @@ TEST_F(MetaBypassTest, WalCoalescingPrefixIOErrorPrecedesLogicalFailure) {
 }
 TEST_F(MetaBypassTest, WalCoalescingPartialWriteIsNotAcknowledgedOrRetried) {
   SyncPoint::GetInstance()->EnableProcessing();
-  CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(4), true, 0,
-                {"xxxx"});
+  CoalesceDrain(std::vector<metabypass::BackupTestAccess::Input>(257), true, 0,
+                {std::string(256, 'x')});
 }
 
 TEST_F(MetaBypassTest, ChannelMetadataOnlyDrainsOnTimer) {

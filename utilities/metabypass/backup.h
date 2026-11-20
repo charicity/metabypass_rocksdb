@@ -196,12 +196,17 @@ class Backup : public FileSystemWrapper {
   uint64_t generation_ = 0;
   DB* db_ = nullptr;
   std::string identity_;
-  uint64_t completed_writes_ = 0, published_writes_ = 0;
+  // Writers increment under the shared write fence. Capture reads the final
+  // count under the exclusive fence, alongside the native sequence.
+  std::atomic<uint64_t> completed_writes_{0};
+  uint64_t published_writes_ = 0;
   uint64_t native_changes_ = 0, published_native_changes_ = 0;
   uint64_t requested_point_ = 0, published_request_ = 0;
   bool capture_done_ = false;
   Status capture_status_;
-  uint64_t dirty_since_micros_ = 0;
+  // Only modified under mutex_. Writers can check for a pending deadline
+  // without taking the queue lock.
+  std::atomic<uint64_t> dirty_since_micros_{0};
   bool stopping_ = false;
   bool active_ = false;
   bool candidate_busy_ = false, mirror_done_ = false;

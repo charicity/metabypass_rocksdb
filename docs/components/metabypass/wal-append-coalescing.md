@@ -1,6 +1,6 @@
 # WAL Append coalescing
 
-The mirror worker coalesces already queued WAL Append events, up to 64 events
+The mirror worker coalesces already queued WAL Append events, up to 256 events
 and 64 KiB. It never waits to form a batch. Empty and oversized Append events,
 metadata operations, and control operations remain individual operations.
 The global sequence must be adjacent and the file name identical; intervening

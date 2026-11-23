@@ -5,9 +5,11 @@
 #pragma once
 
 #ifdef ROCKSDB_MB_WAL_BREAKDOWN
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 
 #include "rocksdb/rocksdb_namespace.h"
 
@@ -35,6 +37,52 @@ inline uint64_t Clock() {
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
+
+enum BackgroundStage {
+  mirror_selection_hold,
+  mirror_completion_hold,
+  checkpoint_gate_hold,
+  background_stage_count
+};
+
+class BackgroundSample {
+ public:
+  struct Snapshot {
+    uint64_t count = 0;
+    uint64_t total_ns = 0;
+    uint64_t max_ns = 0;
+  };
+
+  void Record(uint64_t elapsed) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++sample_.count;
+    sample_.total_ns += elapsed;
+    if (elapsed > sample_.max_ns) sample_.max_ns = elapsed;
+  }
+
+  Snapshot Read() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return sample_;
+  }
+
+ private:
+  std::mutex mutex_;
+  Snapshot sample_;
+};
+
+inline std::array<BackgroundSample, background_stage_count> background_samples;
+
+class BackgroundSpan {
+ public:
+  explicit BackgroundSpan(BackgroundStage stage)
+      : stage_(stage), begin_(Clock()) {}
+
+  void End() { background_samples[stage_].Record(Clock() - begin_); }
+
+ private:
+  BackgroundStage stage_;
+  uint64_t begin_;
+};
 
 // Only the sampled writer thread owns this buffer. Bound memory in the locked
 // path and reject an overflowing sample in the driver after the API returns.
@@ -109,7 +157,11 @@ struct MirrorAppend {
   ROCKSDB_NAMESPACE::metabypass::wal_probe::Span name( \
       ROCKSDB_NAMESPACE::metabypass::wal_probe::stage, enabled)
 #define MB_WAL_END(name) name.End()
+#define MB_WAL_BG_SPAN(name, stage)                              \
+  ROCKSDB_NAMESPACE::metabypass::wal_probe::BackgroundSpan name( \
+      ROCKSDB_NAMESPACE::metabypass::wal_probe::stage)
 #else
 #define MB_WAL_SPAN(name, stage, enabled) ((void)0)
 #define MB_WAL_END(name) ((void)0)
+#define MB_WAL_BG_SPAN(name, stage) ((void)0)
 #endif

@@ -862,7 +862,7 @@ Status MetaBypassDB::WriteImpl(const WriteOptions& o, WriteBatch* b,
   if (!s.ok()) return s;
   {
     MB_WAL_SPAN(wait, write_fence_wait, true);
-    std::shared_lock<std::shared_mutex> fence(impl_->backup->WriteFence());
+    auto writer = impl_->backup->EnterWrite();
     MB_WAL_END(wait);
     s = impl_->db->Write(o, b);
     if (s.ok()) impl_->backup->WriteCompleted();

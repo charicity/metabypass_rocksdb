@@ -153,10 +153,21 @@ class BackupTestAccess {
     }
     std::vector<Backup::Event> batch;
     std::vector<size_t> sizes;
-    while (auto* channel = backup->NextChannel()) {
-      if (backup->FrontSequence(*channel) > boundary) break;
-      backup->TakeBatch(channel, boundary, &batch);
-      sizes.push_back(batch.size());
+    const auto wal_tail = backup->wal_queue_.Published();
+    boundary = std::min(boundary, backup->Accepted());
+    while (auto* channel = backup->NextChannel(wal_tail)) {
+      const auto first = backup->FrontSequence(*channel);
+      if (first > boundary) break;
+      if (backup->IsWalChannel(*channel)) {
+        batch.clear();
+        const auto last = backup->WalBatchLimit(first, boundary);
+        backup->TakeWalBatch(first, last, &batch);
+        backup->wal_taken_ += batch.size();
+        sizes.push_back(batch.size());
+      } else {
+        backup->TakeMetadataEvent();
+        sizes.push_back(1);
+      }
     }
     return sizes;
   }
@@ -172,16 +183,23 @@ class BackupTestAccess {
     backup->stopping_ = true;
     backup->Run();
     EXPECT_EQ(backup->applied_, successful);
-    EXPECT_EQ(backup->QueuedBytes(), 0U);
+    const auto stats = backup->Stats();
+    EXPECT_EQ(stats.queued_bytes, 0U);
+    uint64_t mirrored_bytes = 0;
+    for (size_t i = 0; i < successful; ++i) {
+      mirrored_bytes += input[i].bytes.size();
+    }
+    EXPECT_EQ(stats.mirrored_wal_bytes, mirrored_bytes);
     EXPECT_EQ(calls, expected_calls);
     if (partial) {
-      EXPECT_EQ(backup->stats_.error, Status::IOError("partial batch write"));
+      EXPECT_EQ(stats.error.ToString(),
+                Status::IOError("partial batch write").ToString());
       ASSERT_EQ(calls.size(), 1U);
       EXPECT_EQ(bytes, calls.front().substr(0, calls.front().size() / 2));
     } else if (successful != input.size()) {
-      EXPECT_TRUE(backup->stats_.error.IsIOError());
+      EXPECT_TRUE(stats.error.IsIOError());
     } else {
-      EXPECT_OK(backup->stats_.error);
+      EXPECT_OK(stats.error);
       std::string expected;
       for (const auto& item : input) expected += item.bytes;
       EXPECT_EQ(bytes, expected);
@@ -194,7 +212,7 @@ class BackupTestAccess {
   };
   static void CheckDirtyWriteCompletions(Backup* backup) {
     auto finish_write = [backup] {
-      std::shared_lock<std::shared_mutex> fence(backup->WriteFence());
+      auto writer = backup->EnterWrite();
       backup->WriteCompleted();
     };
     finish_write();
@@ -212,7 +230,7 @@ class BackupTestAccess {
     queue.unlock();
     a.get();
     b.get();
-    std::unique_lock<std::shared_mutex> fence(backup->WriteFence());
+    WriteGate::Closure closure(backup->write_gate_);
     EXPECT_EQ(backup->completed_writes_.load(), 3U);
     EXPECT_EQ(backup->dirty_since_micros_.load(), first_deadline);
   }
@@ -242,6 +260,7 @@ class BackupTestAccess {
     EXPECT_TRUE(backup->MirrorReady());
     backup->stats_.queued_bytes = 0;
     backup->wal_queue_.Pop();
+    ++backup->wal_taken_;
     backup->ReturnWalBytes(charge);
     backup->candidate_ = std::make_unique<Backup::Candidate>();
     EXPECT_TRUE(backup->MirrorReady());
@@ -1263,17 +1282,30 @@ class MetaBypassTest : public testing::Test {
     auto storage = std::make_shared<metabypass::SeparatedStorage>(fs_, index_,
                                                                   m_.data_dir);
     metabypass::Backup backup(storage, index_, m_);
-    const auto charge = input.size() * (sizeof(std::string) * 3 + 1);
+    const size_t header = metabypass::BackupTestAccess::EventHeaderCharge();
+    std::vector<size_t> remaining_charge(input.size() + 1);
+    for (size_t i = input.size(); i > 0; --i) {
+      remaining_charge[i - 1] = remaining_charge[i] + header +
+                                input[i - 1].name.size() +
+                                input[i - 1].bytes.size();
+    }
     SyncPoint::GetInstance()->SetCallBack(
-        "MetaBypass::WalAppendBatch", [&](void*) {
-          // A lock-free stats call proves I/O hooks run outside the queue lock;
-          // all batch reservations are still retained before physical Append.
+        "MetaBypass::WalAppendBatch", [&](void* arg) {
+          const auto first = (*static_cast<std::array<uint64_t, 3>*>(arg))[0];
+          ASSERT_GT(first, 0U);
+          ASSERT_LE(first, input.size());
+          // Stats takes the queue lock. Selected but uncommitted events must
+          // remain charged through the physical Append.
           auto stats = backup.Stats();
           EXPECT_OK(stats.error);
-          EXPECT_GE(stats.queued_bytes, charge);
+          EXPECT_EQ(stats.queued_bytes, remaining_charge[first - 1]);
         });
     metabypass::BackupTestAccess::Drain(&backup, input, partial, successful,
                                         calls);
+    const auto stats = backup.Stats();
+    EXPECT_LE(stats.peak_queued_bytes, m_.wal_queue_capacity);
+    EXPECT_EQ(stats.peak_queued_bytes, remaining_charge.front());
+    stats.error.PermitUncheckedError();
   }
   void BlockFirstApply(TestGate* gate) {
     // Only the single mirror thread invokes this callback.
@@ -2304,6 +2336,184 @@ TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
   ASSERT_NO_FATAL_FAILURE(Open());
   Check("fenced", "value");
 }
+
+#ifndef NDEBUG
+TEST_F(MetaBypassTest, WriteGateCoversPinnedWriteAndClearsCheckpointDeadline) {
+  o_.enable_blob_files = false;
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  TestGate pinned;
+  std::atomic<bool> observing{false}, reported{false};
+  std::promise<bool> idle;
+  auto scheduling = idle.get_future();
+  auto* sync = SyncPoint::GetInstance();
+  auto report = [&](bool is_idle) {
+    if (observing.load() && !reported.exchange(true)) idle.set_value(is_idle);
+  };
+  Defer cleanup([&] {
+    pinned.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  sync->SetCallBack("MetaBypass::CheckpointIdle", [&](void*) { report(true); });
+  sync->SetCallBack("MetaBypass::CheckpointDeadline",
+                    [&](void*) { report(false); });
+  sync->SetCallBack("MetaBypass::NativeFilesPinned",
+                    [&](void*) { pinned.Block(); });
+  sync->EnableProcessing();
+  auto checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  EXPECT_TRUE(pinned.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto writer = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "pinned", "value");
+  });
+  const auto completed = writer.wait_for(std::chrono::seconds(10));
+  observing = true;
+  pinned.Release();
+  EXPECT_EQ(completed, std::future_status::ready);
+  ASSERT_OK(writer.get());
+  ASSERT_OK(checkpoint.get());
+  ASSERT_EQ(scheduling.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  EXPECT_TRUE(scheduling.get()) << "covered write left a checkpoint deadline";
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_EQ(after.checkpoint_captures, before.checkpoint_captures + 1);
+  std::string recovery;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), PublishedPoint() + "/RECOVERY", &recovery));
+  std::istringstream input(recovery);
+  uint64_t sequence = 0;
+  ASSERT_TRUE(bool(input >> sequence));
+  EXPECT_EQ(sequence, 1U);
+}
+
+TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
+  EnableDirectWrite();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  std::array<TestGate, 2> admitted;
+  TestGate closed, waiting, capturing;
+  std::atomic<size_t> admissions{0};
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    for (auto& gate : admitted) gate.Release();
+    closed.Release();
+    waiting.Release();
+    capturing.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  sync->SetCallBack("MetaBypass::WriteGateAdmitted", [&](void*) {
+    const size_t index = admissions.fetch_add(1);
+    if (index < admitted.size()) admitted[index].Block();
+  });
+  sync->SetCallBack("MetaBypass::WriteGateClosed",
+                    [&](void*) { closed.Block(); });
+  sync->SetCallBack("MetaBypass::WriteGateAdmissionBlocked",
+                    [&](void*) { waiting.Block(); });
+  sync->SetCallBack("MetaBypass::NativeCaptureStatus", [&](void* arg) {
+    EXPECT_OK(*static_cast<Status*>(arg));
+    capturing.Block();
+  });
+  sync->EnableProcessing();
+  auto first = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "first", "one");
+  });
+  EXPECT_TRUE(admitted[0].WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto second = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "second", "two");
+  });
+  EXPECT_TRUE(admitted[1].WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  EXPECT_TRUE(closed.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto late = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "late", "three");
+  });
+  EXPECT_TRUE(waiting.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  waiting.Release();
+  closed.Release();
+  admitted[0].Release();
+  EXPECT_OK(first.get());
+  EXPECT_FALSE(capturing.WaitUntilBlockedFor(std::chrono::seconds(0)));
+  EXPECT_EQ(admissions.load(), 2U);
+  admitted[1].Release();
+  EXPECT_OK(second.get());
+  EXPECT_TRUE(capturing.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_EQ(admissions.load(), 2U);
+  EXPECT_EQ(late.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  capturing.Release();
+  EXPECT_OK(late.get());
+  EXPECT_OK(checkpoint.get());
+  EXPECT_EQ(admissions.load(), 3U);
+  sync->DisableProcessing();
+
+  const std::string point = PublishedPoint();
+  const std::string one = "one", two = "two", three = "three";
+  CheckPointValue(point, "first", &one);
+  CheckPointValue(point, "second", &two);
+  CheckPointValue(point, "late", nullptr);
+  ASSERT_OK(db_->SyncBackup());
+  CheckPointValue(PublishedPoint(), "late", &three);
+}
+
+TEST_F(MetaBypassTest, WriteGateReopensAfterCheckpointCaptureFailure) {
+  EnableDirectWrite();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  WriteOptions durable;
+  durable.sync = true;
+  ASSERT_OK(db_->Put(durable, "base", "value"));
+  const std::string old_point = PublishedPoint();
+  const Status failure = Status::IOError("injected checkpoint capture failure");
+  TestGate capturing, waiting, reopened;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    capturing.Release();
+    waiting.Release();
+    reopened.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  sync->SetCallBack("MetaBypass::NativeCaptureStatus", [&](void* arg) {
+    capturing.Block();
+    *static_cast<Status*>(arg) = failure;
+  });
+  sync->SetCallBack("MetaBypass::WriteGateAdmissionBlocked",
+                    [&](void*) { waiting.Block(); });
+  sync->SetCallBack("MetaBypass::WriteGateReopened",
+                    [&](void*) { reopened.Block(); });
+  sync->EnableProcessing();
+  auto checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  EXPECT_TRUE(capturing.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto late = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "late", "admitted after capture");
+  });
+  EXPECT_TRUE(waiting.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_EQ(late.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  waiting.Release();
+  capturing.Release();
+  EXPECT_TRUE(reopened.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  const auto completed = late.wait_for(std::chrono::seconds(10));
+  EXPECT_EQ(completed, std::future_status::ready);
+  // The waiter can make progress while the validator is still unwinding.
+  if (completed == std::future_status::ready) {
+    EXPECT_OK(late.get());
+  }
+  reopened.Release();
+  if (late.valid()) late.get().PermitUncheckedError();
+  EXPECT_EQ(checkpoint.get().ToString(), failure.ToString());
+  sync->DisableProcessing();
+  Check("late", "admitted after capture");
+  EXPECT_EQ(PublishedPoint(), old_point);
+  EXPECT_EQ(db_->Close().ToString(), failure.ToString());
+}
+#endif
+
 TEST_F(MetaBypassTest, RecoverySamplingThreadOption) {
   ASSERT_TRUE(m_.enable_recovery_time_sampling);
   for (bool enabled : {true, false}) {
@@ -6324,6 +6534,10 @@ TEST_F(MetaBypassTest, WalCoalescingSelectionBoundaries) {
   CoalesceSelector(std::vector<Input>(6), {3}, 3);
   CoalesceSelector(std::vector<Input>(6), {3, 3}, UINT64_MAX, 3);
 }
+TEST_F(MetaBypassTest, WalBatchSelectionHonorsKnownCheckpointCutoff) {
+  using Input = metabypass::BackupTestAccess::Input;
+  CoalesceSelector(std::vector<Input>(520), {256, 3, 256, 5}, UINT64_MAX, 259);
+}
 TEST_F(MetaBypassTest, WalCoalescingContentAndLogicalHooks) {
   std::vector<uint64_t> sequences;
   SyncPoint::GetInstance()->SetCallBack(
@@ -6730,6 +6944,66 @@ TEST_F(MetaBypassTest, WalSpscMetadataAnchorAndCrossChannelRename) {
                   .IsNotFound());
 }
 
+TEST_F(MetaBypassTest, WalBatchSelectionAllowsNewMetadataAndWalPublication) {
+  m_.batch_bytes = 1;
+  TestGate applying, selecting;
+  std::vector<uint64_t> sequences;
+  std::vector<std::array<uint64_t, 3>> batches;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    applying.Release();
+    selecting.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  BlockFirstApply(&applying);
+  sync->SetCallBack("MetaBypass::WalBatchSelected", [&](void* arg) {
+    const auto& range = *static_cast<std::array<uint64_t, 2>*>(arg);
+    if (range[0] == 3) {
+      EXPECT_EQ(range[1], 4U);
+      selecting.Block();
+    }
+  });
+  sync->SetCallBack("MetaBypass::ApplySequence", [&](void* arg) {
+    sequences.push_back(*static_cast<uint64_t*>(arg));
+  });
+  sync->SetCallBack("MetaBypass::WalAppendBatch", [&](void* arg) {
+    batches.push_back(*static_cast<std::array<uint64_t, 3>*>(arg));
+  });
+  sync->EnableProcessing();
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  ASSERT_TRUE(applying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  ASSERT_OK(wal->Append("w1", IOOptions(), nullptr));
+  ASSERT_OK(wal->Append("w2", IOOptions(), nullptr));
+  applying.Release();
+  ASSERT_TRUE(selecting.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto writer = std::async(std::launch::async, [&] {
+    auto status = metadata->Append("meta", IOOptions(), nullptr);
+    if (status.ok()) status = wal->Append("w3", IOOptions(), nullptr);
+    return status;
+  });
+  // Both operations must publish before the mirror resumes selecting from its
+  // earlier WAL range. The in-flight range cannot absorb either operation.
+  const auto completed = writer.wait_for(std::chrono::seconds(10));
+  selecting.Release();
+  EXPECT_EQ(completed, std::future_status::ready);
+  ASSERT_OK(writer.get());
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+  const std::vector<std::array<uint64_t, 3>> expected_batches{{{3, 2, 4}}};
+  EXPECT_EQ(batches, expected_batches);
+  EXPECT_EQ(sequences, (std::vector<uint64_t>{1, 2, 3, 4, 5, 6, 7, 8}));
+  const std::string work = m_.backup_dir + "/work/";
+  std::string bytes;
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "000001.log", &bytes));
+  EXPECT_EQ(bytes, "w1w2w3");
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "MANIFEST-000002", &bytes));
+  EXPECT_EQ(bytes, "meta");
+}
+
 TEST_F(MetaBypassTest, WalSpscCapacityWaiterWakesAfterDrain) {
   m_.wal_queue_capacity = m_.metadata_queue_capacity = 4096;
   m_.batch_bytes = QueueBudget(m_);
@@ -6791,6 +7065,12 @@ TEST_F(MetaBypassTest, WalSpscStopDrainsBelowThresholdAcrossSegments) {
   m_.wal_queue_capacity = 256 * 1024;
   m_.batch_bytes = QueueBudget(m_);
   m_.interval_ms = 60000;
+  std::vector<std::array<uint64_t, 3>> batches;
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::WalAppendBatch", [&](void* arg) {
+    batches.push_back(*static_cast<std::array<uint64_t, 3>*>(arg));
+  });
+  sync->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
   std::unique_ptr<FSWritableFile> wal, metadata;
   ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
@@ -6812,6 +7092,12 @@ TEST_F(MetaBypassTest, WalSpscStopDrainsBelowThresholdAcrossSegments) {
   EXPECT_OK(after.error);
   EXPECT_EQ(after.queued_bytes, 0U);
   EXPECT_EQ(after.mirrored_wal_bytes, expected.size());
+  sync->DisableProcessing();
+  // The create event occupies the first slot. The full append batches must
+  // therefore run across segment boundaries without an extra physical write.
+  const std::vector<std::array<uint64_t, 3>> expected_batches{
+      {3, 256, 8192}, {259, 256, 8192}, {515, 88, 2816}};
+  EXPECT_EQ(batches, expected_batches);
   const std::string work = m_.backup_dir + "/work/";
   std::string bytes;
   ASSERT_OK(metabypass::Read(fs_.get(), work + "000001.log", &bytes));

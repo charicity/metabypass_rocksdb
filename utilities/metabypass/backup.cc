@@ -110,6 +110,67 @@ Status RemoveRetiredPoint(FileSystem* fs, const std::string& path) {
   return fs->DeleteDir(path, IOOptions(), nullptr);
 }
 }  // namespace
+
+void WriteGate::Admit() {
+  uint64_t state = state_.load(std::memory_order_relaxed);
+  for (;;) {
+    if (state & kClosed) {
+      TEST_SYNC_POINT("MetaBypass::WriteGateAdmissionBlocked");
+      Wait(state, std::memory_order_relaxed);
+      state = state_.load(std::memory_order_relaxed);
+      continue;
+    }
+    assert(state < kClosed - 1);
+    if (state_.compare_exchange_weak(state, state + 1,
+                                     std::memory_order_acquire,
+                                     std::memory_order_relaxed)) {
+      TEST_SYNC_POINT("MetaBypass::WriteGateAdmitted");
+      return;
+    }
+  }
+}
+
+void WriteGate::Leave() {
+  if (state_.fetch_sub(1, std::memory_order_release) == kClosed + 1) Notify();
+}
+
+void WriteGate::CloseAndDrain() {
+  uint64_t state = state_.fetch_or(kClosed, std::memory_order_acquire);
+  assert(!(state & kClosed));
+  state |= kClosed;
+  TEST_SYNC_POINT("MetaBypass::WriteGateClosed");
+  while (state != kClosed) {
+    Wait(state, std::memory_order_acquire);
+    state = state_.load(std::memory_order_acquire);
+  }
+}
+
+void WriteGate::Reopen() {
+  assert(state_.load(std::memory_order_relaxed) == kClosed);
+  state_.store(0, std::memory_order_release);
+  Notify();
+  TEST_SYNC_POINT("MetaBypass::WriteGateReopened");
+}
+
+void WriteGate::Wait(uint64_t observed, std::memory_order order) {
+#if ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
+  state_.wait(observed, order);
+#else
+  std::unique_lock<std::mutex> lock(wait_mutex_);
+  wait_cv_.wait(lock, [&] { return state_.load(order) != observed; });
+#endif
+}
+
+void WriteGate::Notify() {
+#if ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
+  state_.notify_all();
+#else
+  // Synchronize with the predicate check and transition to waiting.
+  std::lock_guard<std::mutex> lock(wait_mutex_);
+  wait_cv_.notify_all();
+#endif
+}
+
 class MirrorWriter : public FSWritableFileOwnerWrapper {
  public:
   MirrorWriter(std::unique_ptr<FSWritableFile> file, Backup* backup,
@@ -148,23 +209,22 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   IOStatus AppendInternal(const Slice& bytes, const IOOptions& o,
                           const DataVerificationInfo* verification,
                           IODebugContext* d) {
+    const bool wal = backup_->IsWalChannel(channel_);
 #ifdef ROCKSDB_MB_WAL_BREAKDOWN
-    wal_probe::MirrorAppend append(wal_probe::active &&
-                                   backup_->IsWalChannel(channel_));
+    wal_probe::MirrorAppend append(wal_probe::active && wal);
 #endif
-    MB_WAL_SPAN(wait, operations_wait, wal_probe::mirror_append);
-    std::lock_guard<std::mutex> serial(channel_.operations);
-    MB_WAL_END(wait);
     MB_WAL_SPAN(build, event_build, wal_probe::mirror_append);
     Backup::Event e{Backup::Kind::kAppend, name_, {}};
     e.charge = sizeof(Backup::ChargedEventLayout) + name_.size() + bytes.size();
     MB_WAL_END(build);
+    MB_WAL_SPAN(wait, operations_wait, wal_probe::mirror_append);
+    std::unique_lock<std::mutex> serial(channel_.operations);
+    MB_WAL_END(wait);
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) return AsIO(s);
     TEST_SYNC_POINT_CALLBACK("MetaBypass::PrimaryReserved", &e.name);
     MB_WAL_SPAN(copy, payload_copy, wal_probe::mirror_append);
-    if (backup_->IsWalChannel(channel_) && bytes.size() >= 32 &&
-        bytes.size() <= 1024) {
+    if (wal && bytes.size() >= 32 && bytes.size() <= 1024) {
       auto& block = backup_->wal_block_;
       auto& used = backup_->wal_block_used_;
       if (!block || sizeof(block->data) - used < bytes.size()) {
@@ -183,7 +243,13 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
     IOStatus primary = verification
                            ? target()->Append(bytes, o, *verification, d)
                            : target()->Append(bytes, o, d);
-    backup_->Finish(channel_, std::move(e), primary);
+    if (wal) {
+      const bool wake = backup_->FinishWal(std::move(e), primary);
+      serial.unlock();
+      if (wake) backup_->SignalMirror();
+    } else {
+      backup_->Finish(channel_, std::move(e), primary);
+    }
     return primary;
   }
   IOStatus Control(Backup::Kind kind, uint64_t n, const IOOptions& o,
@@ -251,13 +317,19 @@ Backup::Event Backup::WalQueue::Pop() {
   auto& slot = head->events[head_slot++];
   Event event = std::move(*slot);
   slot.reset();
-  ++head_count;
   return event;
 }
 
 uint64_t Backup::WalQueue::ChargedBytes() const {
-  const auto mirrored = returned.load(std::memory_order_relaxed);
-  return reserved.load(std::memory_order_acquire) - mirrored;
+  uint64_t returned_before;
+  uint64_t reserved_snapshot;
+  // Refunds run outside the queue mutex. Bracket the reservation read with
+  // the same returned total to avoid mixing counts from different batches.
+  do {
+    returned_before = returned.load(std::memory_order_acquire);
+    reserved_snapshot = reserved.load(std::memory_order_acquire);
+  } while (returned_before != returned.load(std::memory_order_acquire));
+  return reserved_snapshot - returned_before;
 }
 
 Backup::Backup(std::shared_ptr<SeparatedStorage> storage, std::string index,
@@ -511,10 +583,16 @@ void Backup::CloseWalQueue() {
   }
 }
 
-void Backup::ReturnWalBytes(uint64_t charge) {
+void Backup::ReturnWalBytes(uint64_t charge, uint64_t mirrored_bytes) {
   auto& queue = wal_queue_;
   std::lock_guard<std::mutex> lock(queue.space_mutex);
   const uint64_t returned = queue.returned.load(std::memory_order_relaxed);
+  if (mirrored_bytes != 0) {
+    queue.mirrored_bytes.store(
+        queue.mirrored_bytes.load(std::memory_order_relaxed) + mirrored_bytes,
+        std::memory_order_relaxed);
+  }
+  // Stats acquires returned before loading the mirrored byte count.
   queue.returned.store(returned + charge, std::memory_order_release);
   if (queue.waiting_for_space.load(std::memory_order_relaxed)) {
     // Compare the bytes returned by this batch with the unsigned distance to
@@ -571,25 +649,28 @@ void Backup::Fail(const Status& status) {
   WakeMetadataCapacity();
   sync_cv_.notify_all();
 }
-void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
+bool Backup::FinishWal(Event&& e, const Status& primary) {
   if (!primary.ok()) Fail(primary);
+  MB_WAL_SPAN(bookkeeping, finish_bookkeeping, wal_probe::mirror_append);
+  auto& queue = wal_queue_;
+  const auto charge = e.charge;
+  if (!primary.ok() || !queue.Publish(std::move(e))) {
+    queue.reserved_total -= charge;
+    queue.reserved.store(queue.reserved_total, std::memory_order_release);
+    return false;
+  }
+  const uint64_t threshold = wal_wake_charge_.load();
+  if (queue.reserved_total - queue.cached_returned < threshold) return false;
+  queue.cached_returned = queue.returned.load(std::memory_order_acquire);
+  return queue.reserved_total - queue.cached_returned >= threshold;
+}
+
+void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
   if (IsWalChannel(channel)) {
-    MB_WAL_SPAN(bookkeeping, finish_bookkeeping, wal_probe::mirror_append);
-    auto& queue = wal_queue_;
-    const auto charge = e.charge;
-    if (primary.ok() && queue.Publish(std::move(e))) {
-      const uint64_t threshold = wal_wake_charge_.load();
-      if (queue.reserved_total - queue.cached_returned >= threshold) {
-        queue.cached_returned = queue.returned.load(std::memory_order_acquire);
-        if (queue.reserved_total - queue.cached_returned >= threshold)
-          SignalMirror();
-      }
-    } else {
-      queue.reserved_total -= charge;
-      queue.reserved.store(queue.reserved_total, std::memory_order_release);
-    }
+    if (FinishWal(std::move(e), primary)) SignalMirror();
     return;
   }
+  if (!primary.ok()) Fail(primary);
   std::lock_guard<std::mutex> lock(mutex_);
   if (primary.ok() && stats_.error.ok() && !stopping_) {
     ++accepted_;
@@ -1133,11 +1214,11 @@ bool Backup::QueuesEmpty() const {
   // Read the WAL tail even with pending metadata. Together with the producer
   // reading wal_wake_charge_ after publishing, this covers a simultaneous
   // WAL publication and metadata threshold update.
-  const bool wal_empty = wal_queue_.head_count == wal_queue_.Published();
+  const bool wal_empty = wal_taken_ == wal_queue_.Published();
   return wal_empty && metadata_channel_.queue.empty();
 }
-Backup::Channel* Backup::NextChannel() {
-  if (wal_queue_.head_count == wal_queue_.Published())
+Backup::Channel* Backup::NextChannel(uint64_t wal_tail) {
+  if (wal_taken_ == wal_tail)
     return metadata_channel_.queue.empty() ? nullptr : &metadata_channel_;
   if (metadata_channel_.queue.empty()) return &wal_channel_;
   return FrontSequence(wal_channel_) < FrontSequence(metadata_channel_)
@@ -1151,15 +1232,20 @@ uint64_t Backup::FrontSequence(const Channel& channel) const {
   // at the current WAL head belong before the next WAL event, including ties.
   // The picker holds mutex_, so it cannot pass metadata assigning its sequence.
   const uint64_t metadata_taken = accepted_ - metadata_channel_.queue.size();
-  return wal_queue_.head_count + metadata_taken + 1;
+  return wal_taken_ + metadata_taken + 1;
 }
 
-Backup::Event Backup::TakeEvent(Channel& channel, uint64_t seq) {
-  if (IsWalChannel(channel)) {
-    Event event = wal_queue_.Pop();
-    event.seq = seq;
-    return event;
-  }
+uint64_t Backup::WalBatchLimit(uint64_t first, uint64_t boundary) const {
+  // The first metadata event ends the globally adjacent WAL prefix. A known
+  // capture cut also ends a batch that starts at or before that cut.
+  if (!metadata_channel_.queue.empty())
+    boundary = std::min(boundary, metadata_channel_.queue.front().seq - 1);
+  if (candidate_ && !capture_done_ && first <= candidate_->seq)
+    boundary = std::min(boundary, candidate_->seq);
+  return boundary;
+}
+
+Backup::Event Backup::TakeMetadataEvent() {
   Event event = std::move(metadata_channel_.queue.front());
   metadata_channel_.queue.pop_front();
   return event;
@@ -1173,29 +1259,26 @@ void Backup::WakeMetadataCapacity() {
     metadata_channel_.capacity.notify_one();
   }
 }
-void Backup::TakeBatch(Channel* channel, uint64_t boundary,
-                       std::vector<Event>* batch) {
-  batch->clear();
-  batch->push_back(TakeEvent(*channel, FrontSequence(*channel)));
+void Backup::TakeWalBatch(uint64_t first_seq, uint64_t last,
+                          std::vector<Event>* batch) {
+  assert(batch->empty() && first_seq <= last);
+  batch->push_back(wal_queue_.Pop());
+  batch->back().seq = first_seq;
   const Event& first = batch->front();
   constexpr size_t kMaxBytes = 64 * 1024;
-  if (!IsWalChannel(*channel) || first.kind != Kind::kAppend ||
-      first.Payload().empty() || first.Payload().size() > kMaxBytes)
+  if (first.kind != Kind::kAppend || first.Payload().empty() ||
+      first.Payload().size() > kMaxBytes)
     return;
-  // Control events delimit file lifetimes. Global adjacency also excludes
-  // interleaved metadata operations. Capture still runs after the full drain.
-  if (candidate_ && !capture_done_ && first.seq <= candidate_->seq)
-    boundary = std::min(boundary, candidate_->seq);
   size_t bytes = first.Payload().size();
-  while (batch->size() < kMaxWalBatchEvents && NextChannel() == channel) {
-    const uint64_t seq = FrontSequence(*channel);
+  for (uint64_t seq = first_seq + 1;
+       seq <= last && batch->size() < kMaxWalBatchEvents; ++seq) {
     const Event& next = wal_queue_.Front();
-    if (seq > boundary || seq != batch->back().seq + 1 ||
-        next.kind != Kind::kAppend || next.name != batch->front().name ||
+    if (next.kind != Kind::kAppend || next.name != batch->front().name ||
         next.Payload().empty() || next.Payload().size() > kMaxBytes - bytes)
       break;
     bytes += next.Payload().size();
-    batch->push_back(TakeEvent(*channel, seq));
+    batch->push_back(wal_queue_.Pop());
+    batch->back().seq = seq;
   }
 }
 Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
@@ -1258,42 +1341,67 @@ void Backup::Run() {
       }
     }
     // The metadata tail and the WAL publication snapshot define this round.
-    const uint64_t boundary = Accepted();
+    const uint64_t wal_tail = wal_queue_.Published();
+    const uint64_t boundary = accepted_ + wal_tail;
     const uint64_t before_applied = applied_;
-    while (auto* channel = NextChannel()) {
-      if (FrontSequence(*channel) > boundary) break;
-      TakeBatch(channel, boundary, &batch);
+    while (true) {
+      MB_WAL_BG_SPAN(selection, mirror_selection_hold);
+      auto* channel = NextChannel(wal_tail);
+      if (!channel) break;
+      const uint64_t first = FrontSequence(*channel);
+      if (first > boundary) break;
       const bool wal = IsWalChannel(*channel);
+      const uint64_t last = wal ? WalBatchLimit(first, boundary) : first;
+      if (!wal) batch.push_back(TakeMetadataEvent());
       const bool barrier = requested_point_ > published_request_;
+      MB_WAL_END(selection);
       lock.unlock();
+      if (wal) {
+#ifndef NDEBUG
+        std::array<uint64_t, 2> selected{{first, last}};
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::WalBatchSelected", &selected);
+#endif
+        TakeWalBatch(first, last, &batch);
+      }
       HddPurposeScope purpose(barrier ? HddPurpose::kBarrier
                                       : HddPurpose::kBulk);
       size_t completed = 0;
       Status s = ApplyBatch(batch, &scratch, &completed);
-      lock.lock();
       uint64_t charge = 0;
+      uint64_t mirrored_bytes = 0;
       for (size_t i = 0; i < batch.size(); ++i) {
         const Event& e = batch[i];
         charge += e.charge;
-        if (i < completed) {
-          if (e.kind == Kind::kAppend) {
-            const size_t bytes = e.Payload().size();
-            stats_.mirrored_bytes += bytes;
-            if (wal) stats_.mirrored_wal_bytes += bytes;
-          }
-          assert(e.seq == applied_ + 1);
-          applied_ = e.seq;
-        }
+        if (i < completed && e.kind == Kind::kAppend)
+          mirrored_bytes += e.Payload().size();
       }
-      if (!wal) {
+      const size_t taken = batch.size();
+      batch.clear();
+      const bool success = s.ok();
+      if (wal && success) ReturnWalBytes(charge, mirrored_bytes);
+      lock.lock();
+      MB_WAL_BG_SPAN(completion, mirror_completion_hold);
+      assert(first == applied_ + 1);
+      applied_ += completed;
+      if (wal) {
+        wal_taken_ += taken;
+      } else {
+        stats_.mirrored_bytes += mirrored_bytes;
         assert(stats_.queued_bytes >= charge);
         stats_.queued_bytes -= charge;
         UpdateWalWakeCharge();
       }
-      if (!s.ok()) fail(s);
-      if (wal) ReturnWalBytes(charge);
+      if (!success) {
+        MB_WAL_END(completion);
+        lock.unlock();
+        Fail(s);
+        if (wal) ReturnWalBytes(charge, mirrored_bytes);
+        lock.lock();
+        break;
+      }
+      if (stats_.error.ok() && !wal) WakeMetadataCapacity();
+      MB_WAL_END(completion);
       if (!stats_.error.ok()) break;
-      if (!wal) WakeMetadataCapacity();
     }
     if (!stats_.error.ok()) break;
     if (candidate_ && !capture_done_ && applied_ >= candidate_->seq) {
@@ -1314,10 +1422,14 @@ void Backup::Run() {
     stats_.queued_bytes -= e.charge;
   }
   metadata_channel_.queue.clear();
-  uint64_t charge = 0;
   const uint64_t tail = wal_queue_.Published();
-  while (wal_queue_.head_count != tail) charge += wal_queue_.Pop().charge;
+  const uint64_t discarded = tail - wal_taken_;
+  lock.unlock();
+  uint64_t charge = 0;
+  for (uint64_t i = 0; i < discarded; ++i) charge += wal_queue_.Pop().charge;
   if (charge != 0) ReturnWalBytes(charge);
+  lock.lock();
+  wal_taken_ = tail;
   // Outstanding primary operations retain their charges until Finish.
   TEST_SYNC_POINT("MetaBypass::QueuesDiscarded");
   mirror_done_ = true;
@@ -1462,8 +1574,6 @@ void Backup::ValidateLoop() {
     HddPurposeScope purpose(requested ? HddPurpose::kBarrier
                                       : HddPurpose::kBulk);
     TEST_SYNC_POINT("MetaBypass::CheckpointBoundary");
-    // Never wait for application writes while holding the event queue lock.
-    std::unique_lock<std::shared_mutex> fence(write_fence_);
     Status s = db->DisableFileDeletions();
     const bool pinned = s.ok();
     if (s.ok()) {
@@ -1473,12 +1583,36 @@ void Backup::ValidateLoop() {
       options.wal_size_for_flush =
           direct ? 0 : std::numeric_limits<uint64_t>::max();
       options.include_wal_files = !direct;
-      const uint64_t capture_started = Now();
-      s = db->GetLiveFilesStorageInfo(options, &candidate->files);
-      TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+      uint64_t elapsed;
+      std::vector<std::string> allocated;
+      VectorLogPtr logs;
+      MB_WAL_BG_SPAN(closed_gate, checkpoint_gate_hold);
+      {
+        // File deletion is pinned before closing admission. Do not hold the
+        // event queue mutex while waiting for admitted writes to finish.
+        WriteGate::Closure admission(write_gate_);
+        const uint64_t capture_started = Now();
+        s = db->GetLiveFilesStorageInfo(options, &candidate->files);
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+        elapsed = Now() - capture_started;
+        if (s.ok()) {
+          candidate->native_sequence = db->GetLatestSequenceNumber();
+          s = storage_->GetChildren(index_, IOOptions(), &allocated, nullptr);
+          if (s.ok()) s = db->GetSortedWalFiles(logs);
+        }
+        // Freeze the mirror boundary with the native snapshot. Writes admitted
+        // after reopening belong to the next checkpoint.
+        std::lock_guard<std::mutex> boundary_lock(mutex_);
+        candidate->seq = Accepted();
+        candidate->writes = completed_writes_.load(std::memory_order_relaxed);
+        // Drained writes may have set a deadline after this candidate began.
+        // This snapshot covers them, but native changes can need another point.
+        if (s.ok() && native_changes_ == candidate->native_changes)
+          dirty_since_micros_.store(0, std::memory_order_relaxed);
+      }
+      MB_WAL_END(closed_gate);
       {
         std::lock_guard<std::mutex> stats_lock(mutex_);
-        const uint64_t elapsed = Now() - capture_started;
         ++stats_.checkpoint_captures;
         stats_.checkpoint_capture_micros += elapsed;
         if (direct) stats_.checkpoint_flush_micros += elapsed;
@@ -1492,38 +1626,21 @@ void Backup::ValidateLoop() {
         owner.replacement_contents = identity_;
         owner.size = identity_.size();
         candidate->files.push_back(std::move(owner));
-      }
-      if (s.ok()) {
-        candidate->native_sequence = db->GetLatestSequenceNumber();
         candidate->blob_floor = 1;
         for (const auto& file : candidate->files) {
           if (file.file_type == kBlobFile)
             candidate->blob_floor =
                 std::max(candidate->blob_floor, file.file_number + 1);
         }
-        std::vector<std::string> allocated;
-        s = storage_->GetChildren(index_, IOOptions(), &allocated, nullptr);
-        if (s.ok()) {
-          for (const auto& name : allocated) {
-            uint64_t number;
-            FileType type;
-            if (ParseFileName(name, &number, &type))
-              candidate->blob_floor =
-                  std::max(candidate->blob_floor, number + 1);
-          }
+        for (const auto& name : allocated) {
+          uint64_t number;
+          FileType type;
+          if (ParseFileName(name, &number, &type))
+            candidate->blob_floor = std::max(candidate->blob_floor, number + 1);
         }
-        VectorLogPtr logs;
-        if (s.ok()) s = db->GetSortedWalFiles(logs);
-        if (s.ok() && !logs.empty())
-          candidate->wal_floor = logs.front()->LogNumber();
+        if (!logs.empty()) candidate->wal_floor = logs.front()->LogNumber();
       }
-      // Freeze the mirror boundary with the native snapshot. Writes admitted
-      // after releasing the fence belong to the next checkpoint.
-      std::lock_guard<std::mutex> boundary_lock(mutex_);
-      candidate->seq = Accepted();
-      candidate->writes = completed_writes_.load(std::memory_order_relaxed);
     }
-    fence.unlock();
     TEST_SYNC_POINT("MetaBypass::NativeFilesCaptured");
     lock.lock();
     if (s.ok() && stats_.error.ok() && !stopping_) {
@@ -1677,9 +1794,9 @@ void Backup::GarbageCollectLoop() {
   gc_cv_.notify_all();
 }
 void Backup::WriteCompleted() {
-  // If capture clears the observed deadline concurrently, its exclusive fence
-  // still waits for this write. A writer admitted after that fence sees the
-  // cleared deadline or one already installed for the next checkpoint.
+  // If capture clears the observed deadline concurrently, it still drains
+  // this writer before taking a snapshot. Admission after reopening observes
+  // the cleared deadline or one already installed for the next checkpoint.
   MB_WAL_SPAN(wait, completed_wait, true);
   std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
   if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) lock.lock();
@@ -1753,6 +1870,9 @@ MetaBypassStats Backup::Stats() const {
   std::lock_guard<std::mutex> lock(mutex_);
   MetaBypassStats result = stats_;
   result.queued_bytes = QueuedBytes();
+  result.mirrored_wal_bytes =
+      wal_queue_.mirrored_bytes.load(std::memory_order_relaxed);
+  result.mirrored_bytes += result.mirrored_wal_bytes;
   result.peak_queued_bytes += wal_queue_.peak.load(std::memory_order_relaxed);
   result.backpressure_micros +=
       wal_queue_.backpressure_micros.load(std::memory_order_relaxed);

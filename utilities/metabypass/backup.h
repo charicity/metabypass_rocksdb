@@ -13,16 +13,73 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <shared_mutex>
 #include <thread>
+#include <version>
 
 #include "rocksdb/metadata.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "utilities/metabypass/native_files.h"
 #include "utilities/metabypass/separated_storage.h"
 
+// Some libc++ versions advertise atomic waiting even when the deployment
+// target predates the required runtime symbols.
+#if defined(__cpp_lib_atomic_wait) &&                             \
+    (!defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) ||   \
+     __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 110000) &&  \
+    (!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) ||  \
+     __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 140000) && \
+    (!defined(__ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__) ||      \
+     __ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__ >= 140000) &&     \
+    (!defined(__ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__) ||   \
+     __ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__ >= 70000)
+#define ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT 1
+#else
+#define ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT 0
+#endif
+
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+// A single validator closes writer admission and waits for admitted writers.
+class WriteGate {
+ public:
+  class Writer {
+   public:
+    explicit Writer(WriteGate& gate) : gate_(gate) { gate_.Admit(); }
+    ~Writer() { gate_.Leave(); }
+    Writer(const Writer&) = delete;
+    Writer& operator=(const Writer&) = delete;
+
+   private:
+    WriteGate& gate_;
+  };
+
+  class Closure {
+   public:
+    explicit Closure(WriteGate& gate) : gate_(gate) { gate_.CloseAndDrain(); }
+    ~Closure() { gate_.Reopen(); }
+    Closure(const Closure&) = delete;
+    Closure& operator=(const Closure&) = delete;
+
+   private:
+    WriteGate& gate_;
+  };
+
+ private:
+  void Admit();
+  void Leave();
+  void CloseAndDrain();
+  void Reopen();
+  void Wait(uint64_t observed, std::memory_order order);
+  void Notify();
+
+  static constexpr uint64_t kClosed = uint64_t{1} << 63;
+  std::atomic<uint64_t> state_{0};  // Closed bit and admitted writer count.
+#if !ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
+  std::mutex wait_mutex_;
+  std::condition_variable wait_cv_;
+#endif
+};
+
 class Backup : public FileSystemWrapper {
  public:
   Backup(std::shared_ptr<SeparatedStorage> storage, std::string index,
@@ -33,7 +90,7 @@ class Backup : public FileSystemWrapper {
   Status Start(bool existing);
   Status Activate(const std::string& identity, DB* db);
   void WriteCompleted();
-  std::shared_mutex& WriteFence() { return write_fence_; }
+  WriteGate::Writer EnterWrite() { return WriteGate::Writer(write_gate_); }
   // Listener notification only; never performs I/O or waits for a checkpoint.
   void NativeFilesChanged();
   void DetachDB();
@@ -143,6 +200,7 @@ class Backup : public FileSystemWrapper {
     std::atomic<uint64_t> published{0};
     std::atomic<uint64_t> reserved{0};
     std::atomic<uint64_t> returned{0};
+    std::atomic<uint64_t> mirrored_bytes{0};
     std::atomic<uint64_t> peak{0};
     std::atomic<uint64_t> backpressure_micros{0};
 
@@ -156,7 +214,6 @@ class Backup : public FileSystemWrapper {
     // Only the mirror advances or frees the consumer side.
     std::unique_ptr<Segment> head;
     size_t head_slot = 0;
-    uint64_t head_count = 0;
 
     std::mutex space_mutex;
     std::condition_variable space;
@@ -170,15 +227,17 @@ class Backup : public FileSystemWrapper {
   bool IsWalChannel(const Channel& channel) const;
   Status ReserveWal(size_t charge);
   void CloseWalQueue();
-  void ReturnWalBytes(uint64_t charge);
+  void ReturnWalBytes(uint64_t charge, uint64_t mirrored_bytes = 0);
   void Fail(const Status& status);
   void Finish(Channel& channel, Event&& event, const Status& primary);
+  // Caller still holds wal_channel_.operations. A true return requests a wake.
+  bool FinishWal(Event&& event, const Status& primary);
   Status Apply(const Event& event);
   Status BeforeApply(const Event& event);
   Status Append(const std::string& name, const Slice& bytes);
-  // mutex_ held; consumes only events within the existing drain window.
-  void TakeBatch(Channel* channel, uint64_t boundary,
-                 std::vector<Event>* batch);
+  // Only the mirror touches the WAL consumer side, using the bounds selected
+  // under mutex_.
+  void TakeWalBatch(uint64_t first, uint64_t last, std::vector<Event>* batch);
   // No queue lock. completed counts only successfully written logical events.
   Status ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
                     size_t* completed);
@@ -206,9 +265,10 @@ class Backup : public FileSystemWrapper {
   void UpdateWalWakeCharge();
   void WakeMirror();
   void WakeMetadataCapacity();
-  Channel* NextChannel();
+  Channel* NextChannel(uint64_t wal_tail);
   uint64_t FrontSequence(const Channel& channel) const;
-  Event TakeEvent(Channel& channel, uint64_t seq);
+  uint64_t WalBatchLimit(uint64_t first, uint64_t boundary) const;
+  Event TakeMetadataEvent();
   bool QueuesEmpty() const;
   void Run();
   void ValidateLoop();
@@ -247,22 +307,23 @@ class Backup : public FileSystemWrapper {
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
-  std::shared_mutex write_fence_;
+  WriteGate write_gate_;
   mutable std::mutex mutex_;
   std::condition_variable validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
   bool prune_wal_ = false;
-  // Queue charges and backpressure here account for metadata. Stats combines
-  // them with the counters in wal_queue_.
+  // Queue charges, backpressure and mirrored bytes here account for metadata.
+  // Stats combines them with the counters in wal_queue_.
   MetaBypassStats stats_;
   std::atomic<bool> failed_{false};
   // accepted_ counts metadata events. Accepted() includes the WAL tail.
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
+  uint64_t wal_taken_ = 0;  // Protected by mutex_, including failed events.
   uint64_t generation_ = 0;
   DB* db_ = nullptr;
   std::string identity_;
-  // Writers increment under the shared write fence. Capture reads the final
-  // count under the exclusive fence, alongside the native sequence.
+  // Writers increment while admitted. Capture closes admission and drains
+  // all admitted writers before reading the count and the native sequence.
   std::atomic<uint64_t> completed_writes_{0};
   uint64_t published_writes_ = 0;
   uint64_t native_changes_ = 0, published_native_changes_ = 0;

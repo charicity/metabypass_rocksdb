@@ -2338,13 +2338,14 @@ TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
 }
 
 #ifndef NDEBUG
-TEST_F(MetaBypassTest, WriteGateCoversPinnedWriteAndClearsCheckpointDeadline) {
+TEST_F(MetaBypassTest,
+       WriteGateCoversPreCloseWriteAndClearsCheckpointDeadline) {
   o_.enable_blob_files = false;
   m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   const auto before = db_->GetBackupStats();
   ASSERT_OK(before.error);
-  TestGate pinned;
+  TestGate boundary;
   std::atomic<bool> observing{false}, reported{false};
   std::promise<bool> idle;
   auto scheduling = idle.get_future();
@@ -2353,25 +2354,25 @@ TEST_F(MetaBypassTest, WriteGateCoversPinnedWriteAndClearsCheckpointDeadline) {
     if (observing.load() && !reported.exchange(true)) idle.set_value(is_idle);
   };
   Defer cleanup([&] {
-    pinned.Release();
+    boundary.Release();
     sync->DisableProcessing();
     sync->ClearAllCallBacks();
   });
   sync->SetCallBack("MetaBypass::CheckpointIdle", [&](void*) { report(true); });
   sync->SetCallBack("MetaBypass::CheckpointDeadline",
                     [&](void*) { report(false); });
-  sync->SetCallBack("MetaBypass::NativeFilesPinned",
-                    [&](void*) { pinned.Block(); });
+  sync->SetCallBack("MetaBypass::CheckpointBoundary",
+                    [&](void*) { boundary.Block(); });
   sync->EnableProcessing();
   auto checkpoint =
       std::async(std::launch::async, [&] { return db_->SyncBackup(); });
-  EXPECT_TRUE(pinned.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_TRUE(boundary.WaitUntilBlockedFor(std::chrono::seconds(10)));
   auto writer = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "pinned", "value");
+    return db_->Put(WriteOptions(), "before-close", "value");
   });
   const auto completed = writer.wait_for(std::chrono::seconds(10));
   observing = true;
-  pinned.Release();
+  boundary.Release();
   EXPECT_EQ(completed, std::future_status::ready);
   ASSERT_OK(writer.get());
   ASSERT_OK(checkpoint.get());
@@ -2395,7 +2396,8 @@ TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
   ASSERT_NO_FATAL_FAILURE(Open());
   std::array<TestGate, 2> admitted;
   TestGate closed, waiting, capturing;
-  std::atomic<size_t> admissions{0};
+  std::atomic<size_t> admissions{0}, released_writers{0};
+  std::atomic<bool> pinned{false};
   auto* sync = SyncPoint::GetInstance();
   Defer cleanup([&] {
     for (auto& gate : admitted) gate.Release();
@@ -2407,12 +2409,19 @@ TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
   });
   sync->SetCallBack("MetaBypass::WriteGateAdmitted", [&](void*) {
     const size_t index = admissions.fetch_add(1);
-    if (index < admitted.size()) admitted[index].Block();
+    if (index < admitted.size()) {
+      admitted[index].Block();
+      released_writers.fetch_add(1);
+    }
   });
   sync->SetCallBack("MetaBypass::WriteGateClosed",
                     [&](void*) { closed.Block(); });
   sync->SetCallBack("MetaBypass::WriteGateAdmissionBlocked",
                     [&](void*) { waiting.Block(); });
+  sync->SetCallBack("MetaBypass::NativeFilesPinned", [&](void*) {
+    EXPECT_EQ(released_writers.load(), admitted.size());
+    pinned = true;
+  });
   sync->SetCallBack("MetaBypass::NativeCaptureStatus", [&](void* arg) {
     EXPECT_OK(*static_cast<Status*>(arg));
     capturing.Block();
@@ -2429,6 +2438,7 @@ TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
   auto checkpoint =
       std::async(std::launch::async, [&] { return db_->SyncBackup(); });
   EXPECT_TRUE(closed.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_FALSE(pinned.load());
   auto late = std::async(std::launch::async, [&] {
     return db_->Put(WriteOptions(), "late", "three");
   });
@@ -2437,11 +2447,13 @@ TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
   closed.Release();
   admitted[0].Release();
   EXPECT_OK(first.get());
+  EXPECT_FALSE(pinned.load());
   EXPECT_FALSE(capturing.WaitUntilBlockedFor(std::chrono::seconds(0)));
   EXPECT_EQ(admissions.load(), 2U);
   admitted[1].Release();
   EXPECT_OK(second.get());
   EXPECT_TRUE(capturing.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_TRUE(pinned.load());
   EXPECT_EQ(admissions.load(), 2U);
   EXPECT_EQ(late.wait_for(std::chrono::seconds(0)),
             std::future_status::timeout);

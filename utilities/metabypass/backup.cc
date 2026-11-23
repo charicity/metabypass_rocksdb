@@ -1574,71 +1574,78 @@ void Backup::ValidateLoop() {
     HddPurposeScope purpose(requested ? HddPurpose::kBarrier
                                       : HddPurpose::kBulk);
     TEST_SYNC_POINT("MetaBypass::CheckpointBoundary");
-    Status s = db->DisableFileDeletions();
-    const bool pinned = s.ok();
-    if (s.ok()) {
-      TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
+    Status s;
+    bool pinned;
+    {
       LiveFilesStorageInfoOptions options;
       const bool direct = db_options_.enable_blob_direct_write;
       options.wal_size_for_flush =
           direct ? 0 : std::numeric_limits<uint64_t>::max();
       options.include_wal_files = !direct;
-      uint64_t elapsed;
+      uint64_t elapsed = 0;
       std::vector<std::string> allocated;
       VectorLogPtr logs;
       MB_WAL_BG_SPAN(closed_gate, checkpoint_gate_hold);
       {
-        // File deletion is pinned before closing admission. Do not hold the
-        // event queue mutex while waiting for admitted writes to finish.
+        // Keep obsolete WAL pruning enabled while admitted writes drain.
         WriteGate::Closure admission(write_gate_);
-        const uint64_t capture_started = Now();
-        s = db->GetLiveFilesStorageInfo(options, &candidate->files);
-        TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
-        elapsed = Now() - capture_started;
-        if (s.ok()) {
-          candidate->native_sequence = db->GetLatestSequenceNumber();
-          s = storage_->GetChildren(index_, IOOptions(), &allocated, nullptr);
-          if (s.ok()) s = db->GetSortedWalFiles(logs);
+        s = db->DisableFileDeletions();
+        pinned = s.ok();
+        if (pinned) {
+          TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
+          const uint64_t capture_started = Now();
+          s = db->GetLiveFilesStorageInfo(options, &candidate->files);
+          TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+          elapsed = Now() - capture_started;
+          if (s.ok()) {
+            candidate->native_sequence = db->GetLatestSequenceNumber();
+            s = storage_->GetChildren(index_, IOOptions(), &allocated, nullptr);
+            if (s.ok()) s = db->GetSortedWalFiles(logs);
+          }
+          // Freeze the mirror boundary with the native snapshot. Writes
+          // admitted after reopening belong to the next checkpoint.
+          std::lock_guard<std::mutex> boundary_lock(mutex_);
+          candidate->seq = Accepted();
+          candidate->writes = completed_writes_.load(std::memory_order_relaxed);
+          // Drained writes may have set a deadline after this candidate began.
+          // This snapshot covers them, but native changes can need another
+          // point.
+          if (s.ok() && native_changes_ == candidate->native_changes)
+            dirty_since_micros_.store(0, std::memory_order_relaxed);
         }
-        // Freeze the mirror boundary with the native snapshot. Writes admitted
-        // after reopening belong to the next checkpoint.
-        std::lock_guard<std::mutex> boundary_lock(mutex_);
-        candidate->seq = Accepted();
-        candidate->writes = completed_writes_.load(std::memory_order_relaxed);
-        // Drained writes may have set a deadline after this candidate began.
-        // This snapshot covers them, but native changes can need another point.
-        if (s.ok() && native_changes_ == candidate->native_changes)
-          dirty_since_micros_.store(0, std::memory_order_relaxed);
       }
       MB_WAL_END(closed_gate);
-      {
-        std::lock_guard<std::mutex> stats_lock(mutex_);
-        ++stats_.checkpoint_captures;
-        stats_.checkpoint_capture_micros += elapsed;
-        if (direct) stats_.checkpoint_flush_micros += elapsed;
-      }
-      if (s.ok()) {
-        // Native checkpoints do not preserve IDENTITY. Metabypass binds the
-        // independently routed directories to this immutable database owner.
-        LiveFileStorageInfo owner;
-        owner.relative_filename = "IDENTITY";
-        owner.file_type = kIdentityFile;
-        owner.replacement_contents = identity_;
-        owner.size = identity_.size();
-        candidate->files.push_back(std::move(owner));
-        candidate->blob_floor = 1;
-        for (const auto& file : candidate->files) {
-          if (file.file_type == kBlobFile)
-            candidate->blob_floor =
-                std::max(candidate->blob_floor, file.file_number + 1);
+      if (pinned) {
+        {
+          std::lock_guard<std::mutex> stats_lock(mutex_);
+          ++stats_.checkpoint_captures;
+          stats_.checkpoint_capture_micros += elapsed;
+          if (direct) stats_.checkpoint_flush_micros += elapsed;
         }
-        for (const auto& name : allocated) {
-          uint64_t number;
-          FileType type;
-          if (ParseFileName(name, &number, &type))
-            candidate->blob_floor = std::max(candidate->blob_floor, number + 1);
+        if (s.ok()) {
+          // Native checkpoints do not preserve IDENTITY. Metabypass binds the
+          // independently routed directories to this immutable database owner.
+          LiveFileStorageInfo owner;
+          owner.relative_filename = "IDENTITY";
+          owner.file_type = kIdentityFile;
+          owner.replacement_contents = identity_;
+          owner.size = identity_.size();
+          candidate->files.push_back(std::move(owner));
+          candidate->blob_floor = 1;
+          for (const auto& file : candidate->files) {
+            if (file.file_type == kBlobFile)
+              candidate->blob_floor =
+                  std::max(candidate->blob_floor, file.file_number + 1);
+          }
+          for (const auto& name : allocated) {
+            uint64_t number;
+            FileType type;
+            if (ParseFileName(name, &number, &type))
+              candidate->blob_floor =
+                  std::max(candidate->blob_floor, number + 1);
+          }
+          if (!logs.empty()) candidate->wal_floor = logs.front()->LogNumber();
         }
-        if (!logs.empty()) candidate->wal_floor = logs.front()->LogNumber();
       }
     }
     TEST_SYNC_POINT("MetaBypass::NativeFilesCaptured");

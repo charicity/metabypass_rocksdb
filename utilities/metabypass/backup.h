@@ -4,12 +4,14 @@
 //  (found in the LICENSE.Apache file in the root directory).
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <shared_mutex>
 #include <thread>
@@ -114,15 +116,61 @@ class Backup : public FileSystemWrapper {
   struct Channel {
     // Serializes primary operations through enqueue. Never acquired by workers.
     std::mutex operations;
-    // The remaining fields are protected by Backup::mutex_.
+  };
+  struct MetadataChannel : Channel {
+    // Protected by Backup::mutex_.
     std::deque<Event> queue;
     std::condition_variable capacity;
     size_t waiting_charge = 0;
+  };
+  struct WalQueue {
+    static constexpr size_t kSlots = 256;
+    static constexpr uint64_t kClosed = uint64_t{1} << 63;
+    struct Segment {
+      std::array<std::optional<Event>, kSlots> events;
+      std::unique_ptr<Segment> next;
+    };
+    WalQueue();
+
+    uint64_t Published() const { return published.load() & ~kClosed; }
+    void Prepare();
+    bool Publish(Event&& event);
+    const Event& Front() const;
+    Event Pop();
+    uint64_t ChargedBytes() const;
+
+    // Shared publication state. Closing seals the last published slot.
+    std::atomic<uint64_t> published{0};
+    std::atomic<uint64_t> reserved{0};
+    std::atomic<uint64_t> returned{0};
+    std::atomic<uint64_t> peak{0};
+    std::atomic<uint64_t> backpressure_micros{0};
+
+    // Producer state is serialized by wal_channel_.operations.
+    Segment* tail;
+    size_t tail_slot = 0;
+    uint64_t tail_count = 0;
+    uint64_t cached_returned = 0;
+    uint64_t reserved_total = 0;
+
+    // Only the mirror advances or frees the consumer side.
+    std::unique_ptr<Segment> head;
+    size_t head_slot = 0;
+    uint64_t head_count = 0;
+
+    std::mutex space_mutex;
+    std::condition_variable space;
+    uint64_t space_return_target = 0;  // Protected by space_mutex.
+    std::atomic<bool> waiting_for_space{false};
   };
   Channel& ChannelFor(const std::string& name);
   bool Tracked(const std::string& path, bool include_tables = false) const;
   std::string Base(const std::string& path) const;
   Status Reserve(Channel& channel, size_t charge);
+  bool IsWalChannel(const Channel& channel) const;
+  Status ReserveWal(size_t charge);
+  void CloseWalQueue();
+  void ReturnWalBytes(uint64_t charge);
   void Fail(const Status& status);
   void Finish(Channel& channel, Event&& event, const Status& primary);
   Status Apply(const Event& event);
@@ -151,9 +199,16 @@ class Backup : public FileSystemWrapper {
   Status Publish(const Candidate& candidate);
   // Called with mutex_ held. Each wait channel has a distinct predicate.
   bool MirrorReady() const;
+  uint64_t Accepted() const;
+  uint64_t QueuedBytes() const;
+  void WaitForMirror(std::unique_lock<std::mutex>& lock);
+  void SignalMirror();
+  void UpdateWalWakeCharge();
   void WakeMirror();
-  void WakeCapacity();
+  void WakeMetadataCapacity();
   Channel* NextChannel();
+  uint64_t FrontSequence(const Channel& channel) const;
+  Event TakeEvent(Channel& channel, uint64_t seq);
   bool QueuesEmpty() const;
   void Run();
   void ValidateLoop();
@@ -181,17 +236,27 @@ class Backup : public FileSystemWrapper {
   // Only WAL producers access the current block and cursor, under operations.
   std::shared_ptr<WalBlock> wal_block_;
   size_t wal_block_used_ = 0;
-  Channel wal_channel_, metadata_channel_;
+  Channel wal_channel_;
+  MetadataChannel metadata_channel_;
+  WalQueue wal_queue_;
+  // Notifications persist across the mirror checking and going to sleep.
+  std::mutex mirror_sleep_mutex_;
+  std::condition_variable mirror_cv_;
+  std::atomic<bool> mirror_signal_{false};
+  std::atomic<uint64_t> wal_wake_charge_{0};
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
   std::shared_mutex write_fence_;
   mutable std::mutex mutex_;
-  std::condition_variable mirror_cv_, validator_cv_, sync_cv_, gc_cv_;
+  std::condition_variable validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
   bool prune_wal_ = false;
+  // Queue charges and backpressure here account for metadata. Stats combines
+  // them with the counters in wal_queue_.
   MetaBypassStats stats_;
   std::atomic<bool> failed_{false};
+  // accepted_ counts metadata events. Accepted() includes the WAL tail.
   uint64_t accepted_ = 0, applied_ = 0, published_ = 0, requested_ = 0;
   uint64_t generation_ = 0;
   DB* db_ = nullptr;

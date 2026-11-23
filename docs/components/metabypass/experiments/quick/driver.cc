@@ -163,10 +163,12 @@ class Database {
     options_.min_blob_size = 0;
     bypass_.data_dir = root_ + "/data";
     bypass_.backup_dir = root_ + "/backup";
-    if (pressure || backpressure) {
-      bypass_.queue_capacity = 2 * 1024 * 1024;
-      bypass_.batch_bytes = 64 * 1024;
-    }
+    const bool small_queue = pressure || backpressure;
+    bypass_.wal_queue_capacity = (small_queue ? 1792 : 56 * 1024) * 1024;
+    bypass_.metadata_queue_capacity = (small_queue ? 256 : 8 * 1024) * 1024;
+    bypass_.batch_bytes = (small_queue ? 64 : 256) * 1024;
+    bypass_.interval_ms = 1000;
+    bypass_.checkpoint_interval_ms = 30000;
 #endif
   }
   Status Open(bool fresh) {
@@ -235,15 +237,17 @@ class Database {
       s.UpdateIfOk(stats.error);
       if (metrics) {
         (*metrics)["queue_peak_bytes"] = stats.peak_queued_bytes;
-        (*metrics)["queue_capacity_bytes"] = bypass_.queue_capacity;
+        (*metrics)["wal_queue_capacity_bytes"] = bypass_.wal_queue_capacity;
+        (*metrics)["metadata_queue_capacity_bytes"] =
+            bypass_.metadata_queue_capacity;
+        (*metrics)["queue_capacity_bytes"] =
+            bypass_.wal_queue_capacity + bypass_.metadata_queue_capacity;
         (*metrics)["backpressure_us"] = stats.backpressure_micros;
         (*metrics)["mirrored_bytes"] = stats.mirrored_bytes;
         (*metrics)["recovery_points"] = stats.recovery_points;
         (*metrics)["last_point_build_us"] = stats.last_build_micros;
         (*metrics)["last_point_lag_us"] = stats.last_point_lag_micros;
         (*metrics)["retained_index_bytes"] = stats.retained_index_bytes;
-        (*metrics)["validated_blob_bytes"] = stats.validated_blob_bytes;
-        (*metrics)["reused_tables"] = stats.reused_tables;
       }
       mb_.reset();
     }

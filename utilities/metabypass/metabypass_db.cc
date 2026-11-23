@@ -99,15 +99,21 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
     return Status::InvalidArgument(
         "staging capacity requires staging directory");
   }
-  if (m.queue_capacity < 4096 || m.batch_bytes == 0 ||
-      m.batch_bytes > m.queue_capacity || m.interval_ms == 0 ||
-      m.interval_ms > std::numeric_limits<int64_t>::max())
-    return Status::InvalidArgument("invalid Metabypass queue configuration");
+  if (m.wal_queue_capacity == 0 || m.metadata_queue_capacity == 0 ||
+      m.wal_queue_capacity >
+          std::numeric_limits<size_t>::max() - m.metadata_queue_capacity)
+    return Status::InvalidArgument("invalid Metabypass queue capacities");
+  const size_t total_capacity =
+      m.wal_queue_capacity + m.metadata_queue_capacity;
   const auto max_interval =
       std::chrono::duration_cast<std::chrono::duration<uint64_t, std::milli>>(
           std::chrono::steady_clock::duration::max())
           .count() /
       2;
+  if (total_capacity < 4096 || m.batch_bytes == 0 ||
+      m.batch_bytes > total_capacity || m.interval_ms == 0 ||
+      m.interval_ms > max_interval)
+    return Status::InvalidArgument("invalid Metabypass queue configuration");
   if (!m.checkpoint_interval_ms || m.checkpoint_interval_ms > max_interval)
     return Status::InvalidArgument("invalid Metabypass checkpoint interval");
   const auto& tier = m.sst_tiering;

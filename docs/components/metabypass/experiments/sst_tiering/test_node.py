@@ -417,7 +417,11 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(str(96 * 1024 * 1024), (cg / "memory.limit_in_bytes").read_text())
         runner.keys = 1000000
         command = runner.command("run", (runner.ssd, runner.hdd))
-        self.assertIn("--metabypass_queue_capacity=2097152", command)
+        self.assertIn("--metabypass_wal_queue_capacity=1835008", command)
+        self.assertIn("--metabypass_metadata_queue_capacity=262144", command)
+        self.assertIn("--metabypass_batch_bytes=262144", command)
+        self.assertIn("--metabypass_interval_ms=1000", command)
+        self.assertIn("--metabypass_checkpoint_interval_ms=5000", command)
         self.assertIn("--metabypass_sst_warmup_seconds=30", command)
         self.assertIn("--metabypass_sst_measure_seconds=60", command)
         self.assertIn("--metabypass_sst_saturated_seconds=15", command)
@@ -451,7 +455,11 @@ class NodeTest(unittest.TestCase):
         small = RUN.PROFILES["small"]
         self.assertEqual(1000000, small["keys"])
         self.assertEqual(48 * 1024 * 1024, small["memory_bytes"])
-        self.assertEqual(2 * 1024 * 1024, small["queue_bytes"])
+        self.assertEqual(1792 * 1024, small["wal_queue_bytes"])
+        self.assertEqual(256 * 1024, small["metadata_queue_bytes"])
+        legacy = RUN.PROFILES["legacy"]
+        self.assertEqual(7 * 1024 * 1024, legacy["wal_queue_bytes"])
+        self.assertEqual(1024 * 1024, legacy["metadata_queue_bytes"])
         self.assertEqual((5400, 900, 30, 60, 15), tuple(small[k] for k in
                          ("deadline_s", "calibration_s", "warmup_s", "measured_s", "saturated_s")))
         self.assertAlmostEqual(472.086, RUN.round_forecast([
@@ -506,7 +514,9 @@ class NodeTest(unittest.TestCase):
         costs = [row["total_s"] for row in runner.report["budget_forecast"]["rpo_samples"]]
         self.assertEqual([sum(costs[i:]) for i in range(6)], [call.args[0] for call in runner.deadline.require.call_args_list[-6:]])
         bench = [cmd for _name, cmd, _kw, _end in commands if any(flag.startswith("--num=") for flag in cmd)]
-        self.assertTrue(all("--num=1000000" in cmd and "--metabypass_queue_capacity=2097152" in cmd for cmd in bench))
+        self.assertTrue(all("--num=1000000" in cmd and
+                            "--metabypass_wal_queue_capacity=1835008" in cmd and
+                            "--metabypass_metadata_queue_capacity=262144" in cmd for cmd in bench))
         self.assertTrue(all("--metabypass_sst_cache_bytes=65536" in cmd for cmd in bench))
 
     def test_partial_sample_log_retains_prior_sample_and_reports_missing(self):

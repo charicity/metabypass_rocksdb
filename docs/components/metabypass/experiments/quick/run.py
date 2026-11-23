@@ -26,12 +26,15 @@ SCENARIOS = ("control", "slow", "pressure")
 SETTINGS = {
     "value_size": 1024, "writers": 1, "sync": False, "wal": True,
     "compression": "none", "staging": False, "interval_ms": 1000,
-    "queue_bytes": 64 * 1024**2, "batch_bytes": 256 * 1024,
+    "queue_bytes": 64 * 1024**2, "wal_queue_bytes": 56 * 1024**2,
+    "metadata_queue_bytes": 8 * 1024**2, "batch_bytes": 256 * 1024,
+    "checkpoint_interval_ms": 30000,
     "pressure": {"key_size": 128, "write_buffer_size": 256 * 1024,
                  "target_file_size_base": 256 * 1024,
                  "max_bytes_for_level_base": 1024 * 1024,
                  "level0_trigger": 2, "max_background_jobs": 4,
-                 "queue_bytes": 2 * 1024**2, "batch_bytes": 64 * 1024},
+                 "queue_bytes": 2 * 1024**2, "wal_queue_bytes": 1792 * 1024,
+                 "metadata_queue_bytes": 256 * 1024, "batch_bytes": 64 * 1024},
     "delay_us": {"control": 0, "slow": 1000, "pressure": 1000},
     "delay_contract": "selected writable Append/Sync/Fsync and named SyncFile; "
                       "no read, bandwidth, directory-sync or power-loss model",
@@ -43,7 +46,9 @@ BACKPRESSURE_COUNT = 16384
 BACKPRESSURE_SETTINGS = {
     "value_size": 1024, "key_size": 128, "writers": 1, "sync": False,
     "wal": True, "compression": "none", "staging": False,
-    "interval_ms": 1000, "queue_bytes": 2 * 1024**2,
+    "interval_ms": 1000, "checkpoint_interval_ms": 30000,
+    "queue_bytes": 2 * 1024**2, "wal_queue_bytes": 1792 * 1024,
+    "metadata_queue_bytes": 256 * 1024,
     "batch_bytes": 64 * 1024, "delay_us": 1000,
     "delay_paths": ["backup"],
     "delay_contract": "backup writable Append/Sync/Fsync and named SyncFile; "
@@ -283,7 +288,9 @@ def validate_result(result, action, count, variant, scenario=None):
             raise RunFailure("no published recovery point")
         if scenario == "backpressure":
             required = ("foreground_backpressure_us", "backpressure_us",
-                        "queue_peak_bytes", "queue_capacity_bytes", "recovery_points",
+                        "queue_peak_bytes", "queue_capacity_bytes",
+                        "wal_queue_capacity_bytes", "metadata_queue_capacity_bytes",
+                        "recovery_points",
                         "injected_wait_us", "delayed_append_calls",
                         "delayed_sync_calls", "delayed_fsync_calls",
                         "delayed_named_sync_calls")
@@ -293,6 +300,8 @@ def validate_result(result, action, count, variant, scenario=None):
                 raise RunFailure("backpressure was not observed")
             capacity = m["queue_capacity_bytes"]
             if (capacity != BACKPRESSURE_SETTINGS["queue_bytes"] or
+                    m["wal_queue_capacity_bytes"] != BACKPRESSURE_SETTINGS["wal_queue_bytes"] or
+                    m["metadata_queue_capacity_bytes"] != BACKPRESSURE_SETTINGS["metadata_queue_bytes"] or
                     not 0 < m["queue_peak_bytes"] <= capacity):
                 raise RunFailure("invalid queue peak or capacity")
             delay_calls = sum(m[key] for key in required if key.startswith("delayed_"))

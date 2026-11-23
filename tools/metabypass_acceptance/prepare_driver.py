@@ -3,7 +3,7 @@
 # This source code is licensed under both the GPLv2 (found in the
 # COPYING file in the root directory) and Apache 2.0 License
 # (found in the LICENSE.Apache file in the root directory).
-"""Build one explicit ABI arm from frozen driver + patch, without probing headers."""
+"""Build one explicit ABI arm from the frozen driver and adapter patches."""
 import argparse
 import hashlib
 import json
@@ -19,6 +19,7 @@ ROOT = HERE.parents[1]
 FROZEN = ROOT / 'reports/e157-8g-20261117-e928/delivery/frozen-sources'
 DRIVER = FROZEN / 'driver-9475062/tools/metabypass_acceptance'
 CONTROLLER = FROZEN / 'controller-9f4dc2d'
+QUEUE_PATCH = 'mirror_queue_capacity.patch'
 
 
 def digest(path):
@@ -33,6 +34,7 @@ def prepare(destination, fine_wal=False):
     patches = ['driver.patch', 'write_breakdown.patch']
     if fine_wal:
         patches.append('fine_wal.patch')
+    patches.append(QUEUE_PATCH)
     for name in patches:
         subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(HERE / name)],
                        cwd=destination, check=True)
@@ -97,7 +99,8 @@ def main():
         assert_status_checked=True, diagnostics_enabled=False, commands=list(steps.values()),
         driver_source_sha256=digest(source / 'driver.cc'), protocol_sha256=digest(source / 'protocol.h'),
         driver_patch_sha256=digest(HERE / 'driver.patch'),
-        write_breakdown_patch_sha256=digest(HERE / 'write_breakdown.patch'))
+        write_breakdown_patch_sha256=digest(HERE / 'write_breakdown.patch'),
+        mirror_queue_capacity_patch_sha256=digest(HERE / QUEUE_PATCH))
     manifest['fine_wal'] = args.fine_wal
     if args.fine_wal:
         manifest['fine_wal_patch_sha256'] = digest(HERE / 'fine_wal.patch')

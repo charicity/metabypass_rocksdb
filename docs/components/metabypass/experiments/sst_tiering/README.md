@@ -200,8 +200,9 @@ Missing actual physical reads on either device, failed calibration or missing
 adaptive read samples and migration/cold-placement evidence also block formal
 work. An OOM requires investigation of benchmark RSS; the runner never changes the
 cgroup limit. `memory.failcnt` is recorded as pressure evidence, not an OOM
-count. Both modes explicitly use an 8 MiB queue, a 256 KiB batch, a one-second
-background interval and a 64 KiB block cache.
+count. Both modes explicitly use 7 MiB of WAL queue capacity, 1 MiB of metadata
+queue capacity, a 256 KiB mirror batch trigger, a one-second mirror interval,
+a five-second checkpoint interval and a 64 KiB block cache.
 
 The seed is read-only. Each fresh dataset uses ordinary `copy2` for its first
 inode and recreates only that trial's internal hardlinks on the same destination
@@ -326,8 +327,9 @@ python3 /path/on/ssd/scripts/node_run.py --profile small \
 ```
 
 The fixed dataset has 1,000,000 16-byte keys and 1 KiB values. There is no automatic
-larger seed or lower memory fallback. Queue capacity is 2 MiB; the 256 KiB batch,
-one-second backup interval, 64 KiB block cache, 1 MiB memtable/SST target, and
+larger seed or lower memory fallback. WAL and metadata queue capacities are
+1792 KiB and 256 KiB. The 256 KiB batch, one-second mirror interval, five-second
+checkpoint interval, 64 KiB block cache, 1 MiB memtable/SST target, and
 strategy timings remain the same. The strategy evaluates every second with a
 10-second heat half-life, a 10-second minimum residency, two promotion rounds,
 three demotion rounds and one-in-64 read sampling. The three workload types,

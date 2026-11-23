@@ -48,6 +48,21 @@ static std::string Key(int i, bool mixed) {
   if (mixed) key += std::string(128 - key.size(), 'k');
   return key;
 }
+template <typename BypassOptions>
+static void ConfigureMirror(BypassOptions& options, size_t capacity) {
+  if constexpr (requires {
+                  options.wal_queue_capacity;
+                  options.metadata_queue_capacity;
+                }) {
+    options.metadata_queue_capacity = capacity / 8;
+    options.wal_queue_capacity = capacity - options.metadata_queue_capacity;
+    options.interval_ms = 1000;
+    options.checkpoint_interval_ms = 30000;
+  } else {
+    options.queue_capacity = capacity;
+  }
+  options.batch_bytes = std::min<size_t>(256 * 1024, capacity / 4);
+}
 int main(int argc, char** argv) {
   if (argc != 6) return 2;
   const std::string mode = argv[1], root = argv[2], workload = argv[4];
@@ -81,8 +96,7 @@ int main(int argc, char** argv) {
   MetaBypassOptions b;
   b.data_dir = root + "/data";
   b.backup_dir = root + "/backup";
-  b.queue_capacity = std::stoull(argv[5]);
-  b.batch_bytes = std::min<size_t>(256 * 1024, b.queue_capacity / 4);
+  ConfigureMirror(b, std::stoull(argv[5]));
   std::unique_ptr<MetaBypassDB> db;
   Status s;
   const std::string value(1024, 'v');

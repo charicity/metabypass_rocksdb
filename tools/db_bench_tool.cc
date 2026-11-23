@@ -1131,13 +1131,21 @@ DEFINE_uint64(metabypass_staging_capacity, 0,
 DEFINE_uint64(metabypass_slow_write_delay_us, 0,
               "Benchmark-only delay per slow writable-file append/sync call");
 DEFINE_string(metabypass_backup_dir, "", "Native index backup directory");
-DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
-              "Pending event bytes");
-DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
-DEFINE_uint64(metabypass_interval_ms, 1000, "Mirror trigger interval");
-DEFINE_uint64(
-    metabypass_checkpoint_interval_ms, 5000,
-    "Recovery point trigger interval, independent of mirror interval");
+DEFINE_uint64(metabypass_wal_queue_capacity,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.wal_queue_capacity,
+              "WAL queue budget in bytes");
+DEFINE_uint64(metabypass_metadata_queue_capacity,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.metadata_queue_capacity,
+              "Metadata queue budget in bytes");
+DEFINE_uint64(metabypass_batch_bytes,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.batch_bytes,
+              "Background trigger bytes across both queues");
+DEFINE_uint64(metabypass_interval_ms,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.interval_ms,
+              "Mirror trigger interval in milliseconds");
+DEFINE_uint64(metabypass_checkpoint_interval_ms,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.checkpoint_interval_ms,
+              "Recovery point trigger interval in milliseconds");
 DEFINE_bool(metabypass_blob_file_gc, true, "Reclaim obsolete whole blob files");
 DEFINE_bool(metabypass_recovery_time_sampling, true,
             "Sample PROGRESS and estimate recovery time bounds");
@@ -11338,7 +11346,10 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, blob_gc_micros);
     MB_NODE_FIELD(b, candidate_copied_bytes);
 #undef MB_NODE_FIELD
-    field("queue_capacity", bypass.queue_capacity);
+    field("wal_queue_capacity", bypass.wal_queue_capacity);
+    field("metadata_queue_capacity", bypass.metadata_queue_capacity);
+    field("queue_capacity",
+          bypass.wal_queue_capacity + bypass.metadata_queue_capacity);
     field("batch_bytes", bypass.batch_bytes);
     field("interval_ms", bypass.interval_ms);
     field("ssd_capacity_bytes", bypass.sst_tiering.ssd_capacity_bytes);
@@ -12001,7 +12012,15 @@ static int RunMetaBypassBenchmark() {
   bypass.staging_dir = FLAGS_metabypass_staging_dir;
   bypass.staging_capacity = FLAGS_metabypass_staging_capacity;
   bypass.backup_dir = FLAGS_metabypass_backup_dir;
-  bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
+  const size_t max_size = std::numeric_limits<size_t>::max();
+  if (FLAGS_metabypass_wal_queue_capacity > max_size ||
+      FLAGS_metabypass_metadata_queue_capacity > max_size ||
+      FLAGS_metabypass_batch_bytes > max_size) {
+    fprintf(stderr, "Metabypass queue size exceeds size_t\n");
+    return 1;
+  }
+  bypass.wal_queue_capacity = FLAGS_metabypass_wal_queue_capacity;
+  bypass.metadata_queue_capacity = FLAGS_metabypass_metadata_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
   bypass.checkpoint_interval_ms = FLAGS_metabypass_checkpoint_interval_ms;
@@ -12012,10 +12031,13 @@ static int RunMetaBypassBenchmark() {
       "metabypass effective_options enable_blob_direct_write=%d"
       " allow_concurrent_memtable_write=%d mirror_interval_ms=%" PRIu64
       " checkpoint_interval_ms=%" PRIu64
-      " recovery_time_sampling=%d sync=%d\n",
+      " recovery_time_sampling=%d sync=%d"
+      " wal_queue_capacity=%zu metadata_queue_capacity=%zu batch_bytes=%zu\n",
       options.enable_blob_direct_write, options.allow_concurrent_memtable_write,
       bypass.interval_ms, bypass.checkpoint_interval_ms,
-      bypass.enable_recovery_time_sampling, FLAGS_sync);
+      bypass.enable_recovery_time_sampling, FLAGS_sync,
+      bypass.wal_queue_capacity, bypass.metadata_queue_capacity,
+      bypass.batch_bytes);
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();

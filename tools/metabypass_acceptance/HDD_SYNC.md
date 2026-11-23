@@ -2,7 +2,8 @@
 
 This adapter uses frozen `controller-9f4dc2d` modules through `PYTHONPATH` and
 patches a build-directory copy of `driver-9475062`. Frozen files are never
-modified. It does not change `protocol.h` or probe headers for capabilities.
+modified. The generated driver preserves `protocol.h` and selects the queue
+fields from the target core's public options at compile time.
 
 From the repository root:
 
@@ -72,7 +73,10 @@ Put/Batch8/Batch128 x two rounds. Same-configuration arms are adjacent; config
 index alternates the first arm and round 2 reverses it. Only final/baseline
 comparisons are emitted. Sampling is true for core52, false for final.
 
-Both arms use CP40s/mirror5s/batch512MiB/queue1GiB/retain1. Formal load is
+Both arms use CP40s/mirror5s/batch512MiB/queue1GiB/retain1. On split-queue
+cores the explicit 1 GiB budget is 896 MiB for WAL and 128 MiB for metadata.
+The driver reports the combined capacity in `mirror_queue_capacity`. Omitting
+the flag uses the target core's default queue capacities. Formal load is
 1,048,576 16-byte keys, warm65s/measure180s, 4,096 full-value recovery samples.
 Short checks use Batch128, 16,384 keys, warm1s/measure7s and 256 samples, preserving
 the real CP/mirror intervals. Short checks must recover incremental writes;

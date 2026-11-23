@@ -44,6 +44,9 @@
 using namespace ROCKSDB_NAMESPACE;
 namespace {
 using Clock = std::chrono::steady_clock;
+constexpr size_t kWalQueueBytes = 56 * 1024 * 1024;
+constexpr size_t kMetadataQueueBytes = 8 * 1024 * 1024;
+constexpr size_t kMirrorBatchBytes = 256 * 1024;
 uint64_t Us(Clock::time_point t) {
   return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t)
       .count();
@@ -423,6 +426,9 @@ class Database {
     o_.enable_blob_direct_write = c.B("direct-write");
     o_.allow_concurrent_memtable_write = !c.B("direct-write");
 #ifndef MB_UPSTREAM
+    b_.wal_queue_capacity = kWalQueueBytes;
+    b_.metadata_queue_capacity = kMetadataQueueBytes;
+    b_.batch_bytes = kMirrorBatchBytes;
     b_.interval_ms = c.N("mirror-interval-ms");
     b_.checkpoint_interval_ms = c.N("checkpoint-interval-ms");
     b_.data_dir = c.S("data");
@@ -1078,6 +1084,12 @@ int main(int argc, char** argv) {
             << (actual.enable_blob_direct_write ? "true" : "false")
             << ",\"allow_concurrent_memtable_write\":"
             << (actual.allow_concurrent_memtable_write ? "true" : "false")
+            << ",\"wal_queue_bytes\":"
+            << (backup ? std::to_string(kWalQueueBytes) : "null")
+            << ",\"metadata_queue_bytes\":"
+            << (backup ? std::to_string(kMetadataQueueBytes) : "null")
+            << ",\"mirror_batch_bytes\":"
+            << (backup ? std::to_string(kMirrorBatchBytes) : "null")
             << ",\"mirror_interval_ms\":"
             << (backup ? std::to_string(c.N("mirror-interval-ms")) : "null")
             << ",\"checkpoint_interval_ms\":"

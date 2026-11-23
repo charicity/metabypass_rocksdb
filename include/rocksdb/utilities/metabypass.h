@@ -56,16 +56,19 @@ struct MetaBypassOptions {
   // Options::enable_blob_files is false; data_dir retains identity and locks.
   std::string data_dir;
   std::string backup_dir;
-  // Charged pending event memory, including the event being applied. A single
-  // file operation exceeding this capacity fails before primary file I/O.
-  size_t queue_capacity = 64 * 1024 * 1024;
-  // Wake the worker on this many pending bytes or after interval_ms.
-  size_t batch_bytes = 256 * 1024;
-  uint64_t interval_ms = 1000;
+  // Independent limits in bytes for WAL and metadata events, including
+  // reservations and events being applied. An event exceeding its queue's
+  // limit fails before primary file I/O.
+  size_t wal_queue_capacity = 896 * 1024 * 1024;
+  size_t metadata_queue_capacity = 128 * 1024 * 1024;
+  // Wake the worker on this many pending bytes across both queues or after
+  // interval_ms.
+  size_t batch_bytes = 512 * 1024 * 1024;
+  uint64_t interval_ms = 5000;
   // Start a checkpoint this long after the first uncovered write or native
   // file change. Later work does not postpone the deadline. Idle databases
   // have no checkpoint timer. Explicit barriers bypass this batching delay.
-  uint64_t checkpoint_interval_ms = 30000;
+  uint64_t checkpoint_interval_ms = 40000;
   // Optional fast blob staging. Requires Options::enable_blob_files=true.
   // Empty routes blobs directly to data_dir when blob files are enabled.
   // With staging enabled, data_dir and backup_dir must survive staging loss.
@@ -128,6 +131,7 @@ struct MetaBypassStats {
   uint64_t staging_backpressure_micros = 0;
   uint64_t sync_write_micros = 0;
   uint64_t queued_bytes = 0;
+  // The sum of the individual queue high-water marks bounds the peak.
   uint64_t peak_queued_bytes = 0;
   uint64_t backpressure_micros = 0;
   uint64_t mirrored_bytes = 0;

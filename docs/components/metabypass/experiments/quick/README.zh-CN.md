@@ -25,9 +25,11 @@
 
 | 场景 | 延迟 | 配置 |
 |---|---:|---|
-| `control` | 0 | 默认 RocksDB 参数；备份队列 64 MiB，触发阈值 256 KiB，间隔 1 秒 |
+| `control` | 0 | 默认 RocksDB 参数；WAL / 元数据队列 56 / 8 MiB，镜像批量阈值 256 KiB |
 | `slow` | 1 ms/目标操作 | 同上 |
-| `pressure` | 1 ms/目标操作 | write buffer / 目标 SST 各 256 KiB；L0 触发值 2；层级基数 1 MiB；后台任务 4；备份队列 2 MiB、阈值 64 KiB |
+| `pressure` | 1 ms/目标操作 | write buffer / 目标 SST 各 256 KiB；L0 触发值 2；层级基数 1 MiB；后台任务 4；WAL / 元数据队列 1792 / 256 KiB，镜像批量阈值 64 KiB |
+
+各档位的镜像间隔为 1 秒，周期 checkpoint 间隔为 30 秒。
 
 延迟作用于选定路径的 writable `Append`、`Sync`、`Fsync` 和命名文件 `SyncFile`，每次同步只计一次。三种模式共用实现。记录调用数和实际等待微秒；等待合计可因后台并行超过墙钟时间。不注入读延迟、目录同步延迟，不模拟带宽、寻道或断电。
 
@@ -37,7 +39,7 @@
 - `quick`：每组 3 次正式样本，共 27 次写入及相应校验，预算 30 分钟。
 - `smoke`：每组 32 次预热、64 次正式写入各一次，预算 5 分钟；仅验证工具可用。
 
-独立的 `backpressure` 档位是当前版本的机制验证，不加入上述三方矩阵，也不用于速度排名。它只运行一个 `current` 正式样本：16,384 次 Put，128 字节 key、1 KiB value，无预热和校准。保持默认大 memtable / SST 配置，备份队列容量为 2 MiB、批量阈值为 64 KiB、间隔为 1 秒。仅对 `backup` 路径的目标 writable `Append`、`Sync`、`Fsync` 和命名 `SyncFile` 每次注入 1 ms 延迟；`index` 和 `data` 路径不注入延迟。默认总预算 5 分钟、单子进程 180 秒，可用现有参数覆盖。
+独立的 `backpressure` 档位是当前版本的机制验证，不加入上述三方矩阵，也不用于速度排名。它只运行一个 `current` 正式样本：16,384 次 Put，128 字节 key、1 KiB value，无预热和校准。保持默认大 memtable / SST 配置，使用与 `pressure` 相同的队列容量和镜像批量阈值。仅对 `backup` 路径的目标 writable `Append`、`Sync`、`Fsync` 和命名 `SyncFile` 每次注入 1 ms 延迟；`index` 和 `data` 路径不注入延迟。默认总预算 5 分钟、单子进程 180 秒，可用现有参数覆盖。
 
 对象顺序按场景和轮次轮换。单子进程默认 180 秒超时，且受全局剩余预算约束。超时立即停止该进程组，标记 `incomplete` 并保留原始输出及失败数据。任何写入、恢复、内容核对或追加重开失败也会停止本轮；不丢弃失败后挑选新样本补齐。
 

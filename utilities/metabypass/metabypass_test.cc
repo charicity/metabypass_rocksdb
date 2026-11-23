@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <future>
@@ -95,6 +96,9 @@ class BackupTestAccess {
   static size_t EventHeaderCharge() {
     return sizeof(Backup::ChargedEventLayout);
   }
+  static std::unique_lock<std::mutex> LockQueueMutex(Backup* backup) {
+    return std::unique_lock<std::mutex>(backup->mutex_);
+  }
   struct Input {
     std::string name = "000001.log";
     std::string bytes = "x";
@@ -132,11 +136,11 @@ class BackupTestAccess {
       Backup::Kind kind =
           item.operation == 'a' ? Backup::Kind::kAppend : Backup::Kind::kClose;
       Backup::Event event{kind, item.name, item.bytes};
-      event.seq = ++backup->accepted_;
       event.charge = sizeof(Backup::ChargedEventLayout) + event.name.size() +
                      item.bytes.size();
-      backup->stats_.queued_bytes += event.charge;
-      backup->ChannelFor(event.name).queue.push_back(std::move(event));
+      auto& channel = backup->ChannelFor(event.name);
+      ASSERT_OK(backup->Reserve(channel, event.charge));
+      backup->Finish(channel, std::move(event), Status::OK());
     }
   }
   static std::vector<size_t> Select(Backup* backup,
@@ -150,20 +154,16 @@ class BackupTestAccess {
     std::vector<Backup::Event> batch;
     std::vector<size_t> sizes;
     while (auto* channel = backup->NextChannel()) {
-      if (channel->queue.front().seq > boundary) break;
+      if (backup->FrontSequence(*channel) > boundary) break;
       backup->TakeBatch(channel, boundary, &batch);
       sizes.push_back(batch.size());
     }
-    backup->wal_channel_.queue.clear();
-    backup->metadata_channel_.queue.clear();
-    backup->candidate_.reset();
-    backup->stats_.queued_bytes = 0;
     return sizes;
   }
   static void Drain(Backup* backup, const std::vector<Input>& input,
                     bool partial, size_t successful,
                     const std::vector<std::string>& expected_calls) {
-    Load(backup, input);
+    ASSERT_NO_FATAL_FAILURE(Load(backup, input));
     std::vector<std::string> calls;
     std::string bytes;
     backup->writers_["000001.log"] =
@@ -172,7 +172,7 @@ class BackupTestAccess {
     backup->stopping_ = true;
     backup->Run();
     EXPECT_EQ(backup->applied_, successful);
-    EXPECT_EQ(backup->stats_.queued_bytes, 0U);
+    EXPECT_EQ(backup->QueuedBytes(), 0U);
     EXPECT_EQ(calls, expected_calls);
     if (partial) {
       EXPECT_EQ(backup->stats_.error, Status::IOError("partial batch write"));
@@ -221,8 +221,7 @@ class BackupTestAccess {
     backup->requested_ = 1;
     // A request without events must not spin; Capture is a separate trigger.
     EXPECT_FALSE(backup->MirrorReady());
-    Backup::Event event{Backup::Kind::kAppend, "000001.log", "x"};
-    backup->wal_channel_.queue.push_back(std::move(event));
+    ASSERT_NO_FATAL_FAILURE(Load(backup, {Input{}}));
     EXPECT_TRUE(backup->MirrorReady());
     backup->applied_ = 1;
     // Directly distinguish the old and new request predicates.
@@ -231,15 +230,19 @@ class BackupTestAccess {
     EXPECT_FALSE(backup->MirrorReady());
     backup->published_ = 1;
     EXPECT_FALSE(backup->MirrorReady());
-    for (auto* channel : {&backup->wal_channel_, &backup->metadata_channel_}) {
-      channel->waiting_charge = 1;
-      EXPECT_TRUE(backup->MirrorReady());
-      channel->waiting_charge = 0;
-    }
-    backup->stats_.queued_bytes = backup->options_.batch_bytes;
+    backup->wal_queue_.waiting_for_space.store(true);
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->wal_queue_.waiting_for_space.store(false);
+    backup->metadata_channel_.waiting_charge = 1;
+    EXPECT_TRUE(backup->MirrorReady());
+    backup->metadata_channel_.waiting_charge = 0;
+    const auto charge = backup->QueuedBytes();
+    ASSERT_LT(charge, backup->options_.batch_bytes);
+    backup->stats_.queued_bytes = backup->options_.batch_bytes - charge;
     EXPECT_TRUE(backup->MirrorReady());
     backup->stats_.queued_bytes = 0;
-    backup->wal_channel_.queue.clear();
+    backup->wal_queue_.Pop();
+    backup->ReturnWalBytes(charge);
     backup->candidate_ = std::make_unique<Backup::Candidate>();
     EXPECT_TRUE(backup->MirrorReady());
     backup->capture_done_ = true;
@@ -258,12 +261,12 @@ class BackupTestAccess {
     return {backup->published_,
             backup->requested_,
             backup->applied_,
-            backup->accepted_,
+            backup->Accepted(),
             backup->MirrorReady(),
             backup->candidate_ && !backup->capture_done_,
-            backup->wal_channel_.waiting_charge != 0 ||
+            backup->wal_queue_.waiting_for_space.load() ||
                 backup->metadata_channel_.waiting_charge != 0,
-            backup->stats_.queued_bytes >= backup->options_.batch_bytes,
+            backup->QueuedBytes() >= backup->options_.batch_bytes,
             backup->QueuesEmpty(),
             backup->stopping_,
             !backup->stats_.error.ok()};
@@ -272,6 +275,20 @@ class BackupTestAccess {
 }  // namespace metabypass
 namespace {
 std::string executable;
+MetaBypassOptions TestMetaBypassOptions() {
+  MetaBypassOptions options;
+  options.wal_queue_capacity = options.metadata_queue_capacity =
+      64 * 1024 * 1024;
+  options.batch_bytes = 256 * 1024;
+  options.interval_ms = 1000;
+  options.checkpoint_interval_ms = 30000;
+  return options;
+}
+
+size_t QueueBudget(const MetaBypassOptions& options) {
+  return options.wal_queue_capacity + options.metadata_queue_capacity;
+}
+
 // Fail after truncation to expose destructive rewrites of protocol markers.
 class MarkerFailureFileSystem : public FileSystemWrapper {
  public:
@@ -531,6 +548,10 @@ class TestGate {
   void WaitUntilBlocked() {
     std::unique_lock<std::mutex> lock(mutex_);
     cv_.wait(lock, [&] { return entered_; });
+  }
+  bool WaitUntilBlockedFor(std::chrono::seconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return cv_.wait_for(lock, timeout, [&] { return entered_; });
   }
   void Release() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1144,7 +1165,7 @@ class MetaBypassTest : public testing::Test {
     ASSERT_OK((*backup)->Start(false));
   }
   void CoalescePressureScenario(bool fail) {
-    m_.queue_capacity = 32768;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
     m_.batch_bytes = 1;
     m_.checkpoint_interval_ms = 60000;
     o_.write_buffer_size = 4 * 1024 * 1024;
@@ -1265,7 +1286,7 @@ class MetaBypassTest : public testing::Test {
                                           });
   }
   void CandidateValidationBlockedScenario(const std::string& point) {
-    m_.queue_capacity = 32768;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
     m_.batch_bytes = 1;
     m_.interval_ms = m_.checkpoint_interval_ms = 60000;
     o_.write_buffer_size = 4 * 1024 * 1024;
@@ -1307,8 +1328,8 @@ class MetaBypassTest : public testing::Test {
     Check("tail199", std::string(1024, 'v'));
   }
   void CandidateFailureScenario(const std::string& point) {
-    m_.queue_capacity = 32768;
-    m_.batch_bytes = m_.queue_capacity;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
+    m_.batch_bytes = m_.wal_queue_capacity;
     m_.interval_ms = m_.checkpoint_interval_ms = 60000;
     o_.write_buffer_size = 4 * 1024 * 1024;
     ASSERT_NO_FATAL_FAILURE(Open());
@@ -1392,7 +1413,7 @@ class MetaBypassTest : public testing::Test {
   void NotificationScenario(bool pressure, bool fail, bool timer,
                             bool metadata = false) {
     const std::string file_name = metadata ? "MANIFEST-000001" : "000001.log";
-    m_.queue_capacity = m_.batch_bytes = 4096;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = m_.batch_bytes = 4096;
     m_.interval_ms = timer ? 1 : 60000;
     m_.checkpoint_interval_ms = m_.interval_ms;
     TestGate waiting, applying;
@@ -1455,12 +1476,12 @@ class MetaBypassTest : public testing::Test {
                            (pressure ? std::string(3000, 'b') : ""));
       auto stats = backup->Stats();
       EXPECT_OK(stats.error);
-      EXPECT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+      EXPECT_LE(stats.peak_queued_bytes, m_.wal_queue_capacity);
     }
     SyncPoint::GetInstance()->DisableProcessing();
   }
   void QueueScenario(bool fail) {
-    m_.queue_capacity = 4096;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = 4096;
     m_.batch_bytes = 1;
     auto storage = std::make_shared<metabypass::SeparatedStorage>(fs_, index_,
                                                                   m_.data_dir);
@@ -1526,16 +1547,71 @@ class MetaBypassTest : public testing::Test {
     ASSERT_OK(backup.Stop());
     auto stats = backup.Stats();
     ASSERT_OK(stats.error);
-    ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+    ASSERT_LE(stats.peak_queued_bytes, m_.wal_queue_capacity);
     ASSERT_GT(stats.backpressure_micros, 0);
     std::string bytes;
     ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log",
                                &bytes));
     ASSERT_EQ(bytes, std::string(2000, 'a') + std::string(3000, 'b'));
   }
+  void OutstandingReservationScenario(bool wal_append) {
+    m_.batch_bytes = 1;
+    m_.wal_queue_capacity = m_.metadata_queue_capacity = 4096;
+    const std::string filename = wal_append ? "000001.log" : "MANIFEST-000002";
+    const Status failure =
+        Status::IOError("mirror failure with primary in flight");
+    TestGate applying, primary, discarded;
+    std::unique_ptr<metabypass::Backup> backup;
+    std::unique_ptr<FSWritableFile> wal, metadata;
+    auto* sync = SyncPoint::GetInstance();
+    Defer cleanup([&] {
+      applying.Release();
+      primary.Release();
+      discarded.Release();
+      sync->DisableProcessing();
+      sync->ClearAllCallBacks();
+    });
+    BlockFirstApply(&applying);
+    sync->SetCallBack("MetaBypass::PrimaryReserved", [&](void* arg) {
+      if (*static_cast<std::string*>(arg) == filename) primary.Block();
+    });
+    sync->SetCallBack("MetaBypass::ApplyStatus",
+                      [&](void* arg) { *static_cast<Status*>(arg) = failure; });
+    sync->SetCallBack("MetaBypass::QueuesDiscarded",
+                      [&](void*) { discarded.Block(); });
+    sync->EnableProcessing();
+    ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+    ASSERT_TRUE(applying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+    auto& file = wal_append ? wal : metadata;
+    const std::string value(1024, 'x');
+    auto writer = std::async(std::launch::async, [&] {
+      return file->Append(value, IOOptions(), nullptr);
+    });
+    EXPECT_TRUE(primary.WaitUntilBlockedFor(std::chrono::seconds(10)));
+    applying.Release();
+    EXPECT_TRUE(discarded.WaitUntilBlockedFor(std::chrono::seconds(10)));
+    discarded.Release();
+    EXPECT_EQ(backup->Stop().ToString(), failure.ToString());
+    const auto before = backup->Stats();
+    EXPECT_EQ(before.error.ToString(), failure.ToString());
+    EXPECT_EQ(before.queued_bytes,
+              metabypass::BackupTestAccess::EventHeaderCharge() +
+                  filename.size() + value.size());
+    primary.Release();
+    EXPECT_OK(writer.get());
+    const auto after = backup->Stats();
+    EXPECT_EQ(after.error.ToString(), failure.ToString());
+    EXPECT_EQ(after.queued_bytes, 0U);
+    EXPECT_EQ(after.mirrored_wal_bytes, 0U);
+    EXPECT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
+    EXPECT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
+    std::string bytes;
+    ASSERT_OK(metabypass::Read(fs_.get(), index_ + "/" + filename, &bytes));
+    EXPECT_EQ(bytes, value);
+  }
   std::string root_, index_;
   Options o_;
-  MetaBypassOptions m_;
+  MetaBypassOptions m_ = TestMetaBypassOptions();
   std::shared_ptr<FileSystem> fs_;
   std::unique_ptr<MetaBypassDB> db_;
 };
@@ -1806,6 +1882,10 @@ TEST_F(MetaBypassNonBlobTest, RecoverySingle512MiBBatchDoesNotRebuild) {
   ASSERT_EQ(rebuilt, 0U);
 }
 TEST_F(MetaBypassNonBlobTest, DefaultOptionsCrudAndReopen) {
+  MetaBypassOptions defaults;
+  defaults.data_dir = m_.data_dir;
+  defaults.backup_dir = m_.backup_dir;
+  m_ = std::move(defaults);
   ASSERT_NO_FATAL_FAILURE(CrudScenario());
 }
 TEST_F(MetaBypassNonBlobTest, ExplicitFalseCrudAndReopen) {
@@ -2302,6 +2382,9 @@ TEST(MetaBypassRecoveryTimeTest, BoundsGapsAndClockDiscontinuity) {
   ASSERT_FALSE(report.has_time_upper_bound);
 }
 TEST_F(MetaBypassNonBlobTest, WalOnlyBackupDoesNotFlushAndRestores) {
+  m_.wal_queue_capacity = 256 * 1024;
+  m_.batch_bytes = QueueBudget(m_);
+  m_.interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(RecoveryScenario(false));
 }
 TEST_F(MetaBypassNonBlobTest, SstBackupRestores) {
@@ -3338,7 +3421,7 @@ TEST_F(MetaBypassTest, DirectWriteValidatesNativeConstraintsBeforeMutation) {
 
 TEST_F(MetaBypassTest, NativeSnapshotPinsFilesAcrossConcurrentFlush) {
   o_.write_buffer_size = 4 * 1024 * 1024;
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   Open();
@@ -3400,7 +3483,7 @@ TEST_F(MetaBypassTest, NativeSnapshotPinsFilesAcrossConcurrentFlush) {
   Check("after", "concurrent");
 }
 TEST_F(MetaBypassTest, SyncWritesWaitForPublicationAndReportFailure) {
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   ASSERT_NO_FATAL_FAILURE(Open());
@@ -3643,7 +3726,7 @@ TEST_F(MetaBypassTest, TieredMigrationDoesNotBlockAsyncWrites) {
 
 TEST_F(MetaBypassTest, TieredMigrationFailurePreservesPublishedPoint) {
   EnableTier(1024 * 1024);
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   Open();
@@ -4631,6 +4714,154 @@ TEST_F(MetaBypassTest, RejectUnsupportedWritesAndOptions) {
   o_.enable_blob_direct_write = true;
   ASSERT_TRUE(MetaBypassDB::Open(o_, m_, index_, &db_).IsNotSupported());
 }
+
+TEST_F(MetaBypassTest, QueueOptionsDefaults) {
+  const MetaBypassOptions defaults;
+  EXPECT_EQ(defaults.wal_queue_capacity, 896U * 1024 * 1024);
+  EXPECT_EQ(defaults.metadata_queue_capacity, 128U * 1024 * 1024);
+  EXPECT_EQ(defaults.batch_bytes, 512U * 1024 * 1024);
+  EXPECT_EQ(defaults.interval_ms, 5000U);
+  EXPECT_EQ(defaults.checkpoint_interval_ms, 40000U);
+}
+
+TEST_F(MetaBypassTest, QueueOptionsRejectInvalidConfigurationBeforeMutation) {
+  const auto before = SnapshotTree(root_);
+  const struct {
+    const char* reason;
+    size_t wal, metadata, batch;
+    uint64_t mirror_ms, checkpoint_ms;
+  } cases[] = {
+      {"zero WAL capacity", 0, 4096, 4096, 1000, 30000},
+      {"zero metadata capacity", 4096, 0, 4096, 1000, 30000},
+      {"capacity sum overflow", std::numeric_limits<size_t>::max(), 1, 4096,
+       1000, 30000},
+      {"capacity sum below minimum", 1024, 3071, 4095, 1000, 30000},
+      {"zero batch threshold", 1024, 3072, 0, 1000, 30000},
+      {"batch threshold above capacity sum", 1024, 3072, 4097, 1000, 30000},
+      {"zero mirror interval", 1024, 3072, 4096, 0, 30000},
+      {"mirror interval too large for deadline", 1024, 3072, 4096, INT64_MAX,
+       30000},
+      {"out of range mirror interval", 1024, 3072, 4096, UINT64_MAX, 30000},
+      {"zero checkpoint interval", 1024, 3072, 4096, 1000, 0},
+      {"out of range checkpoint interval", 1024, 3072, 4096, 1000, UINT64_MAX},
+  };
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.reason);
+    auto options = m_;
+    options.wal_queue_capacity = test.wal;
+    options.metadata_queue_capacity = test.metadata;
+    options.batch_bytes = test.batch;
+    options.interval_ms = test.mirror_ms;
+    options.checkpoint_interval_ms = test.checkpoint_ms;
+    ASSERT_TRUE(
+        MetaBypassDB::Open(o_, options, index_, &db_).IsInvalidArgument());
+    ASSERT_FALSE(db_);
+    ASSERT_EQ(SnapshotTree(root_), before);
+    ASSERT_TRUE(MetaBypassDB::Restore(o_, options, index_).IsInvalidArgument());
+    ASSERT_EQ(SnapshotTree(root_), before);
+  }
+}
+
+TEST_F(MetaBypassTest, QueueOptionsRestoreWithMinimumCombinedCapacity) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
+  ASSERT_OK(db_->SyncBackup());
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  Clean(index_);
+  m_.wal_queue_capacity = 1024;
+  m_.metadata_queue_capacity = 3072;
+  m_.batch_bytes = QueueBudget(m_);
+  MetaBypassRecoveryReport report;
+  ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_, &report));
+  EXPECT_EQ(report.checkpoint_sequence, 1U);
+  EXPECT_EQ(report.recovered_sequence, 1U);
+}
+
+TEST_F(MetaBypassTest, QueueOptionsEnforceIndependentEventLimits) {
+  m_.wal_queue_capacity = 1024;
+  m_.metadata_queue_capacity = 3072;
+  m_.batch_bytes = 1;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  const size_t header = metabypass::BackupTestAccess::EventHeaderCharge();
+  const std::string wal_name = "000001.log", metadata_name = "MANIFEST-000002";
+  const std::string wal_bytes(m_.wal_queue_capacity - header - wal_name.size(),
+                              'w');
+  const std::string metadata_bytes(
+      m_.metadata_queue_capacity - header - metadata_name.size(), 'm');
+  const auto wal_error = wal->Append(wal_bytes + "x", IOOptions(), nullptr);
+  EXPECT_TRUE(wal_error.IsIOError());
+  EXPECT_NE(wal_error.ToString().find("exceeds Metabypass WAL queue capacity"),
+            std::string::npos);
+  const auto metadata_error =
+      metadata->Append(metadata_bytes + "x", IOOptions(), nullptr);
+  EXPECT_TRUE(metadata_error.IsIOError());
+  EXPECT_NE(metadata_error.ToString().find(
+                "exceeds Metabypass metadata queue capacity"),
+            std::string::npos);
+  ASSERT_OK(wal->Append(wal_bytes, IOOptions(), nullptr));
+  ASSERT_OK(metadata->Append(metadata_bytes, IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+  const auto stats = backup->Stats();
+  ASSERT_OK(stats.error);
+  EXPECT_EQ(stats.queued_bytes, 0U);
+  EXPECT_EQ(stats.mirrored_wal_bytes, wal_bytes.size());
+  for (const auto& dir : {index_, m_.backup_dir + "/work"}) {
+    std::string bytes;
+    ASSERT_OK(metabypass::Read(fs_.get(), dir + "/" + wal_name, &bytes));
+    EXPECT_EQ(bytes, wal_bytes);
+    ASSERT_OK(metabypass::Read(fs_.get(), dir + "/" + metadata_name, &bytes));
+    EXPECT_EQ(bytes, metadata_bytes);
+  }
+}
+
+#ifndef NDEBUG
+TEST_F(MetaBypassTest, QueueOptionsBatchThresholdCombinesChannels) {
+  const std::string wal_bytes(600, 'w'), metadata_bytes(1000, 'm');
+  const size_t header = metabypass::BackupTestAccess::EventHeaderCharge();
+  const size_t wal_events =
+      2 * (header + std::string("000001.log").size()) + wal_bytes.size();
+  const size_t metadata_events =
+      2 * (header + std::string("MANIFEST-000002").size()) +
+      metadata_bytes.size();
+  m_.wal_queue_capacity = 1024;
+  m_.metadata_queue_capacity = 3072;
+  m_.batch_bytes = wal_events + metadata_events;
+  m_.interval_ms = 60000;
+  TestGate applying;
+  std::atomic<unsigned> notifications{0};
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    applying.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  BlockFirstApply(&applying);
+  sync->SetCallBack("MetaBypass::MirrorNotified",
+                    [&](void*) { ++notifications; });
+  sync->EnableProcessing();
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  ASSERT_OK(metadata->Append(metadata_bytes, IOOptions(), nullptr));
+  EXPECT_EQ(notifications.load(), 0U);
+  ASSERT_OK(wal->Append(wal_bytes, IOOptions(), nullptr));
+  ASSERT_TRUE(applying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_GT(notifications.load(), 0U);
+  const auto stats = backup->Stats();
+  EXPECT_OK(stats.error);
+  EXPECT_EQ(stats.queued_bytes, m_.batch_bytes);
+  applying.Release();
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+}
+#endif
+
 TEST_F(MetaBypassTest,
        RejectIdentityAndRemoteCompactionBeforeDirectoryChanges) {
   for (bool disable_identity : {true, false}) {
@@ -4741,25 +4972,29 @@ TEST_F(MetaBypassTest, MirrorReadinessWhilePublicationBlocked) {
   TestGate publishing;
   std::atomic<bool> observe{false}, returned{false};
   std::atomic<unsigned> applied_only{0}, pending{0};
+  std::atomic<metabypass::Backup*> probe{nullptr};
+  auto observe_readiness = [&](metabypass::Backup* backup) {
+    if (!observe.load()) return;
+    auto state = metabypass::BackupTestAccess::Observe(backup);
+    if (state.empty || state.capture || state.capacity || state.size ||
+        state.stopping || state.error)
+      return;
+    if (state.requested > state.applied) {
+      EXPECT_TRUE(state.ready);
+      ++pending;
+    } else if (state.published < state.requested) {
+      // The explicit request has been applied but not yet published.
+      EXPECT_FALSE(state.ready);
+      ++applied_only;
+    }
+  };
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::ValidateCandidate",
                                         [&](void*) { publishing.Block(); });
   SyncPoint::GetInstance()->SetCallBack(
       "MetaBypass::MirrorReadyProbe", [&](void* arg) {
-        if (!observe.load()) return;
-        auto state = metabypass::BackupTestAccess::Observe(
-            static_cast<metabypass::Backup*>(arg));
-        if (state.empty || state.capture || state.capacity || state.size ||
-            state.stopping || state.error)
-          return;
-        if (state.requested > state.applied) {
-          EXPECT_TRUE(state.ready);
-          ++pending;
-        } else if (state.published < state.requested) {
-          // No other predicate is true: this is solely the already-applied,
-          // not-yet-published request. Record the predicate, not elapsed time.
-          EXPECT_FALSE(state.ready);
-          ++applied_only;
-        }
+        auto* backup = static_cast<metabypass::Backup*>(arg);
+        probe.store(backup);
+        observe_readiness(backup);
       });
   SyncPoint::GetInstance()->EnableProcessing();
   ASSERT_OK(db_->Put(WriteOptions(), "candidate", "value"));
@@ -4770,6 +5005,11 @@ TEST_F(MetaBypassTest, MirrorReadinessWhilePublicationBlocked) {
   publishing.WaitUntilBlocked();
   observe = true;
   EXPECT_OK(db_->Put(WriteOptions(), "tail", "value"));
+  // WAL publication does not acquire the shared mutex or invoke WakeMirror.
+  if (auto* backup = probe.load()) {
+    auto lock = metabypass::BackupTestAccess::LockQueueMutex(backup);
+    observe_readiness(backup);
+  }
   EXPECT_GT(applied_only.load(), 0U);
   EXPECT_FALSE(returned.load());
   // A higher explicit target must resume immediate catch-up even while the
@@ -4796,7 +5036,7 @@ TEST_F(MetaBypassTest, MirrorReadinessWhilePublicationBlocked) {
   Check("tail", "value");
 }
 TEST_F(MetaBypassTest, ValidatorBlockedMirrorStillDrainsAndPinsFiles) {
-  m_.queue_capacity = 32768;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
   m_.batch_bytes = 1;
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "old", "retained"));
@@ -4981,7 +5221,7 @@ TEST_F(MetaBypassTest, ReplacementPublishSyncAllowsMirrorAndNativeFlush) {
   options.env = env.get();
   options.enable_blob_direct_write = false;
   options.write_buffer_size = 4 * 1024 * 1024;
-  m_.queue_capacity = 32768;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
   m_.batch_bytes = 1;
   m_.interval_ms = m_.checkpoint_interval_ms = 60000;
   TestGate publishing;
@@ -5015,8 +5255,8 @@ TEST_F(MetaBypassTest, ReplacementPublishSyncAllowsMirrorAndNativeFlush) {
   EXPECT_OK(db_->Flush(flush));
   auto progressed = db_->GetBackupStats();
   EXPECT_OK(progressed.error);
-  EXPECT_GT(progressed.mirrored_bytes,
-            initial.mirrored_bytes + m_.queue_capacity);
+  EXPECT_GT(progressed.mirrored_wal_bytes,
+            initial.mirrored_wal_bytes + m_.wal_queue_capacity);
   EXPECT_FALSE(returned.load());
   std::string pending;
   EXPECT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/LATEST", &pending));
@@ -5089,7 +5329,7 @@ TEST_F(MetaBypassTest, StageCopyRejectsShortSource) {
       metabypass::StageCopy(fs_.get(), source, destination, 6).IsCorruption());
 }
 TEST_F(MetaBypassTest, PointerDirectorySyncFailureRestoresCompletePoint) {
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
@@ -5111,8 +5351,8 @@ TEST_F(MetaBypassTest, PointerDirectorySyncFailureRestoresCompletePoint) {
   Check("key", "new");
 }
 TEST_F(MetaBypassTest, RetiredPointCleanupDoesNotDelaySyncOrMirror) {
-  m_.queue_capacity = 32768;
-  m_.batch_bytes = m_.queue_capacity;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 32768;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   ASSERT_NO_FATAL_FAILURE(Open());
@@ -5169,7 +5409,7 @@ TEST_F(MetaBypassTest, RetiredPointCleanupDoesNotDelaySyncOrMirror) {
   Check("tail299", "v");
 }
 TEST_F(MetaBypassTest, RetiredPointCleanupFailureIsSticky) {
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   ASSERT_NO_FATAL_FAILURE(Open());
@@ -5873,7 +6113,7 @@ TEST_F(MetaBypassTest, BelowThresholdFailureWakesReservation) {
   NotificationScenario(true, true, false);
 }
 TEST_F(MetaBypassTest, CloseDrainsWithValidatorBlocked) {
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   ASSERT_NO_FATAL_FAILURE(Open());
@@ -5896,7 +6136,7 @@ TEST_F(MetaBypassTest, CloseDrainsWithValidatorBlocked) {
   Check("key", "value");
 }
 TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   m_.interval_ms = 60000;
   m_.checkpoint_interval_ms = m_.interval_ms;
   ASSERT_NO_FATAL_FAILURE(Open());
@@ -5945,7 +6185,7 @@ TEST_F(MetaBypassTest, AllSyncWaitersWakeOnPublicationOrFailure) {
 #ifndef NDEBUG
 TEST_F(MetaBypassTest, WalPayloadSlicesSurviveRollover) {
   m_.batch_bytes = 1;
-  m_.queue_capacity = 256 * 1024;
+  m_.wal_queue_capacity = 256 * 1024;
   TestGate applying;
   std::unique_ptr<metabypass::Backup> backup;
   std::unique_ptr<FSWritableFile> wal, metadata;
@@ -6006,7 +6246,7 @@ TEST_F(MetaBypassTest, WalPayloadPrimaryFailureReleasesReservation) {
   auto fault = std::make_shared<FaultInjectionTestFS>(fs_);
   fs_ = fault;
   m_.interval_ms = 60000;
-  m_.batch_bytes = m_.queue_capacity;
+  m_.batch_bytes = m_.wal_queue_capacity;
   std::unique_ptr<metabypass::Backup> backup;
   std::unique_ptr<FSWritableFile> wal, metadata;
   ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
@@ -6136,7 +6376,7 @@ TEST_F(MetaBypassTest, ChannelMetadataOnlyDrainsOnTimer) {
   NotificationScenario(false, false, true, true);
 }
 TEST_F(MetaBypassTest, ChannelWalPassesBlockedPrimaryMetadata) {
-  m_.queue_capacity = 8192;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 8192;
   m_.batch_bytes = 1;
   std::unique_ptr<metabypass::Backup> backup;
   std::unique_ptr<FSWritableFile> wal, metadata;
@@ -6162,7 +6402,7 @@ TEST_F(MetaBypassTest, ChannelWalPassesBlockedPrimaryMetadata) {
   ASSERT_OK(backup->Stop());
 }
 TEST_F(MetaBypassTest, ChannelWalPassesMetadataCapacityWait) {
-  m_.queue_capacity = 8192;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 8192;
   m_.batch_bytes = 1;
   TestGate applying, blocked;
   BlockFirstApply(&applying);
@@ -6188,14 +6428,14 @@ TEST_F(MetaBypassTest, ChannelWalPassesMetadataCapacityWait) {
   ASSERT_OK(backup->Stop());
   auto stats = backup->Stats();
   ASSERT_OK(stats.error);
-  ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+  ASSERT_LE(stats.peak_queued_bytes, QueueBudget(m_));
   std::string bytes;
   ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000002",
                              &bytes));
   ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(3000, 'b'));
 }
 TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
-  m_.queue_capacity = 8192;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 8192;
   m_.batch_bytes = 1;
   TestGate applying, blocked;
   std::atomic<int> waiters{0};
@@ -6212,6 +6452,7 @@ TEST_F(MetaBypassTest, ChannelBothCapacityWaitersWakeOnFailure) {
   std::unique_ptr<FSWritableFile> wal, metadata;
   ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
+  ASSERT_OK(wal->Append(std::string(6000, 'w'), IOOptions(), nullptr));
   ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread meta_writer([&] {
     EXPECT_TRUE(metadata->Append(std::string(3000, 'b'), IOOptions(), nullptr)
@@ -6284,73 +6525,48 @@ TEST_F(MetaBypassTest, ChannelMergeOrdersControlOperations) {
                   .IsNotFound());
 }
 TEST_F(MetaBypassTest, ChannelFailureRetainsOutstandingReservation) {
-  m_.batch_bytes = 1;
-  TestGate applying, primary, discarded;
-  BlockFirstApply(&applying);
-  SyncPoint::GetInstance()->SetCallBack(
-      "MetaBypass::PrimaryReserved", [&](void* arg) {
-        if (*static_cast<std::string*>(arg) == "MANIFEST-000002")
-          primary.Block();
-      });
-  SyncPoint::GetInstance()->SetCallBack(
-      "MetaBypass::ApplyStatus", [](void* arg) {
-        *static_cast<Status*>(arg) =
-            Status::IOError("mirror failure with primary in flight");
-      });
-  SyncPoint::GetInstance()->SetCallBack("MetaBypass::QueuesDiscarded",
-                                        [&](void*) { discarded.Block(); });
-  SyncPoint::GetInstance()->EnableProcessing();
-  std::unique_ptr<metabypass::Backup> backup;
-  std::unique_ptr<FSWritableFile> wal, metadata;
-  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
-  applying.WaitUntilBlocked();
-  std::thread writer([&] {
-    EXPECT_OK(metadata->Append(std::string(1024, 'x'), IOOptions(), nullptr));
-  });
-  primary.WaitUntilBlocked();
-  applying.Release();
-  discarded.WaitUntilBlocked();
-  discarded.Release();
-  ASSERT_TRUE(backup->Stop().IsIOError());
-  auto before = backup->Stats();
-  ASSERT_TRUE(before.error.IsIOError());
-  ASSERT_GE(before.queued_bytes, 1024U);
-  ASSERT_LE(before.queued_bytes, m_.queue_capacity);
-  primary.Release();
-  writer.join();
-  auto after = backup->Stats();
-  ASSERT_TRUE(after.error.IsIOError());
-  ASSERT_EQ(after.queued_bytes, 0U);
-  ASSERT_TRUE(metadata->Close(IOOptions(), nullptr).IsIOError());
-  ASSERT_TRUE(wal->Close(IOOptions(), nullptr).IsIOError());
-  SyncPoint::GetInstance()->DisableProcessing();
+  OutstandingReservationScenario(false);
 }
-TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
-  m_.queue_capacity = 8192;
+TEST_F(MetaBypassTest, ChannelWaitersWakeOnTheirOwnCapacityRelease) {
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 8192;
   m_.batch_bytes = 1;
-  TestGate applying, blocked;
+  TestGate applying, blocked, applying_metadata;
   std::atomic<int> waiters{0};
   BlockFirstApply(&applying);
   SyncPoint::GetInstance()->SetCallBack("MetaBypass::Backpressure", [&](void*) {
     if (++waiters == 2) blocked.Block();
   });
+  SyncPoint::GetInstance()->SetCallBack("MetaBypass::ApplySequence",
+                                        [&](void* arg) {
+                                          if (*static_cast<uint64_t*>(arg) == 4)
+                                            applying_metadata.Block();
+                                        });
   SyncPoint::GetInstance()->EnableProcessing();
   std::unique_ptr<metabypass::Backup> backup;
   std::unique_ptr<FSWritableFile> wal, metadata;
   ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
+  ASSERT_OK(wal->Append(std::string(6000, 'v'), IOOptions(), nullptr));
   ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
-  std::thread meta_writer([&] {
-    EXPECT_OK(metadata->Append(std::string(6000, 'b'), IOOptions(), nullptr));
+  auto meta_writer = std::async(std::launch::async, [&] {
+    return metadata->Append(std::string(6000, 'b'), IOOptions(), nullptr);
   });
-  std::thread wal_writer([&] {
-    EXPECT_OK(wal->Append(std::string(6000, 'w'), IOOptions(), nullptr));
+  auto wal_writer = std::async(std::launch::async, [&] {
+    return wal->Append(std::string(6000, 'w'), IOOptions(), nullptr);
   });
   blocked.WaitUntilBlocked();
   blocked.Release();
   applying.Release();
-  meta_writer.join();
-  wal_writer.join();
+  // The WAL append has released space when the mirror starts applying the
+  // metadata append. The metadata reservation is still charged.
+  EXPECT_TRUE(applying_metadata.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_EQ(wal_writer.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  EXPECT_EQ(meta_writer.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  applying_metadata.Release();
+  EXPECT_OK(meta_writer.get());
+  EXPECT_OK(wal_writer.get());
   SyncPoint::GetInstance()->DisableProcessing();
   ASSERT_OK(metadata->Close(IOOptions(), nullptr));
   ASSERT_OK(wal->Close(IOOptions(), nullptr));
@@ -6358,18 +6574,18 @@ TEST_F(MetaBypassTest, ChannelBothWaitersCompeteForReleasedCapacity) {
   auto stats = backup->Stats();
   ASSERT_OK(stats.error);
   ASSERT_EQ(stats.queued_bytes, 0U);
-  ASSERT_LE(stats.peak_queued_bytes, m_.queue_capacity);
+  ASSERT_LE(stats.peak_queued_bytes, QueueBudget(m_));
   std::string bytes;
   ASSERT_OK(metabypass::Read(fs_.get(), m_.backup_dir + "/work/MANIFEST-000002",
                              &bytes));
   ASSERT_EQ(bytes, std::string(6000, 'a') + std::string(6000, 'b'));
   ASSERT_OK(
       metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
-  ASSERT_EQ(bytes, std::string(6000, 'w'));
+  ASSERT_EQ(bytes, std::string(6000, 'v') + std::string(6000, 'w'));
 }
 
 TEST_F(MetaBypassTest, ChannelStopWakesBothCapacityWaiters) {
-  m_.queue_capacity = 8192;
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 8192;
   m_.batch_bytes = 1;
   TestGate applying, blocked;
   std::atomic<int> waiters{0};
@@ -6382,6 +6598,7 @@ TEST_F(MetaBypassTest, ChannelStopWakesBothCapacityWaiters) {
   std::unique_ptr<FSWritableFile> wal, metadata;
   ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
   applying.WaitUntilBlocked();
+  ASSERT_OK(wal->Append(std::string(6000, 'w'), IOOptions(), nullptr));
   ASSERT_OK(metadata->Append(std::string(6000, 'a'), IOOptions(), nullptr));
   std::thread meta_writer([&] {
     EXPECT_TRUE(metadata->Append(std::string(3000, 'b'), IOOptions(), nullptr)
@@ -6411,6 +6628,199 @@ TEST_F(MetaBypassTest, QueueCapacityAndOrdering) { QueueScenario(false); }
 TEST_F(MetaBypassTest, MirrorFailureWakesBlockedProducer) {
   QueueScenario(true);
 }
+
+#ifndef NDEBUG
+TEST_F(MetaBypassTest, WalSpscAppendPassesHeldQueueMutex) {
+  m_.wal_queue_capacity = 4096;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  bool reserved = false;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  sync->SetCallBack("MetaBypass::PrimaryReserved", [&](void* arg) {
+    reserved = *static_cast<std::string*>(arg) == "000001.log";
+  });
+  sync->EnableProcessing();
+  auto lock = metabypass::BackupTestAccess::LockQueueMutex(backup.get());
+  auto writer = std::async(std::launch::async, [&] {
+    return wal->Append("ordinary WAL append", IOOptions(), nullptr);
+  });
+  const auto completed = writer.wait_for(std::chrono::seconds(10));
+  lock.unlock();
+  EXPECT_EQ(completed, std::future_status::ready);
+  ASSERT_OK(writer.get());
+  EXPECT_TRUE(reserved);
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+}
+
+TEST_F(MetaBypassTest, WalSpscMetadataAnchorAndCrossChannelRename) {
+  m_.wal_queue_capacity = 4096;
+  m_.batch_bytes = 1;
+  TestGate applying, anchor;
+  std::vector<std::array<uint64_t, 3>> batches;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    applying.Release();
+    anchor.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  BlockFirstApply(&applying);
+  sync->SetCallBack("MetaBypass::WalAppendBatch", [&](void* arg) {
+    batches.push_back(*static_cast<std::array<uint64_t, 3>*>(arg));
+  });
+  sync->EnableProcessing();
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  ASSERT_TRUE(applying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  ASSERT_OK(wal->Append("w1", IOOptions(), nullptr));
+  sync->SetCallBack("MetaBypass::MetadataSequenceAssigned",
+                    [&](void*) { anchor.Block(); });
+  auto metadata_writer = std::async(std::launch::async, [&] {
+    return metadata->Append("meta", IOOptions(), nullptr);
+  });
+  EXPECT_TRUE(anchor.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  auto wal_writer = std::async(std::launch::async, [&] {
+    return wal->Append("w2", IOOptions(), nullptr);
+  });
+  const auto completed = wal_writer.wait_for(std::chrono::seconds(10));
+  anchor.Release();
+  EXPECT_EQ(completed, std::future_status::ready);
+  EXPECT_OK(wal_writer.get());
+  EXPECT_OK(metadata_writer.get());
+  ASSERT_OK(wal->Append("w3", IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+
+  const std::string log = index_ + "/000001.log";
+  const std::string manifest = index_ + "/MANIFEST-000003";
+  const std::string final_log = index_ + "/000004.log";
+  ASSERT_OK(backup->RenameFile(log, manifest, IOOptions(), nullptr));
+  ASSERT_OK(backup->ReopenWritableFile(manifest, FileOptions(), &wal, nullptr));
+  ASSERT_OK(wal->Append("m4", IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->RenameFile(manifest, final_log, IOOptions(), nullptr));
+  ASSERT_OK(
+      backup->ReopenWritableFile(final_log, FileOptions(), &wal, nullptr));
+  ASSERT_OK(wal->Append("w5", IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+
+  applying.Release();
+  ASSERT_OK(backup->Stop());
+  // The metadata anchor splits w1 from w2 and w3, even though w2 was
+  // published before the metadata event was enqueued.
+  const std::vector<std::array<uint64_t, 3>> expected_batches{{{5, 2, 4}}};
+  EXPECT_EQ(batches, expected_batches);
+  const std::string work = m_.backup_dir + "/work/";
+  std::string bytes;
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "000004.log", &bytes));
+  EXPECT_EQ(bytes, "w1w2w3m4w5");
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "MANIFEST-000002", &bytes));
+  EXPECT_EQ(bytes, "meta");
+  EXPECT_TRUE(
+      fs_->FileExists(work + "000001.log", IOOptions(), nullptr).IsNotFound());
+  EXPECT_TRUE(fs_->FileExists(work + "MANIFEST-000003", IOOptions(), nullptr)
+                  .IsNotFound());
+}
+
+TEST_F(MetaBypassTest, WalSpscCapacityWaiterWakesAfterDrain) {
+  m_.wal_queue_capacity = m_.metadata_queue_capacity = 4096;
+  m_.batch_bytes = QueueBudget(m_);
+  m_.interval_ms = 60000;
+  TestGate sleeping, pressure;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    sleeping.Release();
+    pressure.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  });
+  sync->SetCallBack("MetaBypass::BeforeSpscMirrorSleep",
+                    [&](void*) { sleeping.Block(); });
+  sync->SetCallBack("MetaBypass::Backpressure",
+                    [&](void*) { pressure.Block(); });
+  sync->EnableProcessing();
+  ASSERT_NO_FATAL_FAILURE(StartBackup(&backup));
+  ASSERT_TRUE(sleeping.WaitUntilBlockedFor(std::chrono::seconds(10)));
+
+  const std::string first(2000, 'a'), second(3000, 'b');
+  auto writer = std::async(std::launch::async, [&] {
+    IOStatus s = backup->NewWritableFile(index_ + "/000001.log", FileOptions(),
+                                         &wal, nullptr);
+    if (s.ok()) s = wal->Append(first, IOOptions(), nullptr);
+    if (s.ok()) s = wal->Append(second, IOOptions(), nullptr);
+    return s;
+  });
+  // Send the full-queue wake after the mirror checks readiness and before it
+  // starts sleeping. The queued bytes are below the batch threshold.
+  EXPECT_TRUE(pressure.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  pressure.Release();
+  sleeping.Release();
+  const auto completed = writer.wait_for(std::chrono::seconds(10));
+  EXPECT_EQ(completed, std::future_status::ready);
+  if (completed != std::future_status::ready) {
+    EXPECT_OK(backup->Stop());
+  }
+  ASSERT_OK(writer.get());
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(backup->Stop());
+  const auto stats = backup->Stats();
+  EXPECT_OK(stats.error);
+  EXPECT_LE(stats.peak_queued_bytes, m_.wal_queue_capacity);
+  EXPECT_EQ(stats.queued_bytes, 0U);
+  std::string bytes;
+  ASSERT_OK(
+      metabypass::Read(fs_.get(), m_.backup_dir + "/work/000001.log", &bytes));
+  EXPECT_EQ(bytes, first + second);
+}
+
+TEST_F(MetaBypassTest, WalSpscFailureRetainsOutstandingReservation) {
+  OutstandingReservationScenario(true);
+}
+
+TEST_F(MetaBypassTest, WalSpscStopDrainsBelowThresholdAcrossSegments) {
+  m_.wal_queue_capacity = 256 * 1024;
+  m_.batch_bytes = QueueBudget(m_);
+  m_.interval_ms = 60000;
+  std::unique_ptr<metabypass::Backup> backup;
+  std::unique_ptr<FSWritableFile> wal, metadata;
+  ASSERT_NO_FATAL_FAILURE(StartBackupFiles(&backup, &wal, &metadata));
+  std::string expected;
+  for (int i = 0; i < 600; ++i) {
+    const std::string payload(32, 'a' + i % 26);
+    ASSERT_OK(wal->Append(payload, IOOptions(), nullptr));
+    expected += payload;
+  }
+  ASSERT_OK(metadata->Append("meta", IOOptions(), nullptr));
+  ASSERT_OK(wal->Close(IOOptions(), nullptr));
+  ASSERT_OK(metadata->Close(IOOptions(), nullptr));
+  const auto before = backup->Stats();
+  EXPECT_OK(before.error);
+  EXPECT_EQ(before.mirrored_wal_bytes, 0U);
+  EXPECT_GT(before.queued_bytes, expected.size());
+  ASSERT_OK(backup->Stop());
+  const auto after = backup->Stats();
+  EXPECT_OK(after.error);
+  EXPECT_EQ(after.queued_bytes, 0U);
+  EXPECT_EQ(after.mirrored_wal_bytes, expected.size());
+  const std::string work = m_.backup_dir + "/work/";
+  std::string bytes;
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "000001.log", &bytes));
+  EXPECT_EQ(bytes, expected);
+  ASSERT_OK(metabypass::Read(fs_.get(), work + "MANIFEST-000002", &bytes));
+  EXPECT_EQ(bytes, "meta");
+}
+#endif
+
 TEST_F(MetaBypassTest, PublicationFailurePreservesReadsAndPreviousPoint) {
   ASSERT_NO_FATAL_FAILURE(Open());
   ASSERT_OK(db_->Put(WriteOptions(), "a", "old"));
@@ -11413,6 +11823,7 @@ int main(int argc, char** argv) {
   using ROCKSDB_NAMESPACE::Options;
   using ROCKSDB_NAMESPACE::Status;
   using ROCKSDB_NAMESPACE::SyncPoint;
+  using ROCKSDB_NAMESPACE::TestMetaBypassOptions;
   using ROCKSDB_NAMESPACE::WriteBatch;
   using ROCKSDB_NAMESPACE::WriteOptions;
 #ifndef OS_WIN
@@ -11421,7 +11832,7 @@ int main(int argc, char** argv) {
     options.enable_blob_files = true;
     options.enable_blob_direct_write = true;
     options.allow_concurrent_memtable_write = false;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.staging_dir = argv[5];
@@ -11447,7 +11858,7 @@ int main(int argc, char** argv) {
     options.blob_compression_type = ROCKSDB_NAMESPACE::kNoCompression;
     const size_t tail_size = mode >= 7 ? 8 * 1024 * 1024 : 4096;
     options.write_buffer_size = 64 * 1024 * 1024;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.staging_dir = argv[5];
@@ -11575,7 +11986,7 @@ int main(int argc, char** argv) {
     options.blob_direct_write_partitions = 1;
     options.write_buffer_size = 4 * 1024 * 1024;
     options.blob_file_size = 1024 * 1024;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.staging_dir = argv[5];
@@ -11789,7 +12200,7 @@ int main(int argc, char** argv) {
     options.create_if_missing = true;
     options.enable_blob_files = true;
     options.blob_file_size = 128;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.staging_dir = argv[5];
@@ -11829,7 +12240,7 @@ int main(int argc, char** argv) {
     Options options;
     options.create_if_missing = true;
     options.enable_blob_files = true;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     bypass.sst_tiering.mode = SstTieringMode::kAdaptive;
@@ -11865,7 +12276,7 @@ int main(int argc, char** argv) {
     Options options;
     options.create_if_missing = true;
     options.enable_blob_files = true;
-    MetaBypassOptions m;
+    MetaBypassOptions m = TestMetaBypassOptions();
     m.data_dir = argv[3];
     m.backup_dir = argv[4];
     m.staging_dir = argv[5];
@@ -11909,7 +12320,7 @@ int main(int argc, char** argv) {
     Options options;
     options.create_if_missing = true;
     options.enable_blob_files = true;
-    MetaBypassOptions bypass;
+    MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.data_dir = argv[3];
     bypass.backup_dir = argv[4];
     const bool sst_copy_crash = argc == 6 && std::string(argv[5]) == "sst-copy";
@@ -11921,7 +12332,7 @@ int main(int argc, char** argv) {
     const bool gc_crash =
         argc == 6 && std::string(argv[5]) == "MetaBypass::GCFileDeleted";
     if (gc_crash || sst_copy_crash) {
-      bypass.batch_bytes = bypass.queue_capacity;
+      bypass.batch_bytes = bypass.wal_queue_capacity;
       bypass.interval_ms = 60000;
       bypass.checkpoint_interval_ms = bypass.interval_ms;
     }

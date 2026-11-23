@@ -46,9 +46,12 @@ values and rejects DirectWrite. B enables Integrated BlobDB and routes native
 Blob files through the same HDD BlobFS used by the fork. Both adapters set
 `enable_blob_direct_write` and `allow_concurrent_memtable_write` on the actual
 Options object; the pinned v11.8.1 supports both. The effective output reads
-these flags and `blob_file_size` from that object. Backup-only options
-`mirror_interval_ms`, `checkpoint_interval_ms`, `sst_mode`, `sst_budget` and
-`whole_blob_gc` are null for U/B; `backup_enabled` identifies D/S. A requested
+these flags and `blob_file_size` from that object. The current D/S driver pins
+56 MiB of WAL queue capacity, 8 MiB of metadata queue capacity, and a 256 KiB
+mirror batch trigger. Backup-only options `wal_queue_bytes`,
+`metadata_queue_bytes`, `mirror_batch_bytes`, `mirror_interval_ms`,
+`checkpoint_interval_ms`, `sst_mode`, `sst_budget` and `whole_blob_gc` are null
+for U/B; `backup_enabled` identifies D/S. A requested
 GC flag is not evidence of active Metabypass GC on native B or official U/B.
 Archive native OPTIONS and LOG files to check the library's configuration.
 

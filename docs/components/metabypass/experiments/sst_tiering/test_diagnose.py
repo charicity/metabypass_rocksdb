@@ -73,7 +73,9 @@ class DiagnosticTest(unittest.TestCase):
         command = runner.command("run", (self.ssd, self.hdd), mode="adaptive", workload="uniform",
                                  budget=runner.budget, rate=runner.rate, warmup=30, measured=30, saturated=15)
         for flag in ("--num=1000000", "--value_size=1024", "--metabypass_sst_cache_bytes=65536",
-                     "--metabypass_queue_capacity=2097152", "--metabypass_sst_target_ops_per_sec=112",
+                     "--metabypass_wal_queue_capacity=1835008",
+                     "--metabypass_metadata_queue_capacity=262144",
+                     "--metabypass_sst_target_ops_per_sec=112",
                      "--metabypass_sst_warmup_seconds=30", "--metabypass_sst_measure_seconds=30",
                      "--metabypass_sst_saturated_seconds=15"):
             self.assertIn(flag, command)

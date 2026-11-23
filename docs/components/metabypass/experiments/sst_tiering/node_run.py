@@ -30,11 +30,13 @@ PROTOCOL = "metabypass-sst-node-v1"
 OWNER = ".node-owner.json"
 PROFILES = {
     "legacy": {"keys": 4000000, "memory_bytes": 96 * 1024 * 1024,
-               "queue_bytes": 8 * 1024 * 1024, "deadline_s": 14400,
+               "wal_queue_bytes": 7 * 1024 * 1024,
+               "metadata_queue_bytes": 1024 * 1024, "deadline_s": 14400,
                "calibration_s": 1800, "warmup_s": 60, "measured_s": 120, "saturated_s": 30,
                "cpu_list": None},
     "small": {"keys": 1000000, "memory_bytes": 48 * 1024 * 1024,
-              "queue_bytes": 2 * 1024 * 1024, "deadline_s": 5400,
+              "wal_queue_bytes": 1792 * 1024,
+              "metadata_queue_bytes": 256 * 1024, "deadline_s": 5400,
               "calibration_s": 900, "warmup_s": 30, "measured_s": 60, "saturated_s": 15,
               "cpu_list": "0,1,2,3"},
 }
@@ -530,7 +532,10 @@ class Runner:
                        "limits": {"hard_deadline_s": args.deadline_seconds,
                                   "calibration_s": self.settings["calibration_s"],
                                   "memory_bytes": self.settings["memory_bytes"],
-                                  "queue_bytes": self.settings["queue_bytes"],
+                                  "queue_bytes": self.settings["wal_queue_bytes"] +
+                                                 self.settings["metadata_queue_bytes"],
+                                  "wal_queue_bytes": self.settings["wal_queue_bytes"],
+                                  "metadata_queue_bytes": self.settings["metadata_queue_bytes"],
                                   "block_cache_bytes": 65536, "round_hard_limit_s": 480},
                        "started_monotonic_s": self.deadline.start,
                        "calibration_deadline_monotonic_s": self.calibration_end,
@@ -576,8 +581,10 @@ class Runner:
                  "metabypass_sst_flush_interval_ms": 10000,
                  "metabypass_sst_window_ms": 1000, "metabypass_sst_cache_bytes": 65536,
                  "metabypass_sst_flush_every": 65536, "metabypass_sst_verify_keys": 256,
-                 "metabypass_queue_capacity": PROFILES[getattr(self.args, "profile", "legacy")]["queue_bytes"], "metabypass_batch_bytes": 262144,
-                 "metabypass_interval_ms": 1000}
+                 "metabypass_wal_queue_capacity": settings["wal_queue_bytes"],
+                 "metabypass_metadata_queue_capacity": settings["metadata_queue_bytes"],
+                 "metabypass_batch_bytes": 262144, "metabypass_interval_ms": 1000,
+                 "metabypass_checkpoint_interval_ms": 5000}
         if getattr(self.args, "profile", "legacy") == "small":
             flags.update(metabypass_sst_interval_ms=1000, metabypass_sst_half_life_ms=10000,
                          metabypass_sst_residency_ms=10000, metabypass_sst_promote_rounds=2,

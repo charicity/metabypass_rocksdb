@@ -177,7 +177,8 @@ class TradeoffTest(unittest.TestCase):
                 for key, value in config["parameters"].items():
                     self.assertEqual(str(value), flags[TRADE.PARAMETER_FLAGS[key]])
                 for key, expected in (("num", "1000000"), ("value_size", "1024"),
-                                      ("metabypass_queue_capacity", "2097152"),
+                                      ("metabypass_wal_queue_capacity", "1835008"),
+                                      ("metabypass_metadata_queue_capacity", "262144"),
                                       ("metabypass_sst_cache_bytes", "65536"),
                                       ("metabypass_sst_target_ops_per_sec", "112"),
                                       ("metabypass_sst_warmup_seconds", "45"),

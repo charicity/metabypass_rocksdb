@@ -120,7 +120,9 @@ class NormalTest(unittest.TestCase):
             for k,v in {"metabypass_sst_target_ops_per_sec":"80","metabypass_sst_warmup_seconds":"60",
                         "metabypass_sst_measure_seconds":"180","metabypass_sst_saturated_seconds":"0",
                         "metabypass_sst_flush_interval_ms":"10000","metabypass_sst_cache_bytes":"65536",
-                        "metabypass_queue_capacity":"2097152","num":"1000000","metabypass_sst_read_delay_us":"0",
+                        "metabypass_wal_queue_capacity":"1835008",
+                        "metabypass_metadata_queue_capacity":"262144",
+                        "num":"1000000","metabypass_sst_read_delay_us":"0",
                         "sync":"false"}.items():
                 self.assertEqual(v,flags[k])
 

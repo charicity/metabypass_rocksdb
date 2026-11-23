@@ -58,9 +58,11 @@ them. There is no automatic migration or old-format recovery path.
 ## Capturing a recovery point
 
 The backup mirror drains bounded WAL and metadata event queues independently of
-the checkpoint coordinator. Queue memory includes in-flight events; a single
-file operation larger than `queue_capacity` fails before primary file I/O.
-The mirror preserves accepted event order across both channels.
+the checkpoint coordinator. `wal_queue_capacity` and `metadata_queue_capacity`
+default to 896 MiB and 128 MiB respectively. The limits include reservations
+and in-flight events. A file operation whose charge exceeds its queue limit
+fails before primary file I/O. The mirror preserves accepted event order across
+both channels.
 
 The coordinator calls native `DisableFileDeletions` and
 `GetLiveFilesStorageInfo`. With DirectWrite off it uses the no-flush threshold
@@ -74,10 +76,11 @@ DirectWrite off. DirectWrite points contain the native flush result, Blob
 references, and no WAL dependency. In both modes all required Blob/SST/metadata
 bytes must be durable on HDD before LATEST is published.
 
-`MetaBypassOptions::checkpoint_interval_ms` defaults to 5000 and controls only
-periodic point capture; `interval_ms` continues to control mirror batching.
-SyncBackup, synchronous writes and Close request barriers independently of the
-periodic interval. The interval is a scheduling target, not a fixed RPO.
+The mirror wakes at `batch_bytes`, which defaults to 512 MiB of pending work
+across both queues, or after `interval_ms`, which defaults to 5000 ms.
+`checkpoint_interval_ms` defaults to 40000 ms and controls periodic point
+capture. SyncBackup, synchronous writes and Close request barriers independently
+of the periodic interval. The interval is a scheduling target, not a fixed RPO.
 
 The candidate persists its required blob bytes, native file inventory and
 checksums before replacing LATEST durably. Backup does not parse business WAL
@@ -144,7 +147,10 @@ AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j48 db_bench
   --metabypass_data_dir=/experiment/data \
   --metabypass_backup_dir=/experiment/backup --num=100000 --value_size=1024 \
   --enable_blob_direct_write=true --allow_concurrent_memtable_write=false \
-  --metabypass_checkpoint_interval_ms=5000 --sync=false
+  --metabypass_wal_queue_capacity=939524096 \
+  --metabypass_metadata_queue_capacity=134217728 \
+  --metabypass_batch_bytes=536870912 --metabypass_interval_ms=5000 \
+  --metabypass_checkpoint_interval_ms=40000 --sync=false
 ```
 
 `metabypass_test` covers WAL-only recovery, no forced flush, concurrent writes,

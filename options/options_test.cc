@@ -191,6 +191,7 @@ TEST_F(OptionsTest, GetOptionsFromMapTest) {
   };
 
   ColumnFamilyOptions base_cf_opt;
+  ASSERT_EQ(base_cf_opt.max_write_buffer_number, 3);
   ColumnFamilyOptions new_cf_opt;
   ConfigOptions exact, loose;
   exact.input_strings_escaped = false;

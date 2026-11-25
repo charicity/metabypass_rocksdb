@@ -4048,6 +4048,7 @@ TEST_F(ManualFlushSkipRetainUDTTest, BulkLoading) {
 }
 
 TEST_F(ManualFlushSkipRetainUDTTest, AutomaticFlushQueued) {
+  column_family_options_.max_write_buffer_number = 2;
   Open();
   ASSERT_OK(db_->IncreaseFullHistoryTsLow(handles_[0], EncodeAsUint64(0)));
 
@@ -4055,10 +4056,8 @@ TEST_F(ManualFlushSkipRetainUDTTest, AutomaticFlushQueued) {
   ASSERT_OK(dbfull()->TEST_SwitchWAL());
   CheckEffectiveCutoffTime(0);
 
-  // Default `max_write_buffer_number=2` used, writing another memtable can get
-  // automatic flush to proceed because of memory pressure. Not doing that so
-  // we can test automatic flush gets to proceed because of an ongoing manual
-  // flush attempt.
+  // Writing another memtable could trigger an automatic flush under memory
+  // pressure. Issue a manual flush while the automatic flush is still queued.
   ASSERT_OK(Flush(0));
   CheckEffectiveCutoffTime(2);
   CheckAutomaticFlushRetainUDT(3);

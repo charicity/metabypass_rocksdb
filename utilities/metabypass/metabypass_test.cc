@@ -4942,7 +4942,7 @@ TEST_F(MetaBypassTest, QueueOptionsDefaults) {
   EXPECT_EQ(defaults.wal_queue_capacity, 896U * 1024 * 1024);
   EXPECT_EQ(defaults.metadata_queue_capacity, 128U * 1024 * 1024);
   EXPECT_EQ(defaults.batch_bytes, 512U * 1024 * 1024);
-  EXPECT_EQ(defaults.interval_ms, 5000U);
+  EXPECT_EQ(defaults.interval_ms, 1000U);
   EXPECT_EQ(defaults.checkpoint_interval_ms, 40000U);
 }
 

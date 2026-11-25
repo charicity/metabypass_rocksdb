@@ -77,7 +77,7 @@ references, and no WAL dependency. In both modes all required Blob/SST/metadata
 bytes must be durable on HDD before LATEST is published.
 
 The mirror wakes at `batch_bytes`, which defaults to 512 MiB of pending work
-across both queues, or after `interval_ms`, which defaults to 5000 ms.
+across both queues, or after `interval_ms`, which defaults to 1000 ms.
 `checkpoint_interval_ms` defaults to 40000 ms and controls periodic point
 capture. SyncBackup, synchronous writes and Close request barriers independently
 of the periodic interval. The interval is a scheduling target, not a fixed RPO.
@@ -149,7 +149,7 @@ AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j48 db_bench
   --enable_blob_direct_write=true --allow_concurrent_memtable_write=false \
   --metabypass_wal_queue_capacity=939524096 \
   --metabypass_metadata_queue_capacity=134217728 \
-  --metabypass_batch_bytes=536870912 --metabypass_interval_ms=5000 \
+  --metabypass_batch_bytes=536870912 --metabypass_interval_ms=1000 \
   --metabypass_checkpoint_interval_ms=40000 --sync=false
 ```
 

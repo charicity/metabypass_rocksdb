@@ -64,7 +64,7 @@ struct MetaBypassOptions {
   // Wake the worker on this many pending bytes across both queues or after
   // interval_ms.
   size_t batch_bytes = 512 * 1024 * 1024;
-  uint64_t interval_ms = 5000;
+  uint64_t interval_ms = 1000;
   // Start a checkpoint this long after the first uncovered write or native
   // file change. Later work does not postpone the deadline. Idle databases
   // have no checkpoint timer. Explicit barriers bypass this batching delay.

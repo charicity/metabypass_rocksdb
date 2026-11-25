@@ -258,17 +258,16 @@ inline bool operator!(VerifyOutputFlags flag) {
 
 struct AdvancedColumnFamilyOptions {
   // The maximum number of write buffers that are built up in memory.
-  // The default and the minimum number is 2, so that when 1 write buffer
-  // is being flushed to storage, new writes can continue to the other
-  // write buffer.
+  // The minimum is 2, so writes can continue while one buffer is being
+  // flushed to storage.
   // If max_write_buffer_number > 3, writing will be slowed down to
   // options.delayed_write_rate if we are writing to the last write buffer
   // allowed.
   //
-  // Default: 2
+  // Default: 3
   //
   // Dynamically changeable through SetOptions() API
-  int max_write_buffer_number = 2;
+  int max_write_buffer_number = 3;
 
   // The minimum number of write buffers that will be merged together
   // before writing to storage.  If set to 1, then

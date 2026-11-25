@@ -1,0 +1,10 @@
+--- a/core/skewed_latest_generator.h
++++ b/core/skewed_latest_generator.h
+@@ -16,0 +17 @@
++#include <mutex>
+@@ -35,0 +37 @@
++  std::mutex mutex_;
+@@ -38,0 +41,3 @@
++  // The variable-size Zipfian generator updates and reads its parameters
++  // as acknowledged inserts advance the keyspace.
++  std::lock_guard<std::mutex> lock(mutex_);

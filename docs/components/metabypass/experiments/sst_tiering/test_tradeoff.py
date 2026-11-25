@@ -64,8 +64,8 @@ class TradeoffTest(unittest.TestCase):
         (index / "IDENTITY").write_text("immutable-owner\n")
         for number in range(1, 5):
             (index / f"{number:06}.sst").write_bytes(bytes([number]) * 4096)
-        (self.seed[1] / "data").mkdir()
-        (self.seed[1] / "data" / "blob").write_bytes(b"immutable blob")
+        (self.seed[1] / "backup").mkdir()
+        (self.seed[1] / "backup" / "000001.sst").write_bytes(b"immutable SST")
         self.manifest = self.root / "manifest.json"
         self.manifest.write_text("{}\n")
         self.cgroup = self.root / "cg"
@@ -130,7 +130,7 @@ class TradeoffTest(unittest.TestCase):
         self.assertEqual(8, len(TRADE.trial_plan(args.strategies, args.workloads, args.repeats)))
         configuration = TRADE.policy_configuration("conservative90", 10000)
         self.assertEqual("metabypass-sst-tradeoff-policies-v3", configuration["version"])
-        self.assertEqual("metabypass-sst-tradeoff-v3", TRADE.PROTOCOL)
+        self.assertEqual("metabypass-sst-tradeoff-v4", TRADE.PROTOCOL)
         self.assertEqual((90, 9000, 8100, 81), (configuration["capacity_percent"], configuration["capacity_bytes"],
                                               configuration["effective_budget_bytes"], configuration["effective_budget_percent"]))
         parameters = {**TRADE.DEFAULT_PARAMETERS, "demote_rounds": 8,
@@ -306,7 +306,7 @@ class TradeoffTest(unittest.TestCase):
         before = TRADE.tree_metadata(self.seed)
         with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("payload read")):
             self.assertEqual(before, TRADE.tree_metadata(self.seed))
-        (self.seed[1] / "data" / "blob").write_bytes(b"changed")
+        (self.seed[1] / "backup" / "000001.sst").write_bytes(b"changed")
         self.assertNotEqual(TRADE.metadata_digest(before), TRADE.metadata_digest(TRADE.tree_metadata(self.seed)))
 
     def test_seed_symlink_and_clones_sharing_seed_or_previous_inodes_are_rejected(self):
@@ -319,7 +319,7 @@ class TradeoffTest(unittest.TestCase):
             TRADE.require_independent_inodes(metadata, clone, inodes)
         with self.assertRaises(TRADE.SafetyStop):
             TRADE.require_independent_inodes(metadata, metadata)
-        (self.seed[1] / "alias").symlink_to(self.seed[1] / "data")
+        (self.seed[1] / "alias").symlink_to(self.seed[1] / "backup")
         with self.assertRaises(ValueError):
             TRADE.tree_metadata(self.seed)
 
@@ -468,7 +468,7 @@ class TradeoffTest(unittest.TestCase):
                 def changing_execute(name, command, dirs, timeout=480):
                     actual = execute(name, command, dirs, timeout)
                     if "--clone" not in command:
-                        target = self.seed[1] / "data" / "blob" if changed == "seed" else self.manifest
+                        target = self.seed[1] / "backup" / "000001.sst" if changed == "seed" else self.manifest
                         target.write_text("modified immutable input\n")
                     return actual
                 with mock.patch.object(runner, "preflight"), \

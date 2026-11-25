@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # Whole-file blob reclamation
 
 MetaBypass disables value relocation and lets ordinary Integrated BlobDB identify

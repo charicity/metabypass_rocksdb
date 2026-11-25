@@ -25,19 +25,9 @@ IOStatus AsIO(const Status& s) {
   if (s.IsNotSupported()) return IOStatus::NotSupported(s.ToString());
   return IOStatus::IOError(s.ToString());
 }
-// POSIX DeleteFile reports ENOENT as IOError on some FileSystem versions.
-// Treat a delete as idempotent only when FileExists proves the path is absent;
-// never mask permissions, media errors, or an inaccessible parent directory.
-Status RemoveIfExists(FileSystem* fs, const std::string& path) {
-  Status exists = fs->FileExists(path, IOOptions(), nullptr);
-  if (exists.IsNotFound()) return Status::OK();
-  if (!exists.ok()) return exists;
-  Status s = fs->DeleteFile(path, IOOptions(), nullptr);
-  if (!s.ok()) {
-    exists = fs->FileExists(path, IOOptions(), nullptr);
-    if (exists.IsNotFound()) return Status::OK();
-    exists.PermitUncheckedError();
-  }
+IOStatus RemoveIfExists(FileSystem* fs, const std::string& path) {
+  IOStatus s = fs->DeleteFile(path, IOOptions(), nullptr);
+  if (s.IsNotFound() || s.IsPathNotFound()) return IOStatus::OK();
   return s;
 }
 }  // namespace
@@ -157,8 +147,11 @@ Status SstStorage::Initialize(const std::string& identity, bool restore) {
     s = LoadPlacement();
     if (!s.ok()) return s;
   }
-  s = Discover();
-  if (!s.ok() && !s.IsNotFound()) return s;
+  {
+    std::lock_guard<std::mutex> mutation(mutation_);
+    s = Discover();
+    if (!s.ok() && !s.IsNotFound()) return s;
+  }
   if (!restore) {
     std::vector<std::string> local_files;
     s = target()->GetChildren(index_, IOOptions(), &local_files, nullptr);
@@ -185,20 +178,29 @@ Status SstStorage::Initialize(const std::string& identity, bool restore) {
   }
   return Status::OK();
 }
+bool SstStorage::HasPendingLocalRemoval(uint64_t number,
+                                        const std::string& path) const {
+  return orphaned_.count(number) ||
+         std::any_of(retired_.begin(), retired_.end(),
+                     [&](const Retired& item) { return item.path == path; });
+}
 Status SstStorage::Discover() {
   std::vector<std::string> files;
   Status s = target()->GetChildren(index_, IOOptions(), &files, nullptr);
   if (!s.ok()) return s;
   for (const auto& file : files) {
+    const std::string path = index_ + "/" + file;
     uint64_t number;
-    if (!IsTable(index_ + "/" + file, &number)) continue;
+    if (!IsTable(path, &number)) continue;
     auto entry = Find(number);
     if (entry) {
       std::lock_guard<std::mutex> lock(entry->mutex);
       if (!entry->hot || !entry->object.empty()) continue;
+    } else if (HasPendingLocalRemoval(number, path)) {
+      continue;
     }
     uint64_t size;
-    s = target()->GetFileSize(index_ + "/" + file, IOOptions(), &size, nullptr);
+    s = target()->GetFileSize(path, IOOptions(), &size, nullptr);
     if (s.IsNotFound()) continue;
     if (!s.ok()) return s;
     if (entry) {
@@ -302,7 +304,7 @@ Status SstStorage::LoadPlacement() {
     } else {
       // A crash after publishing the cold map may leave a disposable SSD copy.
       s = RemoveIfExists(target(), Local(number));
-      if (!s.ok() && !s.IsNotFound()) return s;
+      if (!s.ok()) return s;
     }
     entries_.emplace(number, std::move(entry));
   }
@@ -333,7 +335,7 @@ Status SstStorage::MakeObject(const std::string& source, uint64_t number,
     if (s.ok()) {
       std::lock_guard<std::mutex> lock(mutex_);
       ++stats_.reused_links;
-    } else {
+    } else if (s.IsNotSupported()) {
       s = CopyLimited(source, dest + ".tmp", size, digest);
       if (s.ok())
         s = target()->RenameFile(dest + ".tmp", dest, IOOptions(), nullptr);
@@ -343,10 +345,12 @@ Status SstStorage::MakeObject(const std::string& source, uint64_t number,
             .PermitUncheckedError();
         return s;
       }
+    } else {
+      return s;
     }
   } else
     return s;
-  if (s.ok()) s = SyncDir(target(), store_);
+  s = SyncDir(target(), store_);
   TEST_SYNC_POINT_CALLBACK("MetaBypassSst::ObjectSynced", &s);
   if (s.ok()) {
     *object = name;
@@ -354,25 +358,27 @@ Status SstStorage::MakeObject(const std::string& source, uint64_t number,
   }
   return s;
 }
-Status SstStorage::Protect(const std::string& point, const NativeState& state) {
+Status SstStorage::Protect(const std::string& point,
+                           const std::vector<LiveFileStorageInfo>& files) {
   Status s;
   {
     std::lock_guard<std::mutex> mutation(mutation_);
     s = Discover();
   }
   if (!s.ok()) return s;
-  for (const auto& table : state.tables) {
-    auto entry = Find(table.first);
+  for (const auto& file : files) {
+    if (file.file_type != kTableFile) continue;
+    auto entry = Find(file.file_number);
     if (!entry) continue;  // Already logically deleted by native RocksDB.
     {
       std::lock_guard<std::mutex> lock(entry->mutex);
       if (!entry->object.empty()) continue;
-      if (entry->size != table.second) continue;
+      if (entry->size != file.size) continue;
     }  // An output is still growing.
     std::string object;
     uint32_t crc;
-    s = MakeObject(MakeTableFileName(point, table.first), table.first,
-                   table.second, &object, &crc);
+    s = MakeObject(point + "/" + file.relative_filename, file.file_number,
+                   file.size, &object, &crc);
     if (!s.ok()) return s;
     std::lock_guard<std::mutex> mutation(mutation_);
     {
@@ -442,6 +448,7 @@ IOStatus SstStorage::NewRandomAccessFile(
   std::lock_guard<std::mutex> mutation(mutation_);
   auto e = Find(number);
   if (!e) {
+    if (HasPendingLocalRemoval(number, path)) return IOStatus::NotFound(path);
     uint64_t size;
     auto s = target()->GetFileSize(path, IOOptions(), &size, dbg);
     if (!s.ok()) return s;
@@ -584,24 +591,25 @@ IOStatus SstStorage::DeleteFile(const std::string& path,
   }
   // Existing logical readers retain a physical handle, just as native POSIX
   // readers retain unlinked files. Points retain independent hardlink roots.
-  if (!e->object.empty()) {
-    s = RemoveIfExists(target(), store_ + "/" + e->object);
-    if (!s.ok() && !s.IsNotFound()) return AsIO(s);
+  IOStatus remote_status;
+  if (!e->object.empty())
+    remote_status = RemoveIfExists(target(), store_ + "/" + e->object);
+  IOStatus local_status = RemoveIfExists(target(), path);
+  const bool retry_local = !local_status.ok();
+  // Placement no longer charges this table. Open readers keep their handles
+  // even when unlink reports an error.
+  std::shared_ptr<Handle> handle;
+  {
+    std::lock_guard<std::mutex> lock(e->mutex);
+    if (e->hot && e->readers) handle = e->handle;
   }
-  s = RemoveIfExists(target(), path);
-  if (s.ok() || s.IsNotFound()) {
-    std::shared_ptr<Handle> handle;
-    {
-      std::lock_guard<std::mutex> lock(e->mutex);
-      if (e->hot && e->readers) handle = e->handle;
-    }
-    if (handle) {
-      std::lock_guard<std::mutex> lock(mutex_);
-      retired_.push_back({std::move(handle), "", e->size});
-      stats_.pending_delete_bytes += e->size;
-    }
+  if ((handle || retry_local) && !HasPendingLocalRemoval(number, path)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    retired_.push_back({std::move(handle), retry_local ? path : "", e->size});
+    stats_.pending_delete_bytes += e->size;
   }
-  return s.IsNotFound() ? IOStatus::OK() : AsIO(s);
+  if (!remote_status.ok()) return remote_status;
+  return local_status;
 }
 Status SstStorage::CopyLimited(const std::string& from, const std::string& to,
                                uint64_t size, uint32_t expected,
@@ -695,11 +703,9 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
   // Prepare and validate the immutable destination. Promotion also fsyncs the
   // copied file and installs its directory entry before placement publication.
   if (intent.hot) {
+    if (HasPendingLocalRemoval(e->number, local)) return s;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      for (const auto& retired : retired_)
-        if (retired.path == local) return s;
-      if (orphaned_.count(e->number)) return s;
       const uint64_t budget =
           options_.ssd_capacity_bytes -
           options_.ssd_capacity_bytes / 100 * options_.reserve_percent -
@@ -809,8 +815,10 @@ Status SstStorage::Migrate(const SstMigrationIntent& intent) {
   return Status::OK();
 }
 void SstStorage::Reap() {
+  // Keep discovery and route changes out while pending paths are detached
+  // from retired_ for I/O.
+  std::lock_guard<std::mutex> mutation(mutation_);
   {
-    std::lock_guard<std::mutex> mutation(mutation_);
     std::map<uint64_t, uint64_t> orphaned;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -861,7 +869,7 @@ void SstStorage::Reap() {
     if (!retired.path.empty()) s = RemoveIfExists(target(), retired.path);
     TEST_SYNC_POINT_CALLBACK("MetaBypassSst::LocalDeleted", &s);
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!s.ok() && !s.IsNotFound()) {
+    if (!s.ok()) {
       ++stats_.migration_errors;
       stats_.error = s.ToString();
       retired_.push_back(std::move(retired));

@@ -20,12 +20,12 @@ import time
 from build import identity, sha256
 
 HERE = Path(__file__).resolve().parent
-PROTOCOL = "metabypass-quick-v1"
-VARIANTS = ("current", "baseline", "upstream")
+PROTOCOL = "metabypass-quick-v2"
+VARIANTS = ("current", "baseline")
 SCENARIOS = ("control", "slow", "pressure")
 SETTINGS = {
     "value_size": 1024, "writers": 1, "sync": False, "wal": True,
-    "compression": "none", "staging": False, "interval_ms": 1000,
+    "compression": "none", "interval_ms": 1000,
     "queue_bytes": 64 * 1024**2, "wal_queue_bytes": 56 * 1024**2,
     "metadata_queue_bytes": 8 * 1024**2, "batch_bytes": 256 * 1024,
     "checkpoint_interval_ms": 30000,
@@ -38,22 +38,21 @@ SETTINGS = {
     "delay_us": {"control": 0, "slow": 1000, "pressure": 1000},
     "delay_contract": "selected writable Append/Sync/Fsync and named SyncFile; "
                       "no read, bandwidth, directory-sync or power-loss model",
-    "layout": {"current": "fast index; slow data+backup; no staging",
-               "baseline": "fast index; slow data; no backup",
-               "upstream": "all database files slow; ordinary inline values"},
+    "layout": {"current": "inline index; backup delay by scenario",
+               "baseline": "inline index"},
 }
 BACKPRESSURE_COUNT = 16384
 BACKPRESSURE_SETTINGS = {
     "value_size": 1024, "key_size": 128, "writers": 1, "sync": False,
-    "wal": True, "compression": "none", "staging": False,
+    "wal": True, "compression": "none",
     "interval_ms": 1000, "checkpoint_interval_ms": 30000,
     "queue_bytes": 2 * 1024**2, "wal_queue_bytes": 1792 * 1024,
     "metadata_queue_bytes": 256 * 1024,
     "batch_bytes": 64 * 1024, "delay_us": 1000,
     "delay_paths": ["backup"],
     "delay_contract": "backup writable Append/Sync/Fsync and named SyncFile; "
-                      "no index/data/read/directory-sync delay",
-    "layout": "current only; fast index and data; delayed backup",
+                      "no index/read/directory-sync delay",
+    "layout": "current only; inline index; delayed backup",
     "write_count": BACKPRESSURE_COUNT, "trials": 1, "warmup": False,
     "calibration": False,
 }
@@ -83,37 +82,6 @@ def allocated_bytes(root):
             seen.add(key)
             total += info.st_blocks * 512
     return total
-
-
-def history():
-    specs = [
-        ("version-results.json", "version-comparison.md",
-         "original=e7663cf90; incremental=296800123; fixed=bbd60f2ca; "
-         "1 KiB, 50k/200k, five trials, no injected delay; shared ext4 VM"),
-        ("no-backup-results.json", "version-comparison.md",
-         "separated no-backup baseline, 50k/200k, five trials; measured "
-         "after historical backup versions, not interleaved"),
-        ("channel-no-backup-results.json", "channel-baseline-comparison.md",
-         "100k, five trials; current means historical notification version, "
-         "channels means dual-channel version; no injected delay"),
-    ]
-    items = []
-    for filename, document, context in specs:
-        path = HERE.parent / filename
-        doc = HERE.parents[1] / document
-        item = {"path": str(path), "document": str(doc), "context": context}
-        if path.exists():
-            data = json.loads(path.read_text())
-            item.update(sha256=sha256(path), summary=data.get("summary", {}),
-                        provenance={key: data[key] for key in
-                                    ("binaries", "binary", "sha256", "build",
-                                     "source_sha256", "measurement_order")
-                                    if key in data})
-            item["document_text"] = doc.read_text() if doc.exists() else None
-        else:
-            item["missing"] = True
-        items.append(item)
-    return items
 
 
 def summarize(rows):
@@ -163,7 +131,7 @@ def backpressure_report_markdown(report):
              "State: **" + report["state"] + "**; profile: backpressure; "
              "type: mechanism_validation; current-only.", "",
              "Injection: backup writable Append/Sync/Fsync and named SyncFile "
-             "at 1000 us per call. Index and data paths have no injected delay.",
+             "at 1000 us per call. Index I/O runs at its normal speed.",
              "", "| Metric | Value |", "|---|---:|"]
     fields = (("successful_ops", "Writes"), ("verified_ops", "Verified values"),
               ("recovery_points", "Published recovery points"),
@@ -215,26 +183,25 @@ def report_markdown(report):
                                      cell(m, "peak_rss_kib", 1024),
                                      cell(m, "allocated_bytes", 1024**2))) + " |")
     lines += ["", "Total = foreground + backup barrier + Close/destruction; "
-              "excludes Open and verification. Baselines do not publish recovery "
+              "excludes Open and verification. The baseline does not publish recovery "
               "points. CPU/RSS cover the complete write process.", "",
               "## Same-session comparisons", "",
               "Positive time/P99 change means higher cost; positive throughput "
-              "change means faster. Layout differences are included versus upstream.",
+              "change means faster. Both variants use the same inline RocksDB settings.",
               "", "| Scenario | Current relative to | Throughput | Total | P99 |",
               "|---|---|---:|---:|---:|"]
     for scenario in SCENARIOS:
         groups = report["summary"][scenario]
-        for reference in ("baseline", "upstream"):
-            a, b = groups["current"], groups[reference]
-            changes = []
-            for key in ("ops_per_second", "total_us", "p99_ns"):
-                if a["samples"] != report["trials"] or b["samples"] != report["trials"]:
-                    changes.append("incomplete")
-                elif b["metrics"][key]["median"] == 0:
-                    changes.append("N/A")
-                else:
-                    changes.append(f"{100*(a['metrics'][key]['median']/b['metrics'][key]['median']-1):+.1f}%")
-            lines.append(f"| {scenario} | {reference} | " + " | ".join(changes) + " |")
+        a, b = groups["current"], groups["baseline"]
+        changes = []
+        for key in ("ops_per_second", "total_us", "p99_ns"):
+            if a["samples"] != report["trials"] or b["samples"] != report["trials"]:
+                changes.append("incomplete")
+            elif b["metrics"][key]["median"] == 0:
+                changes.append("N/A")
+            else:
+                changes.append(f"{100*(a['metrics'][key]['median']/b['metrics'][key]['median']-1):+.1f}%")
+        lines.append(f"| {scenario} | baseline | " + " | ".join(changes) + " |")
     lines += ["", "## Coverage", ""]
     for scenario in SCENARIOS:
         samples = [r for r in report["runs"] if r["phase"] == "measured" and
@@ -246,30 +213,14 @@ def report_markdown(report):
                      f"{covered['foreground_flushes']}/{covered['foreground_compactions']}/"
                      f"{covered['backpressure_us']} of {len(samples)}. "
                      "Zero means that mechanism was not exercised.")
-    lines += ["", "## Historical records (independent experiments)", "",
-              "Do not compute speedups between these records and this session.", "",
-              "| Dataset / original workload | Original label | Foreground ms | Total ms |",
-              "|---|---|---:|---:|"]
-    for item in report["history"]:
-        if item.get("missing"):
-            lines.append(f"| {Path(item['path']).name} | missing | N/A | N/A |")
-            continue
-        for scenario, groups in item["summary"].items():
-            if "foreground_us" in groups:
-                groups = {"no-backup": groups}
-            for variant, metrics in groups.items():
-                total = "total_us" if "total_us" in metrics else "write_sync_close_us"
-                lines.append(f"| {Path(item['path']).stem} / {scenario} | {variant} | "
-                             f"{cell(metrics, 'foreground_us', 1000)} | "
-                             f"{cell(metrics, total, 1000)} |")
-    for item in report["history"]:
-        lines += ["", "- " + item["context"] + "; source: " + item["path"]]
     if report.get("error"):
         lines += ["", "Failure/incompletion: " + report["error"]]
     return "\n".join(lines) + "\n"
 
 
 def validate_result(result, action, count, variant, scenario=None):
+    if result.get("protocol") != PROTOCOL:
+        raise RunFailure("driver result protocol mismatch")
     if result.get("status") != "OK" or result["exit"] != 0:
         raise RunFailure("non-OK driver result")
     m = result.get("metrics", {})
@@ -333,7 +284,8 @@ def execute(command, timeout):
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict) and "status" in payload:
-            result.update(status=payload["status"], metrics=payload.get("metrics", {}))
+            result.update(protocol=payload.get("protocol"), status=payload["status"],
+                          metrics=payload.get("metrics", {}))
             break
     return result
 
@@ -424,7 +376,7 @@ def main():
                   "cpu": capture(["lscpu"]), "memory": Path("/proc/meminfo").read_text(),
                   "filesystem": filesystem,
                   "loadavg": os.getloadavg(), "cache_policy": "fresh DBs; no global drop_caches"},
-              "history": [] if mechanism else history(), "runs": [], "summary": {},
+              "runs": [], "summary": {},
               "runner_sha256": sha256(Path(__file__))}
 
     def save():
@@ -449,7 +401,7 @@ def main():
                "trial": trial, "count": count, "folder": str(folder), "valid": False}
         report["runs"].append(row)
         save()
-        binary = build["binaries"]["upstream" if variant == "upstream" else "current"]["path"]
+        binary = build["binaries"]["current"]["path"]
         for action in ("write", "verify"):
             if action == "verify":
                 row["allocated_bytes"] = allocated_bytes(folder)
@@ -457,8 +409,6 @@ def main():
                 row["effective_options"] = {
                     path.name: path.read_text() for path in option_files}
                 if variant == "current":
-                    if list((folder / "backup").rglob("*.blob")):
-                        raise RunFailure("backup unexpectedly contains blob payloads")
                     # Only this newly created run's index is removed.
                     shutil.rmtree(folder / "index")
             remaining = budget * 60 - (time.monotonic() - started)
@@ -477,8 +427,11 @@ def main():
             if action == "write":
                 m = result["metrics"]
                 m["cpu_total_us"] = m["cpu_user_us"] + m["cpu_system_us"]
-                if delay_us and m.get("injected_wait_us", 0) == 0:
-                    raise RunFailure("slow scenario did not inject latency")
+                observed_delay = m.get("injected_wait_us", 0)
+                if variant == "current" and delay_us and observed_delay <= 0:
+                    raise RunFailure("backup I/O delay was not observed")
+                if variant == "baseline" and observed_delay:
+                    raise RunFailure("baseline unexpectedly received backup I/O delay")
         row["valid"] = True
         save()
         print(phase, scenario, variant, trial, "count=", count,

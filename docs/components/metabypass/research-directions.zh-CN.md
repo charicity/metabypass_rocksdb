@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 > Historical experiment/review record for the earlier DirectWrite architecture.
 > This document does not specify current behavior or format compatibility. See
 > [native checkpoint design](index.md) for the current implementation.

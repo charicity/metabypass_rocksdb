@@ -23,10 +23,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/listener.h"
-#ifndef MB_UPSTREAM
 #include "rocksdb/utilities/metabypass.h"
-#include "utilities/metabypass/separated_storage.h"
-#endif
 
 using namespace ROCKSDB_NAMESPACE;
 namespace {
@@ -94,9 +91,9 @@ class DelayedFile : public FSWritableFileOwnerWrapper {
 };
 class DelayedFS : public FileSystemWrapper {
  public:
-  DelayedFS(std::vector<std::string> paths, DelayCounters* counters)
+  DelayedFS(std::string path, DelayCounters* counters)
       : FileSystemWrapper(FileSystem::Default()),
-        paths_(std::move(paths)),
+        path_prefix_(std::move(path) + "/"),
         counters_(counters) {}
   const char* Name() const override { return "MetaBypassQuickDelay"; }
   IOStatus NewWritableFile(const std::string& p, const FileOptions& o,
@@ -113,7 +110,6 @@ class DelayedFS : public FileSystemWrapper {
     if (s.ok() && Slow(p)) f->reset(new DelayedFile(std::move(*f), counters_));
     return s;
   }
-  // SeparatedStorage uses named-file synchronization for blob dependencies.
   // Calling the underlying FS avoids counting the same sync twice.
   IOStatus SyncFile(const std::string& p, const FileOptions& f,
                     const IOOptions& o, bool full, IODebugContext* d) override {
@@ -122,13 +118,10 @@ class DelayedFS : public FileSystemWrapper {
   }
 
  private:
-  bool Slow(const std::string& p) const {
-    for (const auto& root : paths_) {
-      if (p.compare(0, root.size() + 1, root + "/") == 0) return true;
-    }
-    return false;
+  bool Slow(const std::string& path) const {
+    return path.rfind(path_prefix_, 0) == 0;
   }
-  std::vector<std::string> paths_;
+  std::string path_prefix_;
   DelayCounters* counters_;
 };
 struct Events : EventListener {
@@ -146,9 +139,7 @@ class Database {
         root_(std::move(root)),
         fs_(std::move(fs)) {
     options_.create_if_missing = true;
-    options_.allow_concurrent_memtable_write = false;
     options_.compression = kNoCompression;
-    options_.enable_blob_garbage_collection = false;
     options_.listeners.push_back(events);
     if (pressure) {
       options_.write_buffer_size = 256 * 1024;
@@ -157,11 +148,6 @@ class Database {
       options_.level0_file_num_compaction_trigger = 2;
       options_.max_background_jobs = 4;
     }
-#ifndef MB_UPSTREAM
-    options_.enable_blob_files = true;
-    options_.enable_blob_direct_write = true;
-    options_.min_blob_size = 0;
-    bypass_.data_dir = root_ + "/data";
     bypass_.backup_dir = root_ + "/backup";
     const bool small_queue = pressure || backpressure;
     bypass_.wal_queue_capacity = (small_queue ? 1792 : 56 * 1024) * 1024;
@@ -169,68 +155,44 @@ class Database {
     bypass_.batch_bytes = (small_queue ? 64 : 256) * 1024;
     bypass_.interval_ms = 1000;
     bypass_.checkpoint_interval_ms = 30000;
-#endif
   }
   Status Open(bool fresh) {
     options_.error_if_exists = fresh;
     options_.create_if_missing = fresh;
-#ifndef MB_UPSTREAM
+    env_ = NewCompositeEnv(fs_);
+    options_.env = env_.get();
     if (variant_ == "current") {
-      env_ = NewCompositeEnv(fs_);
-      options_.env = env_.get();
       return MetaBypassDB::Open(options_, bypass_, root_ + "/index", &mb_);
     }
-    storage_ = std::make_shared<metabypass::SeparatedStorage>(
-        fs_, root_ + "/index", root_ + "/data");
-    auto s = storage_->Lock();
-    if (!s.ok()) return s;
-    env_ = NewCompositeEnv(storage_);
-#else
-    env_ = NewCompositeEnv(fs_);
-#endif
-    options_.env = env_.get();
     return DB::Open(options_, root_ + "/index", &raw_);
   }
   Status Restore() {
-#ifndef MB_UPSTREAM
     env_ = NewCompositeEnv(fs_);
     options_.env = env_.get();
     return MetaBypassDB::Restore(options_, bypass_, root_ + "/index");
-#else
-    return Status::NotSupported("upstream has no Metabypass backup");
-#endif
   }
   Status Put(const std::string& k, const std::string& v) {
-#ifndef MB_UPSTREAM
     if (mb_) return mb_->Put(WriteOptions(), k, v);
-#endif
     return raw_->Put(WriteOptions(), k, v);
   }
   Status Get(const std::string& k, std::string* v) {
-#ifndef MB_UPSTREAM
     if (mb_) return mb_->Get(ReadOptions(), k, v);
-#endif
     return raw_->Get(ReadOptions(), k, v);
   }
   Status Sync() {
-#ifndef MB_UPSTREAM
     if (mb_) return mb_->SyncBackup();
-#endif
     return Status::OK();
   }
   Status BackupBackpressure(uint64_t* micros) const {
-#ifndef MB_UPSTREAM
     if (mb_) {
       auto stats = mb_->GetBackupStats();
       if (stats.error.ok()) *micros = stats.backpressure_micros;
       return stats.error;
     }
-#endif
     return Status::NotSupported("backup stats require current Metabypass");
   }
   Status Close(std::map<std::string, uint64_t>* metrics) {
     Status s;
-#ifndef MB_UPSTREAM
     if (mb_) {
       s = mb_->Close();
       auto stats = mb_->GetBackupStats();
@@ -251,17 +213,11 @@ class Database {
       }
       mb_.reset();
     }
-#endif
     if (raw_) {
       s.UpdateIfOk(raw_->Close());
       raw_.reset();
     }
     env_.reset();
-#ifndef MB_UPSTREAM
-    storage_.reset();
-#else
-    (void)metrics;
-#endif
     return s;
   }
   std::shared_ptr<Events> events = std::make_shared<Events>();
@@ -270,15 +226,10 @@ class Database {
   std::string variant_, root_;
   std::shared_ptr<FileSystem> fs_;
   Options options_;
-#ifndef MB_UPSTREAM
   MetaBypassOptions bypass_;
-  std::shared_ptr<metabypass::SeparatedStorage> storage_;
-#endif
   std::unique_ptr<Env> env_;
   std::unique_ptr<DB> raw_;
-#ifndef MB_UPSTREAM
   std::unique_ptr<MetaBypassDB> mb_;
-#endif
 };
 std::string Key(uint64_t i, bool pressure) {
   std::string k = std::to_string(i);
@@ -306,24 +257,17 @@ int main(int argc, char** argv) {
     if (scenario == "backpressure" && variant != "current") {
       throw std::invalid_argument("backpressure requires current variant");
     }
-#ifdef MB_UPSTREAM
-    if (variant != "upstream") throw std::invalid_argument("upstream only");
-#else
     if (variant != "current" && variant != "baseline") {
       throw std::invalid_argument("current or baseline required");
     }
-#endif
     if (action == "write" && !std::filesystem::is_empty(root)) {
       throw std::invalid_argument("write requires an empty run directory");
     }
     DelayCounters counters;
     counters.delay_us = delay;
-    std::vector<std::string> paths =
-        scenario == "backpressure" ? std::vector<std::string>{root + "/backup"}
-        : variant == "upstream"
-            ? std::vector<std::string>{root + "/index"}
-            : std::vector<std::string>{root + "/data", root + "/backup"};
-    auto fs = std::make_shared<DelayedFS>(paths, &counters);
+    // Keep the primary index equally fast in both variants. Only backup I/O
+    // is delayed in the slow scenarios.
+    auto fs = std::make_shared<DelayedFS>(root + "/backup", &counters);
     const bool pressure = scenario == "pressure";
     const bool backpressure = scenario == "backpressure";
     Database db(variant, root, pressure, backpressure, fs);
@@ -410,7 +354,8 @@ int main(int argc, char** argv) {
     m["cpu_system_us"] =
         usage.ru_stime.tv_sec * 1000000 + usage.ru_stime.tv_usec;
     m["peak_rss_kib"] = usage.ru_maxrss;
-    std::cout << "{\"status\":" << Quote(s.ToString()) << ",\"metrics\":{";
+    std::cout << "{\"protocol\":\"metabypass-quick-v2\",\"status\":"
+              << Quote(s.ToString()) << ",\"metrics\":{";
     bool first = true;
     for (const auto& [key, v] : m) {
       if (!first) std::cout << ',';

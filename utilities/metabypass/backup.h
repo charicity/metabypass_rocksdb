@@ -9,6 +9,7 @@
 #include <cassert>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,7 +20,6 @@
 #include "rocksdb/metadata.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "utilities/metabypass/native_files.h"
-#include "utilities/metabypass/separated_storage.h"
 
 // Some libc++ versions advertise atomic waiting even when the deployment
 // target predates the required runtime symbols.
@@ -39,6 +39,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+class SstStorage;
 // A single validator closes writer admission and waits for admitted writers.
 class WriteGate {
  public:
@@ -82,13 +83,15 @@ class WriteGate {
 
 class Backup : public FileSystemWrapper {
  public:
-  Backup(std::shared_ptr<SeparatedStorage> storage, std::string index,
-         MetaBypassOptions options, Options db_options = Options());
+  Backup(std::shared_ptr<FileSystem> fs, std::string index,
+         MetaBypassOptions options, std::shared_ptr<SstStorage> sst = nullptr);
   ~Backup() override;
   const char* Name() const override { return "MetaBypassBackup"; }
   Status Lock();
+  Status LoadLatest();
   Status Start(bool existing);
-  Status Activate(const std::string& identity, DB* db);
+  Status Activate(const std::string& identity, DB* db,
+                  std::shared_ptr<SystemClock> clock);
   void WriteCompleted();
   WriteGate::Writer EnterWrite() { return WriteGate::Writer(write_gate_); }
   // Listener notification only; never performs I/O or waits for a checkpoint.
@@ -99,15 +102,20 @@ class Backup : public FileSystemWrapper {
   MetaBypassStats Stats() const;
   Status Error() const;
   void StorageFailed(const Status& s) { Fail(s); }
-  // Read-only protocol validation before Restore creates any directories.
-  static Status CheckRestoreFormat(FileSystem*, const std::string& backup);
-  static Status PreflightCheckpoint(FileSystem*, const std::string& backup,
-                                    const SeparatedStorage& storage);
+  struct RecoveryPoint {
+    std::string name;
+    std::string identity;
+    std::map<std::string, uint64_t> files;
+    uint64_t sequence = 0, wal_floor = 0;
+  };
+  // Read and verify the published point while holding the backup lock.
+  static Status ReadRecoveryPoint(FileSystem*, const std::string& backup,
+                                  RecoveryPoint*);
   static Status PrepareRecovery(FileSystem*, const std::string& backup,
+                                const RecoveryPoint& point,
                                 const std::string& destination,
-                                std::string* point,
                                 MetaBypassRecoveryReport* report,
-                                bool* has_boundary, SstStorage* sst = nullptr);
+                                SstStorage* sst);
   // Estimation only: malformed, nonmonotone or clock-discontinuous samples
   // leave the report bounds unknown and never change the recovered prefix.
   static void EstimateRecoveryTime(const std::string& samples,
@@ -130,19 +138,9 @@ class Backup : public FileSystemWrapper {
                     IODebugContext*) override;
 
  private:
-  static Status PreflightCheckpointImpl(FileSystem*, const std::string&,
-                                        const SeparatedStorage&);
   friend class MirrorWriter;
   friend class BackupTestAccess;
-  enum class Kind {
-    kCreate,
-    kAppend,
-    kTruncate,
-    kClose,
-    kDelete,
-    kRename,
-    kRetireBlob
-  };
+  enum class Kind { kCreate, kAppend, kTruncate, kClose, kDelete, kRename };
   // Preserve the queue capacity contract across changes to payload storage.
   struct ChargedEventLayout {
     Kind kind;
@@ -156,7 +154,7 @@ class Backup : public FileSystemWrapper {
     std::string name;
     std::string contents;  // Rename target or unpooled append bytes.
     std::shared_ptr<const char> shared_bytes{};
-    // Shared payload length, truncate offset, or retired blob number.
+    // Shared payload length or truncate offset.
     uint64_t size = 0;
     uint64_t seq = 0;
     size_t charge = 0;
@@ -244,11 +242,9 @@ class Backup : public FileSystemWrapper {
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
     uint64_t writes = 0, request = 0, native_changes = 0;
-    uint64_t native_sequence = 0, blob_floor = 0, wal_floor = 0;
+    uint64_t native_sequence = 0, wal_floor = 0;
     std::vector<LiveFileStorageInfo> files;
-    std::map<uint64_t, uint64_t> blobs;
     std::string name, path;
-    NativeState state;
     // Hard links to immutable tables already synced by the published point.
     std::set<uint64_t> durable_tables;
   };
@@ -275,23 +271,17 @@ class Backup : public FileSystemWrapper {
   void SampleLoop();
   void SampleProgress();
   void GarbageCollectLoop();
-  bool BlobEligible(uint64_t number, uint64_t seq) const;
-  bool NeedsBlobCheckpoint() const;
   void MarkDirty();  // Requires mutex_. Keeps the first pending deadline.
   struct Point {
-    std::string reference;
+    std::string name;
     uint64_t bytes = 0;
-    std::set<uint64_t> blobs;
-    uint64_t blob_floor = 0, wal_floor = 0;
-    std::string Name() const {
-      return reference.substr(0, reference.find(' '));
-    }
+    uint64_t wal_floor = 0;
   };
-  std::shared_ptr<SeparatedStorage> storage_;
+  const std::shared_ptr<FileSystem> fs_;
+  SstStorage* const sst_;
   FileSystem* disk_;
   const std::string index_;
   const MetaBypassOptions options_;
-  const Options db_options_;
   const std::string work_;
   // Only WAL producers access the current block and cursor, under operations.
   std::shared_ptr<WalBlock> wal_block_;
@@ -321,6 +311,7 @@ class Backup : public FileSystemWrapper {
   uint64_t wal_taken_ = 0;  // Protected by mutex_, including failed events.
   uint64_t generation_ = 0;
   DB* db_ = nullptr;
+  std::shared_ptr<SystemClock> clock_;
   std::string identity_;
   // Writers increment while admitted. Capture closes admission and drains
   // all admitted writers before reading the count and the native sequence.
@@ -336,21 +327,12 @@ class Backup : public FileSystemWrapper {
   bool stopping_ = false;
   bool active_ = false;
   bool candidate_busy_ = false, mirror_done_ = false;
-  bool validator_done_ = false, retired_pending_ = false;
-  uint64_t captured_ = 0;
+  bool validator_done_ = false;
   std::unique_ptr<Candidate> candidate_;
   std::thread thread_, validator_, garbage_collector_, sampler_;
   std::map<std::string, std::unique_ptr<FSWritableFile>> writers_;
-  std::deque<Point> points_;
-  Point retired_;
-  struct RetiredBlob {
-    uint64_t seq = 0, bytes = 0;
-  };
-  // All recovery roots, pending retirements and the capture/delete gate use
-  // mutex_. Membership includes queued and in-flight retirement requests.
-  std::set<uint64_t> retiring_blobs_;
-  std::map<uint64_t, RetiredBlob> pending_blobs_;
-  bool blob_gc_busy_ = false;
+  std::optional<Point> published_point_;
+  std::optional<Point> retired_point_;
   FileLock* lock_ = nullptr;
 };
 }  // namespace metabypass

@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # 当前 Metabypass 研究基线与验证交接
 
 更新日期：2026-10-22。本文件定义分支调整后的术语、比较范围和待执行计划。

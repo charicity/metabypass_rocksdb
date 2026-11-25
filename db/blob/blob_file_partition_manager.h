@@ -91,10 +91,6 @@ class BlobFilePartitionManager {
   // held. No I/O is performed here.
   void RotateCurrentGeneration();
 
-  // Seal outstanding files without switching or flushing a memtable. Callers
-  // must exclude foreground writes. Generation ownership is preserved.
-  Status SealForSpace(const WriteOptions&);
-
   // Seal the first `num_generations` queued immutable generations and return
   // all blob additions and initial-garbage updates that must be registered
   // with the matching flush. Generations stay queued until

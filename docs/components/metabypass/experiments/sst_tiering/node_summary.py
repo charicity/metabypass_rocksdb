@@ -3,7 +3,7 @@
 # This source code is licensed under both the GPLv2 (found in the
 # COPYING file in the root directory) and Apache 2.0 License
 # (found in the LICENSE.Apache file in the root directory).
-"""Summarize node_v1 evidence without averaging window percentiles."""
+"""Summarize node_v2 evidence without averaging window percentiles."""
 
 import argparse
 import hashlib
@@ -264,7 +264,7 @@ def summarize(raw):
             "notes": ["Phase P99 uses cumulative histogram bucket upper bounds; no percentile averaging.",
                       "Response latency includes queue delay for completed requests; unfinished_ops must be read alongside latency.",
                       "Hot/cold groups and placement counters are proxies, not per-request device attribution.",
-                      "Device I/O includes blob and SST traffic and cannot separate them.",
+                      "Device I/O includes WAL, metadata, and SST traffic.",
                       "Kmem/cache/rss are separate evidence: memory.stat cache/rss does not cover total charges. Missing kmem is unknown; an empty tasks file does not reset residual charges.",
                       "Small helper affinity defaults to CPUs 0,1,2,3 before cgroup entry; legacy inherits. Per-thread last CPU and FD counts are read-only sampled diagnostics.",
                       "Cache gate uses globally routed live SST residency, not request miss rate; cache dominated and missing/partial evidence are distinct.",

@@ -149,7 +149,7 @@ def main(arguments=None):
         raise ValueError("expected --clone source_ssd source_hdd dest_ssd dest_hdd")
     source_ssd, source_hdd, dest_ssd, dest_hdd = arguments[1:]
     details = clone_dataset(((source_ssd, dest_ssd), (source_hdd, dest_hdd)))
-    print("MB_SST_JSON " + json.dumps({"protocol": "node_v1", "event": "summary",
+    print("MB_SST_JSON " + json.dumps({"protocol": "node_v2", "event": "summary",
                                       "ok": True, "copy_complete": True, **details}), flush=True)
     return 0
 

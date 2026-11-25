@@ -29,7 +29,7 @@ import node_summary
 
 
 POLICY_VERSION = "metabypass-sst-tradeoff-policies-v3"
-PROTOCOL = "metabypass-sst-tradeoff-v3"
+PROTOCOL = "metabypass-sst-tradeoff-v4"
 DURATIONS = {"uniform": {"warmup": 30, "measured": 45, "saturated": 15},
              "switch": {"warmup": 45, "measured": 120, "saturated": 15},
              "mixed": {"warmup": 30, "measured": 45, "saturated": 15}}
@@ -112,7 +112,7 @@ def trial_plan(strategies, workloads, repeats):
 
 
 def tree_metadata(dirs):
-    """Read metadata only; do not read blob/SST payload or perturb seed pages.
+    """Read metadata only; do not read SST payload or perturb seed pages.
 
     atime is deliberately excluded because copying may update it. Metadata
     checks detect ordinary writes/renames; they are not payload checksums.

@@ -1036,11 +1036,9 @@ set(SOURCES
         utilities/cassandra/cassandra_compaction_filter.cc
         utilities/cassandra/format.cc
         utilities/cassandra/merge_operator.cc
-        utilities/metabypass/tiered_storage.cc
         utilities/metabypass/sst_tiering.cc
         utilities/metabypass/sst_storage.cc
         utilities/metabypass/native_files.cc
-        utilities/metabypass/separated_storage.cc
         utilities/metabypass/backup.cc
         utilities/metabypass/metabypass_db.cc
         utilities/checkpoint/checkpoint_impl.cc

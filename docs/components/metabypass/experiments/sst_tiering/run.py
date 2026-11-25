@@ -18,7 +18,7 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[5]
-PROTOCOL = "metabypass-sst-tiering-v1"
+PROTOCOL = "metabypass-sst-tiering-v2"
 WORKLOADS = ("uniform", "hotspot", "switch", "scan", "mixed")
 CONFIGS = (("disabled", None), ("observe", 25), ("observe", 50),
            ("observe", 75), ("adaptive", 25), ("adaptive", 50),
@@ -135,12 +135,10 @@ def execute(command, timeout_s):
             "events": events, "parse_errors": parse_errors}
 
 
-def category(path, ssd, hdd):
+def category(path, ssd):
     suffix = path.suffix.lower()
     if suffix == ".sst":
         return "ssd_sst" if path.is_relative_to(ssd) else "hdd_sst"
-    if suffix == ".blob":
-        return "blob"
     if "tmp" in path.name.lower() or suffix in {".temp", ".tmp"}:
         return "temp"
     return "metadata"
@@ -157,7 +155,7 @@ def space(ssd, hdd):
             if path.is_symlink():
                 continue
             info = path.stat()
-            kind = category(path, ssd, hdd) if path.is_file() else "metadata"
+            kind = category(path, ssd) if path.is_file() else "metadata"
             logical[kind] = logical.get(kind, 0) + info.st_size
             file_counts[kind] = file_counts.get(kind, 0) + 1
             if kind == "ssd_sst":
@@ -196,7 +194,6 @@ def space(ssd, hdd):
 def command_for(args, settings, ssd, hdd, mode, budget, workload):
     return [str(args.binary), "--metabypass_mode=sst_tiering",
             "--db=" + str(ssd / "index"),
-            "--metabypass_data_dir=" + str(hdd / "data"),
             "--metabypass_backup_dir=" + str(hdd / "backup"),
             "--num=" + str(settings["keys"]),
             "--value_size=" + str(settings["value_size"]),
@@ -221,7 +218,6 @@ def command_for(args, settings, ssd, hdd, mode, budget, workload):
 
 
 def trial_result(args, settings, ssd, hdd, mode, budget, workload):
-    (hdd / "data").mkdir(parents=True)
     (hdd / "backup").mkdir(parents=True)
     command = command_for(args, settings, ssd, hdd, mode, budget, workload)
     result = execute(command, settings["timeout_s"])

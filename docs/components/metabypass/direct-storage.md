@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # SSD index and HDD blob storage
 
 Without staging, MetaBypass routes ordinary Integrated BlobDB files directly to

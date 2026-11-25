@@ -1,7 +1,7 @@
-# Native checkpoint driver contract (v1)
+# Native checkpoint driver contract (v2)
 
-The Linux-only executable is `mb_native`. Build it twice: current source for
-B/D/S, pinned upstream `abeebd9630f11bd08c28b7bd43c7bdfc62050654` for U/B.
+The Linux-only executable is `mb_native`. Build it against the current fork for
+D and pinned upstream `abeebd9630f11bd08c28b7bd43c7bdfc62050654` for U.
 The CMake target uses Release, portable CPU instructions and no RTTI. No gflags
 or JSON input parser is required. `build.py --out=/absolute/external/build`
 builds both adapters, writes `build.json`, and defaults to 48 compiler jobs.
@@ -12,47 +12,36 @@ the source export identity and both compile_commands.json/CMakeCache.txt files.
 ## CLI
 
 Every argument is `--name=value`; unknown flags, malformed numbers and booleans
-fail. Required: `--index`, `--state`; B/D/S also require `--data`; D/S require
-`--backup`; S requires `--staging`. Paths must be absolute and disjoint.
+fail. Both groups require `--index` and `--state`. D also requires
+`--backup`. Database paths must be absolute, normalized and disjoint.
 The state file must live outside database directories and survive index loss.
 The controller owns directories, isolation, cgroups, affinity, overall timeouts,
 raw stdout retention, OPTIONS capture and device telemetry.
 
 | Flag | Default / supported values |
 |---|---|
-| variant | D; U/B/D/S |
-| action | run; prepare/run/verify/restore/append-reopen/crashwrite |
-| workload | insert; insert/overwrite/randomread/hotspot/scan/mixed/sync/gc/sst |
+| variant | D, with U and D supported |
+| action | run, with prepare/run/verify/restore/append-reopen/crashwrite supported |
+| workload | insert, with insert/overwrite/randomread/hotspot/scan/mixed/sync/sst supported |
 | keys / ops | 1024 / 1024 |
-| value-size / threads | 1024 / 1; value >=32 bytes |
-| batch-size | 1; values above 1 require untimed, single-thread insert prepare/run |
-| warmup-seconds / measure-seconds | 0 / 0; integer seconds; zero uses operation quota |
-| sync / flush / fresh / gc | false / true / false / true |
-| staging-capacity | 268435456 logical bytes (S only) |
-| sst-mode / sst-budget | disabled / 0; observe/adaptive require positive budget |
-| disable-auto-compactions | false; SST-only preparation and read windows use true |
-| cache-bytes | 268435456; SST mechanism runs can use 65536 |
-| flush-every | 0; nonzero per-thread completed operations between explicit flushes |
+| value-size / threads | 1024 / 1. Minimum value size is 32 bytes. |
+| batch-size | 1. Larger batches require untimed single-thread insert prepare/run. |
+| warmup-seconds / measure-seconds | 0 / 0 in whole seconds. Zero uses the operation quota. |
+| sync / flush / fresh | false / true / false |
+| sst-mode / sst-budget | disabled / 0. Observe and adaptive require D and a positive budget. |
+| disable-auto-compactions | false. SST-only preparation and read windows use true. |
+| cache-bytes | 268435456. The SST experiment uses 65536. |
+| flush-every | 0. Nonzero sets the per-thread operation count between explicit flushes. |
 | seed | 20261017 |
-| direct-write | false; true requires B/D/S, disables concurrent memtable writes |
-| checkpoint-interval-ms / mirror-interval-ms | 1000 / 1000; historical protocol defaults, both positive |
-| gc-wait-seconds | 0; maximum 60, periodic stats after work |
-| crash-stage | empty; write/publish/migration gates, only D/S crashwrite |
-| verify-acks | empty; optional text file of `key version` lines for crash verification |
-| verify-samples | 0; zero preserves full verification; positive selects min(requested, keys) unique keys |
+| checkpoint-interval-ms / mirror-interval-ms | 1000 / 1000. Both must be positive. |
+| crash-stage | empty. D crashwrite requires write or publish. |
+| verify-acks | empty. Optional text file of `key version` lines for crash verification |
+| verify-samples | 0 for full verification. Positive selects min(requested, keys) unique keys. |
 
-The `MB_UPSTREAM` adapter accepts U/B and rejects D/S. U retains inline SST
-values and rejects DirectWrite. B enables Integrated BlobDB and routes native
-Blob files through the same HDD BlobFS used by the fork. Both adapters set
-`enable_blob_direct_write` and `allow_concurrent_memtable_write` on the actual
-Options object; the pinned v11.8.1 supports both. The effective output reads
-these flags and `blob_file_size` from that object. The current D/S driver pins
-56 MiB of WAL queue capacity, 8 MiB of metadata queue capacity, and a 256 KiB
-mirror batch trigger. Backup-only options `wal_queue_bytes`,
-`metadata_queue_bytes`, `mirror_batch_bytes`, `mirror_interval_ms`,
-`checkpoint_interval_ms`, `sst_mode`, `sst_budget` and `whole_blob_gc` are null
-for U/B; `backup_enabled` identifies D/S. A requested
-GC flag is not evidence of active Metabypass GC on native B or official U/B.
+The `MB_UPSTREAM` adapter opens U through ordinary RocksDB. The current
+adapter opens D through MetaBypass. Both store inline values. D uses a 56 MiB
+WAL queue, an 8 MiB metadata queue and a 256 KiB mirror batch trigger.
+The output records effective options and sets D-only fields to null for U.
 Archive native OPTIONS and LOG files to check the library's configuration.
 
 `prepare` creates a new database and writes each key once (version 1),
@@ -85,9 +74,8 @@ By default (`verify-samples=0`), `verify` fully checks presence/deletion, key,
 exact version, checksum and total key count. `restore` calls native Metabypass
 Restore, then Open and verification using the selected verification mode.
 `append-reopen` updates key 0 synchronously, closes, opens, verifies and updates
-state. Controller must first isolate original index/staging and supply the new
-empty index/staging paths when requesting restore. Data/backup stay on HDD.
-
+state. The controller first isolates the original index, then supplies a
+new empty index path. The backup stays on HDD.
 
 A positive `verify-samples` applies identically to `verify`, post-Restore
 verification and `append-reopen`. The sample always includes key 0 (including
@@ -103,10 +91,8 @@ fits entirely in the sample. Passing a sample does not establish correctness of
 unselected keys or actual database key count.
 
 Sampling and `verify-acks` are incompatible and fail before running the action.
-Omitting `verify-samples`, or setting it to zero, preserves the historical full
-verification, ACK and resume semantics and emits no sample-verification event.
-The controller forwards this optional flag only when its spec contains it;
-legacy commands remain unchanged.
+Full verification emits no sample-verification event. The controller forwards
+the sample flag when its workload specification contains it.
 
 `crashwrite` repeatedly puts synchronously in each worker's range; use
 `measure-seconds=30` for a kill window. Each successful Put emits and flushes an
@@ -117,25 +103,14 @@ version or a later valid version, allowing successful but unacknowledged writes.
 It records observed versions back into state. This action performs only Puts;
 ACK verification is not a generic crash protocol for mixed deletes.
 
-For deterministic crash boundaries, pass `crash-stage=write|publish|migration`.
-The experiment-only filesystem wrapper arms after Open. Write gates immediately
-after the first successful ACK; publish gates immediately before the physical
-`backup/LATEST` rename; migration gates before creation of the first HDD
-`data/segment-*` extent. It emits `ready` with stage/path and blocks reading
-stdin. The controller must retain an open stdin pipe, persist all ACKs and the
-ready event, then SIGKILL. A `c` byte releases the gate; EOF fails the process.
-Migration requires S, and a 2 MiB staging capacity plus a >2 MiB flush output
-ensures the gate represents prefix migration rather than a no-prefix spill.
-Use `flush-every=4096,value-size=1024` or larger while retaining the original
-prepared state. These gates describe precise file-operation boundaries; they
-do not certify every internal state transition or physical power loss.
+Pass `crash-stage=write|publish` to set the crash boundary. The experiment
+filesystem wrapper arms after Open. The write gate waits after the first
+successful ACK. The publish gate waits before the physical `backup/LATEST`
+rename. Both emit a `ready` event with stage and path and read stdin.
+The controller keeps stdin open, persists the ACKs and ready event, then sends
+SIGKILL to the authenticated process group. A `c` byte releases the gate.
+EOF fails the driver.
 
-
-GC runs exactly three generations, each with ops mutations followed by Flush,
-CompactRange and SyncBackup; callers set ops=keys and measure-seconds=0 to replace every key. Nonzero
-measure-seconds applies separately to each generation and is not used by the
-formal protocol. It emits
-three foreground samples. `gc-wait-seconds=60` observes post-work convergence.
 SST workload moves the 80% hot region from the first to last quarter halfway
 through a timed window. Plain hotspot keeps 80% traffic in the first quarter.
 Scan uses 100 rows at most per iterator seek and reports actual row count.
@@ -154,27 +129,27 @@ lifecycle timing. Do not reuse a state file with a different dataset.
 ## Output and measurements
 
 Each machine record is one stdout line beginning `MB_NATIVE_JSON `, followed by
-JSON with `protocol="metabypass-native-perf-v1"` and `event`:
+JSON with `protocol="metabypass-native-perf-v2"` and `event`:
 
 - `options`: variant and effective_options (fixed engine settings and overrides).
   Preserve actual native OPTIONS files as well.
 - `phase`: name and elapsed_us; open, restore, first_verified_read, verify,
-  flush, sync_backup, close, lifecycle, generation_flush/generation_compact.
+  flush, sync_backup, close and lifecycle.
 - `sample`: name=warmup/foreground, ops, elapsed_us, ops_per_sec, p50_us,
   p95_us, p99_us, hist_us and per-Get/Put/Delete histograms, scanned_rows.
 - `stats`: boundary=snapshot/foreground_begin/foreground_end/warmup_begin/warmup_end,
   cumulative counters for this process; native flushes, compactions,
-  flush_data_bytes, compaction_output_bytes and wal_bytes, native_blob_deletes
-  (B-only successful physical deletion count, atomic and cumulative), plus D/S fields
-  named exactly as MetaBypassStats members (including checkpoint_captures,
-  checkpoint_capture_micros, checkpoint_flush_micros, checkpoint_persist_micros,
-  checkpoint_publish_micros) and `sst_`-prefixed tiering members.
+  flush_data_bytes, compaction_output_bytes and wal_bytes. D also reports WAL,
+  metadata queue, checkpoint, retired-point collection and generic I/O
+  counters named after MetaBypassStats members, plus `sst_`-prefixed tiering
+  members. The generic counters include bytes by index/backup and
+  caller/bulk/barrier, failed writes, and HDD file-operation calls and times.
 - `resources`: process lifetime user/system CPU microseconds and peak_rss_kib.
 - `ready`: stage and physical path at the armed crash boundary.
 - `ack`: numeric key and version, only after a successful synchronous Put.
 - `verification`: emitted exactly once by each successful sampled verify,
   restore or append-reopen action. The transport `protocol` remains
-  `metabypass-native-perf-v1`; `verification_protocol` is
+  `metabypass-native-perf-v2`; `verification_protocol` is
   `metabypass-key-sample-v1`, `mode` is `sample`, `population` is the sidecar
   key count, `requested` is the positive budget, `actual` is
   `min(requested, population)`, and `derived_seed` is the seed above. `keys`
@@ -187,43 +162,24 @@ JSON with `protocol="metabypass-native-perf-v1"` and `event`:
   full/non-verifying actions reject this event. Category representatives are
   selected by the driver using its sidecar, not reconstructed from DB scans.
 - `done`: status=pass, variant/action/workload and verified_keys. In sampled
-  verification this is the actual number checked, not the full population;
-  historical full-mode counting is unchanged.
+  verification this is the actual number checked.
 - `error`: status=failed and message; exit status 1. Successful exit is 0.
 
-Multiple stats events are snapshots, never additive. The last stats snapshot is
-emitted before Close, so WAL/mirror/checkpoint/staging/GC counters exclude Close
-cleanup bytes. Post-Close output contains phase/resources only; lifecycle and
-process CPU/RSS include Close. U/B's explicit sync_backup phase is a no-op;
-their synchronous write promise is WAL durability. D/S adds durable HDD backup.
-Do not label the two promises equal. Default mutable lifecycle separately times
-foreground, Flush, SyncBackup and Close, excludes Open and state serialization;
-warmup and optional GC wait are included in lifecycle when requested and must
-be reported separately. Read-only actions do not explicitly Flush/SyncBackup;
-Metabypass Close still applies its native close barrier.
+Multiple stats events are cumulative snapshots. The final successful snapshot
+follows Close, so it includes Close work. U's explicit SyncBackup phase is a
+no-op. Synchronous writes on U persist the WAL. On D they also wait for backup
+coverage. The driver times foreground, Flush, SyncBackup and Close separately.
+Lifecycle begins after Open and ends after Close. Warmup contributes to
+lifecycle and has its own event. Read-only runs skip explicit Flush and
+SyncBackup. Metabypass Close still applies its native close barrier.
 
 Histograms accumulate individual operations over all workers. Entries are
 `[inclusive_upper_microseconds,count]`; buckets are exact below 64 us and have
 at most about 3.125% width above that. Percentiles are upper bucket bounds.
-Merge histogram counts across generations; never average window percentiles.
 Get checksum validation and Put payload generation are outside operation
 latency but inside foreground throughput. Scan latency includes per-row
 validation. CPU and throughput therefore include common driver work and are
 not engine-only CPU cost. Sample start includes thread startup; warmup uses a
 separate worker set. Restore's first verified read includes validation.
 
-B routes native `.blob` paths into its HDD directory, merges directory listing
-for recovery/GC, and fsyncs both directories at index directory barriers.
-Native file deletion is forwarded, without Metabypass retention. It is an
-experimental filesystem adapter, and its recovery/deletion behavior must pass
-smoke gates before B participates in comparisons.
-
-The newer DirectWrite comparison profile explicitly selects a 5000 ms checkpoint
-interval and DirectWrite=true for its recommended arm; these driver defaults
-remain 1000 ms/false to reproduce the historical controller. Mirror interval
-remains independent. DirectWrite publication uses a native flush and a WAL-free
-inventory, and supports fault recovery through Restore of a published point;
-active Blob WAL local crash reopen is outside that contract.
-Optional post-work GC observation emits a background_tail phase and remains
-inside lifecycle timing. The checkpoint timing counters overlap and must not
-be summed as disjoint phases.
+Checkpoint phase counters are cumulative and can overlap.

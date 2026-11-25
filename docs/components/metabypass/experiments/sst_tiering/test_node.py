@@ -288,11 +288,11 @@ class NodeTest(unittest.TestCase):
         trial_hdd = self.hdd / "trial"
         trial_ssd.mkdir()
         trial_hdd.mkdir()
-        (trial_hdd / "active.blob").write_bytes(b"x" * 8192)
-        (self.hdd / "seed.blob").write_bytes(b"x" * 16384)
+        (trial_hdd / "active.sst").write_bytes(b"x" * 8192)
+        (self.hdd / "seed.sst").write_bytes(b"x" * 16384)
         result = RUN.space_snapshot(trial_ssd, trial_hdd, self.hdd, self.ssd)
-        self.assertEqual(8192, result["logical_bytes"]["hdd_blob"])
-        self.assertEqual(24576, result["run_scope"]["logical_bytes"]["hdd_blob"])
+        self.assertEqual(8192, result["logical_bytes"]["hdd_sst"])
+        self.assertEqual(24576, result["run_scope"]["logical_bytes"]["hdd_sst"])
 
     def test_phase_validation_rejects_truncated_and_bad_histogram(self):
         buckets = [1] + [0] * 192
@@ -667,7 +667,7 @@ class NodeTest(unittest.TestCase):
             'seen=[]\n'
             'def inspect(): seen.append(sorted(os.sched_getaffinity(0)))\n'
             'thread=threading.Thread(target=inspect); thread.start(); thread.join()\n'
-            'print("MB_SST_JSON " + json.dumps({"protocol":"node_v1","event":"summary",'
+            'print("MB_SST_JSON " + json.dumps({"protocol":"node_v2","event":"summary",'
             '"ok":True,"main_cpus":sorted(os.sched_getaffinity(0)),"thread_cpus":seen}),flush=True)\n')
         row = runner.execute("affinity", [sys.executable, str(fake)], (self.ssd, self.hdd))
         self.assertTrue(row["valid"])
@@ -734,9 +734,9 @@ class NodeTest(unittest.TestCase):
         fake = self.root / "fake.py"
         fake.write_text('import json, signal, time\n'
             'def emit(e):\n'
-            ' e["protocol"]="node_v1"; print("MB_SST_JSON " + json.dumps(e), flush=True)\n'
-            'ready={"protocol":"node_v1","event":"ready","steady_time_us":time.monotonic_ns()//1000}\n'
-            'ack={"protocol":"node_v1","event":"ack","seq":1,"steady_time_us":time.monotonic_ns()//1000,"business_bytes":1040}\n'
+            ' e["protocol"]="node_v2"; print("MB_SST_JSON " + json.dumps(e), flush=True)\n'
+            'ready={"protocol":"node_v2","event":"ready","steady_time_us":time.monotonic_ns()//1000}\n'
+            'ack={"protocol":"node_v2","event":"ack","seq":1,"steady_time_us":time.monotonic_ns()//1000,"business_bytes":1040}\n'
             'print("MB_SST_JSON "+json.dumps(ready)+"\\nMB_SST_JSON "+json.dumps(ack),flush=True)\n'
             'signal.pause()\n')
         row = runner.execute("fault", [sys.executable, str(fake)], (self.ssd, self.hdd), fault_seconds=0)

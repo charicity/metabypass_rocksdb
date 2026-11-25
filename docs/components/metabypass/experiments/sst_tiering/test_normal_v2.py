@@ -98,14 +98,14 @@ class NormalV2Test(unittest.TestCase):
         self.assertEqual(payload.read_bytes(), (self.hdd / "clone/large").read_bytes())
 
     def test_zero_progress_and_sync_failure_keep_partial_files_and_raise(self):
-        source = self.seed[1] / "data/blob"
+        source = self.seed[1] / "backup/000001.sst"
         for index, patcher in enumerate((mock.patch.object(CLONE.os, "write", return_value=0),
                                         mock.patch.object(CLONE.os, "fdatasync", side_effect=OSError("sync failed")))):
             target = self.root / ("partial-%d" % index)
             with patcher, self.assertRaises(OSError):
                 CLONE.copy_file(source, target, source.lstat(), bytearray(CLONE.BUFFER_BYTES))
             self.assertTrue(target.is_file())
-        self.assertEqual(b"immutable blob", source.read_bytes())
+        self.assertEqual(b"immutable SST", source.read_bytes())
 
     def test_internal_cross_root_hardlinks_are_independent_across_seed_and_clones(self):
         original = self.seed[0] / "index/000001.sst"
@@ -152,7 +152,7 @@ class NormalV2Test(unittest.TestCase):
         self.assertTrue(all((target / CLONE.OWNER).read_text() == "new-trial-owner" for target in targets))
 
     def test_symlink_special_file_and_existing_target_are_rejected(self):
-        original = self.seed[1] / "data/blob"
+        original = self.seed[1] / "backup/000001.sst"
         for target in (self.seed[1], self.seed[1] / "nested", self.hdd):
             with self.subTest(overlap=str(target)), self.assertRaises(ValueError):
                 CLONE.clone_dataset(((self.seed[1], target),))
@@ -166,8 +166,8 @@ class NormalV2Test(unittest.TestCase):
                     bad = self.seed[1] / "bad"
                     os.mkfifo(str(bad))
                 elif name == "existing":
-                    target.mkdir(); (target / "data").mkdir()
-                    (target / "data/blob").write_text("do not overwrite")
+                    target.mkdir(); (target / "backup").mkdir()
+                    (target / "backup/000001.sst").write_text("do not overwrite")
                     bad = None
                 else:
                     target.symlink_to(self.seed[1], target_is_directory=True)
@@ -177,10 +177,10 @@ class NormalV2Test(unittest.TestCase):
                 if bad is not None:
                     bad.unlink()
                 if name == "existing":
-                    self.assertEqual("do not overwrite", (target / "data/blob").read_text())
+                    self.assertEqual("do not overwrite", (target / "backup/000001.sst").read_text())
 
     def test_source_metadata_change_during_copy_is_rejected_with_partial_retained(self):
-        source = self.seed[1] / "data/blob"
+        source = self.seed[1] / "backup/000001.sst"
         target = self.root / "partial"
         original = CLONE.os.write
         def write(fd, view):

@@ -7,8 +7,10 @@
 #include <condition_variable>
 #include <deque>
 #include <thread>
+#include <vector>
 
 #include "rocksdb/file_system.h"
+#include "rocksdb/metadata.h"
 #include "utilities/metabypass/native_files.h"
 #include "utilities/metabypass/sst_tiering.h"
 
@@ -26,7 +28,8 @@ class SstStorage : public FileSystemWrapper {
   const char* Name() const override { return "MetaBypassSstStorage"; }
   // Called with exclusive data and backup directory locks, before recovery.
   Status Initialize(const std::string& identity, bool restore);
-  Status Protect(const std::string& point, const NativeState& state);
+  Status Protect(const std::string& point,
+                 const std::vector<LiveFileStorageInfo>& files);
   struct RestoreFile {
     std::string source;
     uint64_t number;
@@ -87,6 +90,8 @@ class SstStorage : public FileSystemWrapper {
     uint64_t size;
   };
   std::shared_ptr<Entry> Find(uint64_t number) const;
+  // Requires mutation_.
+  bool HasPendingLocalRemoval(uint64_t number, const std::string& path) const;
   Status Discover();
   Status SavePlacement(uint64_t changed_number = 0, int hot = -1);
   Status LoadPlacement();

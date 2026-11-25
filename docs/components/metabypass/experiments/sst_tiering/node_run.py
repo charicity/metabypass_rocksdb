@@ -26,7 +26,7 @@ import uuid
 
 from node_cache import sample_residency
 
-PROTOCOL = "metabypass-sst-node-v1"
+PROTOCOL = "metabypass-sst-node-v2"
 OWNER = ".node-owner.json"
 PROFILES = {
     "legacy": {"keys": 4000000, "memory_bytes": 96 * 1024 * 1024,
@@ -91,7 +91,7 @@ def cgroup_exec(arguments):
         raise ValueError("effective CPU affinity differs from requested CPUs")
     affinity["child_effective_cpu_list"] = effective
     # Keep the helper PID/session unchanged; every later thread inherits affinity.
-    print("MB_SST_JSON " + json.dumps({"protocol": "node_v1", "event": "cpu_affinity",
+    print("MB_SST_JSON " + json.dumps({"protocol": "node_v2", "event": "cpu_affinity",
                                       "applied_before_cgroup": True, **affinity}), flush=True)
     with open(tasks, "w") as stream:
         stream.write(str(os.getpid()))
@@ -286,7 +286,7 @@ def space_snapshot(ssd, hdd, global_hdd=None, global_ssd=None):
             info = path.lstat()
             if stat.S_ISLNK(info.st_mode):
                 return
-            kind = ("sst" if path.suffix == ".sst" else "blob" if path.suffix == ".blob"
+            kind = ("sst" if path.suffix == ".sst"
                     else "temp" if path.suffix in (".tmp", ".temp") else "metadata")
             category = device + "_" + kind
             logical[category] = logical.get(category, 0) + info.st_size
@@ -569,7 +569,7 @@ class Runner:
         saturated = settings["saturated_s"] if saturated is None else saturated
         ssd, hdd = dirs
         flags = {"metabypass_mode": "sst_tiering", "metabypass_sst_action": action,
-                 "db": str(ssd / "index"), "metabypass_data_dir": str(hdd / "data"),
+                 "db": str(ssd / "index"),
                  "metabypass_backup_dir": str(hdd / "backup"), "num": self.keys,
                  "value_size": 1024, "key_size": 16, "compression_type": "none",
                  "metabypass_sst_mode": mode, "metabypass_sst_capacity_bytes": budget,
@@ -704,8 +704,8 @@ class Runner:
                             try:
                                 event = json.loads(line[12:], parse_constant=reject_json_constant)
                                 event["controller_received_monotonic_us"] = time.monotonic_ns() // 1000
-                                if event.get("protocol") != "node_v1":
-                                    raise ValueError("missing node_v1 protocol")
+                                if event.get("protocol") != "node_v2":
+                                    raise ValueError("missing node_v2 protocol")
                                 if event["event"] == "cpu_affinity":
                                     actual = event.get("child_effective_cpu_list")
                                     if event.get("applied_before_cgroup") is not True or \
@@ -1163,7 +1163,7 @@ def helper():
     if len(sys.argv) == 6 and sys.argv[1] == "--clone":
         source_ssd, source_hdd, dest_ssd, dest_hdd = sys.argv[2:]
         details = clone_dataset(((source_ssd, dest_ssd), (source_hdd, dest_hdd)))
-        print("MB_SST_JSON " + json.dumps({"protocol": "node_v1", "event": "summary",
+        print("MB_SST_JSON " + json.dumps({"protocol": "node_v2", "event": "summary",
                                             "ok": True, **details}), flush=True)
         return True
     return False

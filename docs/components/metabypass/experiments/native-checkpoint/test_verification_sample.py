@@ -5,7 +5,6 @@
 # (found in the LICENSE.Apache file in the root directory).
 """Compile the actual pure selector and driver Verify against a counted fake DB."""
 from pathlib import Path
-import os
 import shutil
 import subprocess
 import tempfile
@@ -19,7 +18,7 @@ class VerificationTests(unittest.TestCase):
         compiler = shutil.which("clang++-14") or shutil.which("g++")
         if not compiler:
             self.skipTest("a C++17 compiler is required for the pure verification test")
-        source = Path(os.environ.get("MB_SAMPLE_DRIVER_SOURCE", HERE / "driver.cc")).read_text()
+        source = (HERE / "driver.cc").read_text()
         config = source[source.index("struct Config {"):source.index("// Fault gates")]
         values = source[source.index("uint64_t Hash("):source.index("struct Histogram {")]
         verify = source[source.index("uint64_t Verify("):source.index("\nvoid Work(")]
@@ -103,7 +102,7 @@ int main() {
   auto all = mb_native::VerificationKeys(versions, 4, 4096, 17);
   assert(all.size() == 128 && all.front() == 0 && all.back() == 127);
   std::vector<std::string> args = {"test", "--index=/tmp/sample-index",
-      "--data=/tmp/sample-data", "--backup=/tmp/sample-backup",
+      "--backup=/tmp/sample-backup",
       "--state=/tmp/sample-state", "--keys=16", "--value-size=64",
       "--threads=2", "--verify-samples=8"};
   std::vector<char*> argv;
@@ -143,10 +142,15 @@ int main() {
   assert(Verify(db, config, state) == 16 && db.iterators == 1);
   db.values[Key(99)] = Value(99, 1, 64);
   Reject([&] { Verify(db, config, state); });
-  args.push_back("--verify-acks=/tmp/sample-acks");
-  argv.clear();
-  for (auto& arg : args) argv.push_back(arg.data());
-  Reject([&] { Config invalid(argv.size(), argv.data()); });
+  for (const auto* invalid_flag : {"--verify-acks=/tmp/sample-acks",
+                                   "--backup=/tmp/sample-index/..nested",
+                                   "--state=/tmp/sample-index/../sample-index/state"}) {
+    args.push_back(invalid_flag);
+    argv.clear();
+    for (auto& arg : args) argv.push_back(arg.data());
+    Reject([&] { Config invalid(argv.size(), argv.data()); });
+    args.pop_back();
+  }
 }
 '''
         with tempfile.TemporaryDirectory(prefix="mb-sample-unit-") as temporary:

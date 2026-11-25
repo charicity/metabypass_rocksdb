@@ -33,7 +33,8 @@ HddPurposeScope::~HddPurposeScope() { hdd_purpose = previous_; }
 HddPurpose HddPurposeScope::Current() { return hdd_purpose; }
 void IoStats::Record(Area area, Kind kind, uint64_t micros, uint64_t bytes,
                      HddPurpose purpose, bool success) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  auto& writes = area == Area::kBackup ? backup_ : index_;
+  std::lock_guard<std::mutex> lock(writes.mutex);
   if (area == Area::kBackup) {
     const size_t index = static_cast<size_t>(kind);
     ++calls_[index];
@@ -41,18 +42,14 @@ void IoStats::Record(Area area, Kind kind, uint64_t micros, uint64_t bytes,
   }
   if (kind != Kind::kAppend) return;
   if (!success) {
-    ++failed_writes_;
+    ++writes.failures;
     return;
   }
-  if (area == Area::kBackup) {
-    backup_write_bytes_ += bytes;
-  } else {
-    index_write_bytes_ += bytes;
-  }
-  purpose_write_bytes_[static_cast<size_t>(purpose)] += bytes;
+  writes.bytes += bytes;
+  writes.purpose_bytes[static_cast<size_t>(purpose)] += bytes;
 }
 void IoStats::AddStats(MetaBypassStats* stats) const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::scoped_lock lock(index_.mutex, backup_.mutex);
   stats->hdd_append_calls = calls_[static_cast<size_t>(Kind::kAppend)];
   stats->hdd_flush_calls = calls_[static_cast<size_t>(Kind::kFlush)];
   stats->hdd_sync_calls = calls_[static_cast<size_t>(Kind::kSync)];
@@ -63,15 +60,16 @@ void IoStats::AddStats(MetaBypassStats* stats) const {
   stats->hdd_sync_micros = micros_[static_cast<size_t>(Kind::kSync)];
   stats->hdd_dirsync_micros = micros_[static_cast<size_t>(Kind::kDirSync)];
   stats->hdd_read_micros = micros_[static_cast<size_t>(Kind::kRead)];
-  stats->io_index_write_bytes = index_write_bytes_;
-  stats->io_backup_write_bytes = backup_write_bytes_;
-  stats->io_caller_write_bytes =
-      purpose_write_bytes_[static_cast<size_t>(HddPurpose::kCaller)];
-  stats->io_bulk_write_bytes =
-      purpose_write_bytes_[static_cast<size_t>(HddPurpose::kBulk)];
-  stats->io_barrier_write_bytes =
-      purpose_write_bytes_[static_cast<size_t>(HddPurpose::kBarrier)];
-  stats->io_failed_writes = failed_writes_;
+  stats->io_index_write_bytes = index_.bytes;
+  stats->io_backup_write_bytes = backup_.bytes;
+  auto purpose_bytes = [&](HddPurpose purpose) {
+    const size_t i = static_cast<size_t>(purpose);
+    return index_.purpose_bytes[i] + backup_.purpose_bytes[i];
+  };
+  stats->io_caller_write_bytes = purpose_bytes(HddPurpose::kCaller);
+  stats->io_bulk_write_bytes = purpose_bytes(HddPurpose::kBulk);
+  stats->io_barrier_write_bytes = purpose_bytes(HddPurpose::kBarrier);
+  stats->io_failed_writes = index_.failures + backup_.failures;
 }
 namespace {
 using Area = IoStats::Area;

@@ -36,10 +36,15 @@ class IoStats {
   void AddStats(MetaBypassStats*) const;
 
  private:
-  mutable std::mutex mutex_;
+  struct WriteStats {
+    mutable std::mutex mutex;
+    std::array<uint64_t, 3> purpose_bytes{};
+    uint64_t bytes = 0;
+    uint64_t failures = 0;
+  };
+  WriteStats index_, backup_;
+  // Protected by backup_.mutex.
   std::array<uint64_t, static_cast<size_t>(Kind::kCount)> calls_{}, micros_{};
-  std::array<uint64_t, 3> purpose_write_bytes_{};
-  uint64_t index_write_bytes_ = 0, backup_write_bytes_ = 0, failed_writes_ = 0;
 };
 std::shared_ptr<FileSystem> ObserveIo(std::shared_ptr<FileSystem> fs,
                                       const std::string& index,

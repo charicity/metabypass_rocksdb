@@ -22,6 +22,13 @@ class DBImplReadOnly : public DBImpl {
 
   virtual ~DBImplReadOnly();
 
+  // Validates recoverable WAL records without inserting them into memtables.
+  // Output offsets and sequence are valid on success.
+  static Status ProbeWalRecovery(
+      const DBOptions& db_options, const std::string& dbname,
+      const std::vector<ColumnFamilyDescriptor>& column_families,
+      WalRecoveryProbe* probe, SequenceNumber* sequence);
+
   // Implementations of the DB interface
   using DBImpl::GetImpl;
   DECLARE_SYNC_AND_ASYNC_OVERRIDE(Status, GetImpl, const ReadOptions& options,

@@ -16,71 +16,14 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
-#include <version>
 
 #include "rocksdb/metadata.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "utilities/metabypass/native_files.h"
 
-// Some libc++ versions advertise atomic waiting even when the deployment
-// target predates the required runtime symbols.
-#if defined(__cpp_lib_atomic_wait) &&                             \
-    (!defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) ||   \
-     __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 110000) &&  \
-    (!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) ||  \
-     __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 140000) && \
-    (!defined(__ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__) ||      \
-     __ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__ >= 140000) &&     \
-    (!defined(__ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__) ||   \
-     __ENVIRONMENT_WATCH_OS_VERSION_MIN_REQUIRED__ >= 70000)
-#define ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT 1
-#else
-#define ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT 0
-#endif
-
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
 class SstStorage;
-// A single validator closes writer admission and waits for admitted writers.
-class WriteGate {
- public:
-  class Writer {
-   public:
-    explicit Writer(WriteGate& gate) : gate_(gate) { gate_.Admit(); }
-    ~Writer() { gate_.Leave(); }
-    Writer(const Writer&) = delete;
-    Writer& operator=(const Writer&) = delete;
-
-   private:
-    WriteGate& gate_;
-  };
-
-  class Closure {
-   public:
-    explicit Closure(WriteGate& gate) : gate_(gate) { gate_.CloseAndDrain(); }
-    ~Closure() { gate_.Reopen(); }
-    Closure(const Closure&) = delete;
-    Closure& operator=(const Closure&) = delete;
-
-   private:
-    WriteGate& gate_;
-  };
-
- private:
-  void Admit();
-  void Leave();
-  void CloseAndDrain();
-  void Reopen();
-  void Wait(uint64_t observed, std::memory_order order);
-  void Notify();
-
-  static constexpr uint64_t kClosed = uint64_t{1} << 63;
-  std::atomic<uint64_t> state_{0};  // Closed bit and admitted writer count.
-#if !ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
-  std::mutex wait_mutex_;
-  std::condition_variable wait_cv_;
-#endif
-};
 
 class Backup : public FileSystemWrapper {
  public:
@@ -94,7 +37,6 @@ class Backup : public FileSystemWrapper {
   Status Activate(const std::string& identity, DB* db,
                   std::shared_ptr<SystemClock> clock);
   void WriteCompleted();
-  WriteGate::Writer EnterWrite() { return WriteGate::Writer(write_gate_); }
   // Listener notification only; never performs I/O or waits for a checkpoint.
   void NativeFilesChanged(const CompactionJobInfo* compaction = nullptr);
   void NativeSstLevelsChanged();
@@ -108,16 +50,20 @@ class Backup : public FileSystemWrapper {
     std::string name;
     std::string identity;
     std::map<std::string, uint64_t> files;
-    uint64_t sequence = 0, wal_floor = 0;
+    uint64_t sequence_lower_bound = 0, wal_floor = 0;
+    std::optional<SequenceNumber> manifest_sequence;
+    bool exact_sequence = false;
   };
   // Read and verify the published point while holding the backup lock.
   static Status ReadRecoveryPoint(FileSystem*, const std::string& backup,
                                   RecoveryPoint*);
-  static Status PrepareRecovery(FileSystem*, const std::string& backup,
-                                const RecoveryPoint& point,
-                                const std::string& destination,
-                                MetaBypassRecoveryReport* report,
-                                SstStorage* sst);
+  static Status RestoreCheckpointFiles(FileSystem*, const std::string& backup,
+                                       const RecoveryPoint& point,
+                                       const std::string& destination,
+                                       SstStorage* sst);
+  static Status RestoreIncrementalWals(
+      FileSystem*, const std::string& backup, const std::string& destination,
+      const std::map<uint64_t, uint64_t>& complete_wal_ends);
   // Estimation only: malformed, nonmonotone or clock-discontinuous samples
   // leave the report bounds unknown and never change the recovered prefix.
   static void EstimateRecoveryTime(const std::string& samples,
@@ -244,7 +190,8 @@ class Backup : public FileSystemWrapper {
   struct Candidate {
     uint64_t seq = 0, started = 0, oldest = 0, work_bytes = 0;
     uint64_t writes = 0, request = 0, native_changes = 0;
-    uint64_t native_sequence = 0, wal_floor = 0;
+    uint64_t sequence_lower_bound = 0, wal_floor = 0;
+    std::optional<SequenceNumber> manifest_sequence;
     std::vector<LiveFileStorageInfo> files;
     std::string name, path;
     // Tables whose immutable contents have already been synchronized.
@@ -315,7 +262,6 @@ class Backup : public FileSystemWrapper {
   // Orders failure recording with pointer commit, without holding the queue
   // mutex across filesystem I/O. Never acquired by successful producers.
   std::mutex publication_mutex_;
-  WriteGate write_gate_;
   mutable std::mutex mutex_;
   std::condition_variable validator_cv_, sync_cv_, gc_cv_;
   bool mirror_waiting_ = false;
@@ -331,8 +277,8 @@ class Backup : public FileSystemWrapper {
   DB* db_ = nullptr;
   std::shared_ptr<SystemClock> clock_;
   std::string identity_;
-  // Writers increment while admitted. Capture closes admission and drains
-  // all admitted writers before reading the count and the native sequence.
+  bool capture_manifest_sequence_ = false;
+  // Sample the completed-write count before reading the native lower bound.
   std::atomic<uint64_t> completed_writes_{0};
   uint64_t published_writes_ = 0;
   uint64_t native_changes_ = 0, published_native_changes_ = 0;

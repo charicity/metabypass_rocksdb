@@ -5,15 +5,30 @@
 # (found in the LICENSE.Apache file in the root directory).
 
 from argparse import Namespace
+import csv
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 from sst_checkpoint_study import (level_rows, measurement_backup, parse_dump, phase,
-                                  read_inventory, run_study, summarize, transient_files,
-                                  validate_ssts, writer_publications)
+                                   read_inventory, read_recovery_boundary, run_study,
+                                   summarize, transient_files, validate_ssts,
+                                   writer_publications)
+
+
+MANIFEST_DUMP = (
+    '{"EditNumber":0,"ColumnFamily":0,"Comparator":"leveldb.BytewiseComparator"}\n'
+    '--------------- Column family "default"  (ID 0) --------------\n'
+    'log number: 12\n'
+    '--- level 0 --- version# 1 ---\n'
+    ' 7:100[0 .. 5][a .. z]\n'
+    '--- level 1 --- version# 1 ---\n'
+    'next_file_number 12 last_sequence 5  prev_log_number 0 '
+    'max_column_family 0 min_log_number_to_keep 0\n'
+)
 
 
 class CheckpointStudyTest(unittest.TestCase):
@@ -56,11 +71,14 @@ class CheckpointStudyTest(unittest.TestCase):
             self.assertTrue((output / "back/ycsb-d/writer/stdout.jsonl").is_file())
 
     def test_offline_summary_reads_d_and_legacy_a_archives(self):
-        for capture_fields, sample, workload in (
-            ({}, "ycsb-a", "workloada"),
-            ({"workload": "workloadd"}, "ycsb-d", "workloadd"),
+        for capture_fields, sample, workload, boundary, boundary_type, manifest_seq in (
+            ({}, "ycsb-a", "workloada", "4 12\n", "exact", ""),
+            ({"workload": "workloadd"}, "ycsb-d", "workloadd",
+             "MBR2 4 12\n", "lower_bound", ""),
+            ({"workload": "workloadd"}, "ycsb-d", "workloadd",
+             "MBR2 4 12 5\n", "lower_bound", "5"),
         ):
-            with self.subTest(sample=sample), TemporaryDirectory() as directory:
+            with self.subTest(sample=sample, boundary=boundary), TemporaryDirectory() as directory:
                 output = Path(directory)
                 capture = dict(capture_fields, runner_returncode=0, final_latest="point-1")
                 (output / "capture.json").write_text(json.dumps(capture))
@@ -77,14 +95,41 @@ class CheckpointStudyTest(unittest.TestCase):
                 ]
                 (writer / "stdout.jsonl").write_text("".join(json.dumps(event) + "\n"
                                                             for event in events))
-                (output / "points/point-1").mkdir(parents=True)
-                with patch("sst_checkpoint_study.read_point", return_value=dict(
-                    live={}, levels=7, observed_monotonic_ns=1, sequence=1, wal_floor=1,
-                    wal_bytes=0, metadata_bytes=0, manifest="MANIFEST-000001",
+                point = output / "points/point-1"
+                point.mkdir(parents=True)
+                (point / "LATEST").write_text("point-1\n")
+                (point / "RECOVERY").write_text(boundary)
+                (point / "observation.json").write_text('{"observed_monotonic_ns": 1}')
+                metadata = {"CURRENT": "MANIFEST-000001\n", "MANIFEST-000001": "fixture",
+                            "OPTIONS-000002": "num_levels=2\n"}
+                for name, contents in metadata.items():
+                    (point / name).write_text(contents)
+                (point / "INVENTORY").write_text("MBI7\n000007.sst 100\n000012.log 30\n" + "".join(
+                    f"{name} {len(contents)}\n" for name, contents in metadata.items()))
+                with patch("sst_checkpoint_study.subprocess.run", return_value=CompletedProcess(
+                    args=["ldb"], returncode=0, stdout=MANIFEST_DUMP, stderr=""
                 )):
                     report = json.loads(summarize(output, "ldb").read_text())
                 self.assertEqual(report["workload"], workload)
                 self.assertEqual(report["confirmed_points"], 1)
+                with (output / "points.csv").open(newline="") as stream:
+                    row, = csv.DictReader(stream)
+                self.assertEqual(row["sequence"], "4")
+                self.assertEqual(row["wal_floor"], "12")
+                self.assertEqual(row["sequence_boundary_type"], boundary_type)
+                self.assertEqual(row["manifest_sequence"], manifest_seq)
+
+    def test_invalid_recovery_boundary(self):
+        for boundary in (
+            "", "5", "5 12 5", "MBR3 5 12", "MBR2 5", "MBR2 5 12 5 extra",
+            "MBR2 5 12 4", f"MBR2 {1 << 56} 12", f"MBR2 5 12 {1 << 56}",
+            f"MBR2 5 {1 << 64}", "MBR2 +5 12", "MBR2 5 -12",
+        ):
+            with self.subTest(boundary=boundary), TemporaryDirectory() as directory:
+                path = Path(directory) / "RECOVERY"
+                path.write_text(boundary)
+                with self.assertRaisesRegex(ValueError, "invalid RECOVERY boundary"):
+                    read_recovery_boundary(path)
 
     def test_same_number_move(self):
         rows = level_rows({11: (2, 10), 12: (0, 20)}, {11: (0, 10)}, 4)
@@ -94,19 +139,9 @@ class CheckpointStudyTest(unittest.TestCase):
         self.assertEqual([r["moved_in_bytes"] for r in rows], [0, 0, 10, 0])
 
     def test_dump_and_inventory_lengths(self):
-        dump = (
-            '{"EditNumber":0,"ColumnFamily":0,"Comparator":"leveldb.BytewiseComparator"}\n'
-            '--------------- Column family "default"  (ID 0) --------------\n'
-            'log number: 12\n'
-            '--- level 0 --- version# 1 ---\n'
-            ' 7:100[0 .. 5][a .. z]\n'
-            '--- level 1 --- version# 1 ---\n'
-            'next_file_number 12 last_sequence 5  prev_log_number 0 '
-            'max_column_family 0 min_log_number_to_keep 0\n'
-        )
         with self.assertRaisesRegex(ValueError, "missing final ldb MANIFEST summary"):
-            parse_dump(dump.rsplit("next_file_number", 1)[0])
-        live, edits = parse_dump(dump)
+            parse_dump(MANIFEST_DUMP.rsplit("next_file_number", 1)[0])
+        live, edits = parse_dump(MANIFEST_DUMP)
         self.assertEqual(len(edits), 1)
         self.assertEqual(live, {7: (0, 100)})
         validate_ssts(read_inventory("MBI7\n000007.sst 100\nCURRENT 16\n"), live)

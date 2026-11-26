@@ -6,6 +6,7 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
+#include <algorithm>
 #include <cinttypes>
 
 #include "db/blob/blob_file_partition_manager.h"
@@ -1050,6 +1051,36 @@ Status DBImpl::LogAndApplyForRecovery(const RecoveryContext& recovery_ctx) {
   return s;
 }
 
+Status DBImpl::PersistRecoveredSequence(SequenceNumber minimum_sequence) {
+  InstrumentedMutexLock lock(&mutex_);
+  const SequenceNumber sequence =
+      std::max(minimum_sequence, versions_->LastSequence());
+  // An in-place update can advance the replay sequence while the recovery
+  // flush persists only the earlier sequence of the surviving SST entry.
+  if (sequence <= versions_->descriptor_last_sequence_) {
+    return Status::OK();
+  }
+  // MANIFEST recovery rejects the maximum sequence number as a sentinel.
+  if (sequence >= kMaxSequenceNumber) {
+    return Status::Corruption("invalid recovered sequence number");
+  }
+
+  const ReadOptions read_options(Env::IOActivity::kDBOpen);
+  const WriteOptions write_options(Env::IOActivity::kDBOpen);
+  VersionEdit edit;
+  edit.SetLastSequence(sequence);
+  Status s = versions_->LogAndApplyToDefaultColumnFamily(
+      read_options, write_options, &edit, &mutex_, directories_.GetDbDir());
+  if (s.ok()) {
+    versions_->SetLastAllocatedSequence(
+        std::max(sequence, versions_->LastAllocatedSequence()));
+    versions_->SetLastPublishedSequence(
+        std::max(sequence, versions_->LastPublishedSequence()));
+    versions_->SetLastSequence(std::max(sequence, versions_->LastSequence()));
+  }
+  return s;
+}
+
 void DBImpl::InvokeWalFilterIfNeededOnColumnFamilyToWalNumberMap() {
   if (immutable_db_options_.wal_filter == nullptr) {
     return;
@@ -1252,6 +1283,8 @@ Status DBImpl::ProcessLogFiles(
   bool flushed = false;
   uint64_t corrupted_wal_number = kMaxSequenceNumber;
   PredecessorWALInfo predecessor_wal_info;
+  WalRecoveryProbe* wal_probe =
+      recovery_ctx ? recovery_ctx->wal_probe : nullptr;
 
   for (auto wal_number : wal_numbers) {
     // Detecting early break on the next iteration after `wal_number` has been
@@ -1262,16 +1295,26 @@ Status DBImpl::ProcessLogFiles(
     }
     SequenceNumber prev_next_sequence = *next_sequence;
     if (status.ok()) {
-      status = ProcessLogFile(
-          wal_number, min_wal_number, is_retry, read_only, job_id,
-          next_sequence, &stop_replay_for_corruption,
-          &stop_replay_by_wal_filter, &corrupted_wal_number,
-          corrupted_wal_found, version_edits, &flushed, predecessor_wal_info);
+      const WALRecoveryMode reader_recovery_mode =
+          wal_probe != nullptr && wal_number == wal_numbers.back()
+              ? WALRecoveryMode::kTolerateCorruptedTailRecords
+              : immutable_db_options_.wal_recovery_mode;
+      status =
+          ProcessLogFile(wal_number, min_wal_number, is_retry, read_only,
+                         job_id, next_sequence, &stop_replay_for_corruption,
+                         &stop_replay_by_wal_filter, &corrupted_wal_number,
+                         corrupted_wal_found, version_edits, &flushed,
+                         predecessor_wal_info, wal_probe, reader_recovery_mode);
     }
     if (status.ok()) {
       status = CheckSeqnoNotSetBackDuringRecovery(prev_next_sequence,
                                                   *next_sequence);
     }
+  }
+
+  if (status.ok() && wal_probe != nullptr && stop_replay_for_corruption) {
+    return Status::Corruption("WAL recovery stopped without a continuation",
+                              std::to_string(corrupted_wal_number));
   }
 
   if (status.ok()) {
@@ -1292,7 +1335,8 @@ Status DBImpl::ProcessLogFile(
     bool* stop_replay_by_wal_filter, uint64_t* corrupted_wal_number,
     bool* corrupted_wal_found,
     std::unordered_map<int, VersionEdit>* version_edits, bool* flushed,
-    PredecessorWALInfo& predecessor_wal_info) {
+    PredecessorWALInfo& predecessor_wal_info, WalRecoveryProbe* wal_probe,
+    WALRecoveryMode reader_recovery_mode) {
   assert(stop_replay_by_wal_filter);
 
   // Variable initialization starts
@@ -1335,6 +1379,10 @@ Status DBImpl::ProcessLogFile(
     return status;
   }
 
+  uint64_t* complete_wal_end = nullptr;
+  if (wal_probe != nullptr) {
+    complete_wal_end = &wal_probe->complete_wal_ends[wal_number];
+  }
   SetupLogFileProcessing(wal_number);
 
   if (*stop_replay_by_wal_filter) {
@@ -1368,8 +1416,7 @@ Status DBImpl::ProcessLogFile(
     }
 
     bool read_record = reader->ReadRecord(
-        &record, &scratch, immutable_db_options_.wal_recovery_mode,
-        &record_checksum);
+        &record, &scratch, reader_recovery_mode, &record_checksum);
 
     // `reader->ReadRecord` will change `status` through reporter in `reader`
     // when a corruption is encountered
@@ -1384,7 +1431,7 @@ Status DBImpl::ProcessLogFile(
         record, reader, running_ts_sz, wal_number, fname, read_only, job_id,
         logFileDropped, &reporter, &record_checksum, &last_seqno_observed,
         next_sequence, stop_replay_for_corruption, &status,
-        stop_replay_by_wal_filter, version_edits, flushed);
+        stop_replay_by_wal_filter, version_edits, flushed, wal_probe);
 
     if (!process_status.ok()) {
       return process_status;
@@ -1396,6 +1443,9 @@ Status DBImpl::ProcessLogFile(
       return seqno_check_status;
     } else if (*stop_replay_for_corruption) {
       break;
+    }
+    if (complete_wal_end != nullptr && status.ok()) {
+      *complete_wal_end = reader->LastRecordEnd();
     }
   }
 
@@ -1490,7 +1540,8 @@ Status DBImpl::ProcessLogRecord(
     SequenceNumber* last_seqno_observed, SequenceNumber* next_sequence,
     bool* stop_replay_for_corruption, Status* status,
     bool* stop_replay_by_wal_filter,
-    std::unordered_map<int, VersionEdit>* version_edits, bool* flushed) {
+    std::unordered_map<int, VersionEdit>* version_edits, bool* flushed,
+    WalRecoveryProbe* wal_probe) {
   assert(reporter);
   assert(last_seqno_observed);
   assert(stop_replay_for_corruption);
@@ -1534,6 +1585,24 @@ Status DBImpl::ProcessLogRecord(
   if (*stop_replay_for_corruption) {
     logFileDropped();
     assert(process_status.ok());
+    return process_status;
+  }
+
+  if (wal_probe != nullptr) {
+    const uint32_t count = WriteBatchInternal::Count(batch_to_use);
+    if (*last_seqno_observed == 0 ||
+        count > kMaxSequenceNumber - *last_seqno_observed + 1) {
+      return Status::Corruption("WAL batch sequence range is invalid", fname);
+    }
+    if (wal_probe->validate_batch) {
+      process_status = wal_probe->validate_batch(*batch_to_use);
+      if (!process_status.ok()) {
+        return process_status;
+      }
+    }
+    // Empty batches can mark continuity after point-in-time recovery. Their
+    // sequence is still the next expected record sequence.
+    *next_sequence = *last_seqno_observed + count;
     return process_status;
   }
 

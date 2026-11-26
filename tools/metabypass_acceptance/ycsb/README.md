@@ -101,9 +101,9 @@ keys. Recovered update bytes have no independent oracle in that case.
 
 Pairing requires matching fixture and observed digests, successful initial
 verification, and matching YCSB revision and patch, adapter, workload, shared
-database settings, memory budget and measurement window. Engine, core and
-backup settings are comparison variables. Historical hand-written YCSB
-ledgers are outside this protocol.
+database settings, memory budget, measurement window and checkpoint timing
+mode. Engine, core and backup settings are comparison variables. Historical
+hand-written YCSB ledgers are outside this protocol.
 
 ## YCSB-A and YCSB-D checkpoint SST study
 
@@ -132,9 +132,11 @@ each level, SST totals, new file numbers and same-number moves. Measurement
 totals use intervals ending at a confirmed measurement-window publication.
 Differences across a MANIFEST rollover still appear in the level data.
 `points.csv` gives WAL and metadata sizes and tracks whether the MANIFEST
-prefix covers short-lived SSTs for each interval. `summary.json` gives byte
-shares for L1+ and L2+ and lists any final point unconfirmed by the writer.
-All sizes are logical file bytes.
+prefix covers short-lived SSTs for each interval. Its `sequence_boundary_type`
+column identifies `sequence` as an exact legacy boundary or an MBR2 lower
+bound. The `manifest_sequence` column reports the captured value when present.
+`summary.json` gives byte shares for L1+ and L2+ and lists any final point
+unconfirmed by the writer. All sizes are logical file bytes.
 
 Pass `--front-root` and `--back-root` together to use two existing data
 directories on local mounts. Each run gets unique sample directories. Raw

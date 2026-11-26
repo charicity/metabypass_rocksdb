@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -37,6 +38,7 @@
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_batch.h"
+#include "util/defer.h"
 
 namespace {
 namespace rdb = ROCKSDB_NAMESPACE;
@@ -429,9 +431,22 @@ struct OperationIO {
   uint64_t scan_rows = 0;
 };
 
+struct PutSpan {
+  uint64_t begin_ns;
+  uint64_t end_ns;
+};
+static_assert(sizeof(PutSpan) == 16);
+
+template <bool checkpoint_timing>
 class Adapter final : public ycsbc::DB {
  public:
-  explicit Adapter(Database& db) : db_(db) {}
+  Adapter(Database& db, std::vector<PutSpan>* put_spans,
+          const Clock::time_point& measure_begin,
+          const Clock::time_point& measure_end)
+      : db_(db),
+        put_spans_(put_spans),
+        measure_begin_(measure_begin),
+        measure_end_(measure_end) {}
 
   Status Read(const std::string&, const std::string& key,
               const std::vector<std::string>*,
@@ -481,12 +496,25 @@ class Adapter final : public ycsbc::DB {
   Status Put(const std::string& key, const std::vector<Field>& fields) {
     ++io.put_calls;
     const auto& value = fields.front().value;
-    Check(db_.Put(key, value), "YCSB Put");
+    if constexpr (checkpoint_timing) {
+      const auto put_begin = Clock::now();
+      const auto status = db_.Put(key, value);
+      const auto put_end = Clock::now();
+      Check(status, "YCSB Put");
+      if (put_begin < measure_end_ && put_end >= measure_begin_) {
+        put_spans_->push_back({Nanos(put_begin), Nanos(put_end)});
+      }
+    } else {
+      Check(db_.Put(key, value), "YCSB Put");
+    }
     io.write_bytes += value.size();
     return kOK;
   }
 
   Database& db_;
+  std::vector<PutSpan>* put_spans_;
+  const Clock::time_point& measure_begin_;
+  const Clock::time_point& measure_end_;
 };
 
 struct Profile {
@@ -606,8 +634,30 @@ std::string DatasetFields(const mb_ycsb::Metadata& metadata) {
   std::_Exit(EXIT_FAILURE);
 }
 
+[[maybe_unused]] void WritePutSpans(
+    const char* path, const std::vector<std::vector<PutSpan>>& put_spans) {
+  std::ofstream trace(path, std::ios::binary);
+  Require(trace.is_open(), "cannot open Put span file");
+  for (const auto& worker : put_spans) {
+    if (!worker.empty()) {
+      trace.write(reinterpret_cast<const char*>(worker.data()),
+                  worker.size() * sizeof(PutSpan));
+    }
+  }
+  trace.close();
+  Require(trace.good(), "cannot write Put span file");
+}
+
+template <bool checkpoint_timing>
 void Run(char** argv) {
   const auto engine = ParseEngine(argv[4]);
+  if constexpr (checkpoint_timing) {
+    Require(engine == Engine::kMetaBypass, "checkpoint timing requires mb");
+    Require(fs::path(argv[11]).is_absolute(),
+            "Put span file path must be absolute");
+    Require(std::endian::native == std::endian::little,
+            "checkpoint timing requires a little-endian host");
+  }
   const auto backup =
       engine == Engine::kNative ? std::string{} : Absolute(argv[6]);
   const auto threads = Parse(argv[7], "thread count", 1, 1024);
@@ -643,20 +693,53 @@ void Run(char** argv) {
   ycsbc::CoreWorkload workload;
   workload.Init(profile.props);
   std::vector<Published> results(threads);
+  std::vector<std::vector<PutSpan>> put_spans(checkpoint_timing ? threads : 0);
   std::vector<std::thread> workers;
   workers.reserve(threads);
   std::latch ready(threads);
   std::latch start(1);
   Clock::time_point begin, end;
+  bool start_released = false;
+  std::atomic<bool> stop_diagnostic_threads{false};
+  std::thread reporter;
+  const auto join_diagnostic_threads = [&] {
+    stop_diagnostic_threads.store(true, std::memory_order_relaxed);
+    if (!start_released) {
+      start.count_down();
+      start_released = true;
+    }
+    for (auto& worker : workers) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
+    if (reporter.joinable()) {
+      reporter.join();
+    }
+  };
+
+  // Keep the latch and threads alive while cleaning up a failed launch.
+  std::optional<rdb::Defer> stop_diagnostic_threads_on_exit;
+  if constexpr (checkpoint_timing) {
+    stop_diagnostic_threads_on_exit.emplace(join_diagnostic_threads);
+  }
+
   for (size_t i = 0; i < threads; ++i) {
     workers.emplace_back([&, i] {
       try {
-        Adapter adapter(db);
+        Adapter<checkpoint_timing> adapter(
+            db, checkpoint_timing ? &put_spans[i] : nullptr, begin, end);
         ready.count_down();
         start.wait();
         for (;;) {
           adapter.io = {};
           const auto op_begin = Clock::now();
+          if constexpr (checkpoint_timing) {
+            if (op_begin >= end ||
+                stop_diagnostic_threads.load(std::memory_order_relaxed)) {
+              return;
+            }
+          }
           Require(workload.DoTransaction(adapter), "YCSB transaction failed");
           const auto op_end = Clock::now();
           if (op_end >= begin && op_end < end) {
@@ -684,10 +767,16 @@ void Run(char** argv) {
   begin = workload_start + warmup;
   end = begin + measure;
   start.count_down();
-  std::thread reporter([&] {
+  start_released = true;
+  reporter = std::thread([&, workload_start] {
     try {
       for (auto next = workload_start;; next += 1s) {
         std::this_thread::sleep_until(next);
+        if constexpr (checkpoint_timing) {
+          if (stop_diagnostic_threads.load(std::memory_order_relaxed)) {
+            return;
+          }
+        }
         db.ReportSequence();
         next = std::max(next, Clock::now() - 1s);
       }
@@ -697,7 +786,7 @@ void Run(char** argv) {
   });
   std::unique_ptr<std::thread> backup_worker;
   if (engine == Engine::kBE) {
-    backup_worker = std::make_unique<std::thread>([&] {
+    backup_worker = std::make_unique<std::thread>([&, workload_start] {
       try {
         auto next = workload_start + interval;
         for (;;) {
@@ -716,12 +805,19 @@ void Run(char** argv) {
        Number("monotonic_ns", Nanos(begin)) + db.ReportBackupStats());
   std::this_thread::sleep_until(end);
   const auto end_stats = db.ReportBackupStats();
+  if constexpr (checkpoint_timing) {
+    stop_diagnostic_threads_on_exit.reset();
+    db.Close();
+    WritePutSpans(argv[11], put_spans);
+  }
   Emit("measurement_end", Number("monotonic_ns", Nanos(end)) +
                               Number("elapsed_ns", Nanos(end) - Nanos(begin)) +
                               Summarize(results) + end_stats);
-  // The controller kills this process to model an abrupt SSD failure.
-  // Continue the workload until the signal rather than closing either store.
-  reporter.join();
+  if constexpr (!checkpoint_timing) {
+    // The controller models an abrupt failure. Continue until it sends the
+    // signal so neither store closes before the failure.
+    reporter.join();
+  }
 }
 
 void Recover(char** argv) {
@@ -851,7 +947,14 @@ int main(int argc, char** argv) {
       Emit("dataset",
            String("dataset", path) + DatasetFields(dataset.metadata()));
     } else if (command == "run" && argc == 11) {
-      Run(argv);
+      Run<false>(argv);
+    } else if (command == "run-checkpoint-timing" && argc == 12) {
+#ifdef ROCKSDB_MB_CHECKPOINT_TIMING
+      Run<true>(argv);
+#else
+      throw std::runtime_error(
+          "checkpoint timing requires a ROCKSDB_MB_CHECKPOINT_TIMING build");
+#endif
     } else if (command == "recover" && argc == 9) {
       Recover(argv);
     } else if (command == "verify" && argc == 4) {
@@ -861,7 +964,9 @@ int main(int argc, char** argv) {
           "usage: identity | dataset DIR RECORDS VALUE_BYTES | verify DATASET "
           "DB "
           "| run DATASET PROPERTIES mb|be|native DB BACKUP|- THREADS WARMUP_S "
-          "MEASURE_S CHECKPOINT_MS | recover DATASET PROPERTIES mb|be TARGET "
+          "MEASURE_S CHECKPOINT_MS | run-checkpoint-timing DATASET PROPERTIES "
+          "mb DB BACKUP THREADS WARMUP_S MEASURE_S CHECKPOINT_MS PUT_SPANS "
+          "| recover DATASET PROPERTIES mb|be TARGET "
           "BACKUP INITIAL_SEQUENCE SAMPLES");
     }
     return EXIT_SUCCESS;

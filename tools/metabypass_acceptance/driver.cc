@@ -589,14 +589,13 @@ void PrintResult(const Config& c, const Result& r) {
 #ifdef ROCKSDB_MB_WAL_BREAKDOWN
   if (c.fine) {
     constexpr std::array foreground{
-        "operations_wait",     "event_build",          "reserve_wait",
-        "reserve_bookkeeping", "capacity_wait",        "payload_copy",
-        "primary_append",      "finish_wait",          "finish_bookkeeping",
-        "batch_validation",    "error_check",          "write_fence_wait",
-        "completed_wait",      "completed_bookkeeping"};
+        "operations_wait",      "event_build",   "reserve_wait",
+        "reserve_bookkeeping",  "capacity_wait", "payload_copy",
+        "primary_append",       "finish_wait",   "finish_bookkeeping",
+        "batch_validation",     "error_check",   "completed_wait",
+        "completed_bookkeeping"};
     constexpr std::array background{"mirror_selection_hold",
-                                    "mirror_completion_hold",
-                                    "checkpoint_gate_hold"};
+                                    "mirror_completion_hold"};
     static_assert(foreground.size() == wal::stage_count);
     static_assert(background.size() == wal::background_stage_count);
     field("fine_samples", r.fine_samples);

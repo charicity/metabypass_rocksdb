@@ -199,7 +199,7 @@ Status DBImpl::GetCurrentWalFile(std::unique_ptr<WalFile>* current_wal_file) {
 Status DBImpl::GetLiveFilesStorageInfo(
     const LiveFilesStorageInfoOptions& opts,
     std::vector<LiveFileStorageInfo>* files) {
-  return GetLiveFilesStorageInfo(opts, files, nullptr);
+  return GetLiveFilesStorageInfo(opts, files, nullptr, nullptr);
 }
 
 void DBImpl::GetLiveTableFileSizes(
@@ -220,7 +220,8 @@ void DBImpl::GetLiveTableFileSizes(
 Status DBImpl::GetLiveFilesStorageInfo(
     const LiveFilesStorageInfoOptions& opts,
     std::vector<LiveFileStorageInfo>* files,
-    std::unordered_map<uint64_t, int>* table_levels) {
+    std::unordered_map<uint64_t, int>* table_levels,
+    SequenceNumber* manifest_capture_sequence) {
   // To avoid returning partial results, only move results to files on success.
   assert(files);
   files->clear();
@@ -373,13 +374,11 @@ Status DBImpl::GetLiveFilesStorageInfo(
 
     for (int level = 0; level < vsi.num_levels(); ++level) {
       const auto& level_files = vsi.LevelFiles(level);
-      if (table_levels) {
-        for (const auto& meta : level_files) {
-          levels.emplace(meta->fd.GetNumber(), level);
-        }
-      }
       for (const auto& meta : level_files) {
         assert(meta);
+        if (table_levels) {
+          levels.emplace(meta->fd.GetNumber(), level);
+        }
 
         results.emplace_back();
         LiveFileStorageInfo& info = results.back();
@@ -432,8 +431,18 @@ Status DBImpl::GetLiveFilesStorageInfo(
   const uint64_t min_log_num = MinLogNumberToKeep();
   // Ensure consistency with manifest for track_and_verify_wals_in_manifest
   const uint64_t max_log_num = cur_wal_number_;
+  const SequenceNumber captured_sequence =
+      manifest_capture_sequence ? versions_->LastSequence() : 0;
 
   mutex_.Unlock();
+
+  const auto return_results = [&] {
+    *files = std::move(results);
+    if (table_levels) *table_levels = std::move(levels);
+    if (manifest_capture_sequence) {
+      *manifest_capture_sequence = captured_sequence;
+    }
+  };
 
   std::string manifest_fname = DescriptorFileName(manifest_number);
   {  // MANIFEST
@@ -496,8 +505,7 @@ Status DBImpl::GetLiveFilesStorageInfo(
     // Flush completed before the Version/MANIFEST capture above. Later writes
     // can create new active blob files, but their WAL references are omitted
     // along with the files. Only manifest-visible blobs belong to this view.
-    *files = std::move(results);
-    if (table_levels) *table_levels = std::move(levels);
+    return_results();
     return Status::OK();
   }
 
@@ -602,9 +610,7 @@ Status DBImpl::GetLiveFilesStorageInfo(
   }
 
   if (s.ok()) {
-    // Only move results to output on success.
-    *files = std::move(results);
-    if (table_levels) *table_levels = std::move(levels);
+    return_results();
   }
   return s;
 }

@@ -45,6 +45,8 @@ DUMP_END = re.compile(
     r"next_file_number [0-9]+ last_sequence [0-9]+ +prev_log_number [0-9]+ "
     r"max_column_family [0-9]+ min_log_number_to_keep [0-9]+"
 )
+MAX_SEQUENCE_NUMBER = (1 << 56) - 1
+MAX_WAL_FILE_NUMBER = (1 << 64) - 1
 
 
 def read_name(contents, pattern):
@@ -237,6 +239,28 @@ def validate_ssts(inventory, live):
         raise ValueError(f"MANIFEST and INVENTORY SST numbers/lengths differ: {different}")
 
 
+def read_recovery_boundary(path):
+    fields = re.findall(r"\S+", path.read_text(), flags=re.ASCII)
+    exact = fields[:1] != ["MBR2"]
+    if not exact:
+        fields = fields[1:]
+    # Strip leading zeroes before checking the maximum uint64 decimal width.
+    digits = [field.lstrip("0") or "0" for field in fields]
+    if len(digits) not in ((2,) if exact else (2, 3)) or any(
+        not re.fullmatch(r"[0-9]{1,20}", field) for field in digits
+    ):
+        raise ValueError(f"{path}: invalid RECOVERY boundary")
+    sequence, wal_floor, *manifest = map(int, digits)
+    manifest_sequence = manifest[0] if manifest else None
+    if (sequence > MAX_SEQUENCE_NUMBER or wal_floor > MAX_WAL_FILE_NUMBER
+            or (manifest_sequence is not None
+                and not sequence <= manifest_sequence <= MAX_SEQUENCE_NUMBER)):
+        raise ValueError(f"{path}: invalid RECOVERY boundary")
+    return dict(sequence=sequence, wal_floor=wal_floor,
+                sequence_boundary_type="exact" if exact else "lower_bound",
+                manifest_sequence=manifest_sequence)
+
+
 def read_point(path, ldb):
     if read_name((path / "LATEST").read_text(), POINT) != path.name:
         raise ValueError(f"{path}: archived LATEST does not match point")
@@ -261,18 +285,15 @@ def read_point(path, ldb):
     validate_ssts(inventory, live)
     if any(level >= levels for level, _ in live.values()):
         raise ValueError(f"{path}: MANIFEST level exceeds OPTIONS num_levels")
-    boundary = (path / "RECOVERY").read_text()
-    if not re.fullmatch(r"[0-9]+ [0-9]+\n?", boundary):
-        raise ValueError(f"{path}: invalid RECOVERY boundary")
-    sequence, wal_floor = map(int, boundary.split())
+    boundary = read_recovery_boundary(path / "RECOVERY")
     wal_bytes = sum(size for name, size in inventory.items() if WAL.fullmatch(name))
     metadata_bytes = sum(size for name, size in inventory.items()
                          if not (SST.fullmatch(name) or WAL.fullmatch(name)))
     metadata_bytes += sum((path / name).stat().st_size for name in ("RECOVERY", "INVENTORY"))
     observed = json.loads((path / "observation.json").read_text())["observed_monotonic_ns"]
     return dict(live=live, levels=levels, edits=edits, manifest=manifest,
-                observed_monotonic_ns=observed, sequence=sequence,
-                wal_floor=wal_floor, wal_bytes=wal_bytes, metadata_bytes=metadata_bytes)
+                observed_monotonic_ns=observed, wal_bytes=wal_bytes,
+                metadata_bytes=metadata_bytes, **boundary)
 
 
 def level_rows(current, previous, levels):
@@ -478,7 +499,9 @@ def summarize(output, ldb):
         points.append(dict(labels, published_monotonic_ns=timestamp,
                            **{key: info[key] for key in ("observed_monotonic_ns", "sequence",
                                                         "wal_floor", "wal_bytes", "metadata_bytes",
-                                                        "manifest", "levels")},
+                                                        "manifest", "levels",
+                                                        "sequence_boundary_type",
+                                                        "manifest_sequence")},
                            **(short_lived(archives, previous, info) if previous else
                               {"manifest_coverage": "no_previous_point"}),
                            **{key: stats[key] for key in (*CHECKPOINT_METRICS, *CUMULATIVE_COUNTERS,

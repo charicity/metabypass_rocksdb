@@ -26,7 +26,6 @@ enum Stage {
   finish_bookkeeping,
   batch_validation,
   error_check,
-  write_fence_wait,
   completed_wait,
   completed_bookkeeping,
   stage_count
@@ -41,7 +40,6 @@ inline uint64_t Clock() {
 enum BackgroundStage {
   mirror_selection_hold,
   mirror_completion_hold,
-  checkpoint_gate_hold,
   background_stage_count
 };
 

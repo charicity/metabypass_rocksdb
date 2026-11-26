@@ -36,7 +36,7 @@ def sample(group="D", number=1, throughput=100):
 
 class ContractTests(unittest.TestCase):
     def test_sample_verification_commands_and_event_identity(self):
-        spec = {"group": "S", "workload": "mixed", "keys": 16, "value_size": 1024,
+        spec = {"group": "D", "workload": "mixed", "keys": 16, "value_size": 1024,
                 "threads": 2, "seed": 17, "verify_samples": 8}
         verification = event("verification", verification_protocol="metabypass-key-sample-v1",
                              mode="sample", population=16, requested=8, actual=8,
@@ -44,25 +44,25 @@ class ContractTests(unittest.TestCase):
                              keys=[0, 1, 3, 7, 8, 9, 11, 15], live_checked=6,
                              deleted_checked=1, unwritten_checked=1, full_keycount_checked=False)
         for action in ("verify", "restore", "append-reopen"):
-            done = event("done", status="pass", variant="S", action=action, workload="mixed", verified_keys=8)
+            done = event("done", status="pass", variant="D", action=action, workload="mixed", verified_keys=8)
             self.assertIn("--verify-samples=8", run.driver_command("/binary", {}, spec, action))
-            run.validate_events([verification, done], action, "S", "mixed", spec)
+            run.validate_events([verification, done], action, "D", "mixed", spec)
             for field, value in (("actual", 16), ("actual", True), ("derived_seed", 0),
                                  ("verification_protocol", "unknown"), ("full_keycount_checked", True),
                                  ("keys", [0] * 8), ("keys", [0, 1, 3, 6, 8, 9, 11, 15]),
                                  ("deleted_checked", -1), ("requested", 9)):
                 with self.subTest(action=action, field=field, value=value):
                     with self.assertRaises(run.RunFailure):
-                        run.validate_events([{**verification, field: value}, done], action, "S", "mixed", spec)
+                        run.validate_events([{**verification, field: value}, done], action, "D", "mixed", spec)
             for events in ([done], [verification, verification, done],
                            [verification, {**done, "verified_keys": 16}]):
                 with self.assertRaises(run.RunFailure):
-                    run.validate_events(events, action, "S", "mixed", spec)
+                    run.validate_events(events, action, "D", "mixed", spec)
             full = {key: value for key, value in spec.items() if key != "verify_samples"}
             self.assertFalse(any(flag.startswith("--verify-samples=")
-                                 for flag in run.driver_command("/historical-binary", {}, full, action)))
+                                 for flag in run.driver_command("/binary", {}, full, action)))
             with self.assertRaises(run.RunFailure):
-                run.validate_events([verification, done], action, "S", "mixed", full)
+                run.validate_events([verification, done], action, "D", "mixed", full)
 
     def test_telemetry_pf_exiting_requires_same_sample_owned_identity(self):
         pid = 1871853
@@ -190,8 +190,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(plan["time_limit_policy"]["mode"], "unlimited")
         self.assertTrue(plan["time_limit_policy"]["explicit_no_time_limits"])
         self.assertEqual(plan["time_limit_policy"]["per_driver_timeout_mode"], "inactivity")
-        self.assertEqual(len(plan["core"]), 120)
-        self.assertEqual(len(plan["specials"]), 21)
+        self.assertEqual(len(plan["core"]), 63)
+        self.assertEqual(len(plan["specials"]), 9)
         with tempfile.TemporaryDirectory() as temp:
             experiment = object.__new__(run.Experiment)
             experiment.output = Path(temp)
@@ -242,7 +242,7 @@ class ContractTests(unittest.TestCase):
                 run.strict_json(value)
 
     def test_unknown_and_old_protocol_rejected(self):
-        for protocol in ("metabypass-quick-v1", "node_v1", None):
+        for protocol in ("metabypass-native-perf-v1", "node_v1", None):
             with self.assertRaises(ValueError):
                 summary.summarize({"protocol": protocol})
 
@@ -250,13 +250,13 @@ class ContractTests(unittest.TestCase):
         done = event("done", status="pass", variant="D", action="verify", workload="insert")
         run.validate_events([done], "verify", "D", "insert")
         for events in ([], [done, done], [{**done, "status": "failed"}],
-                       [{**done, "protocol": "metabypass-quick-v1"}],
+                       [{**done, "protocol": "metabypass-native-perf-v1"}],
                        [{**done, "variant": "U"}], [done, event("error", message="broken")]):
             with self.assertRaises(run.RunFailure):
                 run.validate_events(events, "verify", "D", "insert")
 
     def test_natural_success_without_requested_crash_gate_is_not_pass(self):
-        done = event("done", status="pass", variant="S", action="crashwrite", workload="overwrite")
+        done = event("done", status="pass", variant="D", action="crashwrite", workload="overwrite")
         for events, injected, exit_code in (([done], False, 0),
                                            ([event("ready", stage="write")], True, -9),
                                            ([event("ready", stage="publish")], False, 0)):
@@ -264,13 +264,13 @@ class ContractTests(unittest.TestCase):
                 run.validate_crash_boundary(events, "publish", injected, exit_code)
         run.validate_crash_boundary([event("ready", stage="publish")], "publish", True, -9)
 
-    def test_warmup_not_measured_and_gc_has_three_generations(self):
+    def test_warmup_not_measured_and_multiple_foreground_events_rejected(self):
         base = sample()["driver"]["events"][0]
         warmup = {**base, "name": "warmup", "ops": 1, "hist_us": [[1000, 1]]}
         done = event("done", status="pass", variant="D", action="run", workload="insert")
         run.validate_events([warmup, base, done], "run", "D", "insert")
-        gc_done = {**done, "workload": "gc"}
-        run.validate_events([base, base, base, gc_done], "run", "D", "gc")
+        with self.assertRaises(run.RunFailure):
+            run.validate_events([base, base, done], "run", "D", "insert")
         row = sample()
         row["driver"]["events"].insert(0, warmup)
         self.assertEqual(summary.row_metrics(row)["p99_us"], 1)
@@ -283,22 +283,22 @@ class ContractTests(unittest.TestCase):
                 summary.histogram_percentile(histogram, .99)
 
     def test_failed_samples_never_enter_statistics_or_repair_rounds(self):
-        rows = [sample("D", n, 80) for n in (1, 2, 3)] + [sample("B", n, 100) for n in (1, 2, 3)]
+        rows = [sample("D", n, 80) for n in (1, 2, 3)] + [sample("U", n, 100) for n in (1, 2, 3)]
         rows[1].update(valid=False, status="failed")
         replacement = sample("D", 2, 10000)
         replacement["phase"] = "retest"
         rows.append(replacement)
         result = summary.summarize({"protocol": run.PROTOCOL, "profile": "formal", "state": "incomplete", "runs": rows})
-        comparison = next(row for row in result["comparisons"] if row["candidate"] == "D" and row["reference"] == "B")
+        comparison = next(row for row in result["comparisons"] if row["candidate"] == "D" and row["reference"] == "U")
         self.assertFalse(comparison["complete"])
         self.assertEqual(comparison["paired_rounds"], [1, 3])
         self.assertEqual(len(result["omitted"]), 1)
 
     def test_paired_round_ratios_not_ratio_of_medians(self):
         rows = [sample("D", n, value) for n, value in enumerate((1, 100, 100), 1)]
-        rows += [sample("B", n, value) for n, value in enumerate((1, 10000, 100), 1)]
+        rows += [sample("U", n, value) for n, value in enumerate((1, 10000, 100), 1)]
         result = summary.summarize({"protocol": run.PROTOCOL, "profile": "formal", "runs": rows})
-        comparison = next(row for row in result["comparisons"] if row["candidate"] == "D" and row["reference"] == "B")
+        comparison = next(row for row in result["comparisons"] if row["candidate"] == "D" and row["reference"] == "U")
         self.assertEqual(comparison["degradation"]["ops_per_sec"]["median"], 0)
         self.assertTrue(result["ranking_allowed"])
         blocked = summary.summarize({"protocol": run.PROTOCOL, "profile": "formal", "runs": rows,
@@ -307,23 +307,22 @@ class ContractTests(unittest.TestCase):
 
     def test_matrix_freezes_counts_rotates_groups_and_preserves_sizes(self):
         rows = run.matrix("formal", 786432, 256)
-        self.assertEqual(len(rows), 120)
+        self.assertEqual(len(rows), 63)
         for scenario in ("insert-1k-1t", "insert-1k-4t", "insert-4k-1t"):
             selected = [row for row in rows if row["scenario"] == scenario]
             self.assertEqual({row["keys"] * row["value_size"] for row in selected}, {768 * run.MIB})
             for n in (1, 2, 3):
                 group_order = [row["group"] for row in selected if row["round"] == n]
-                self.assertEqual(group_order[0], run.GROUPS[n - 1])
+                self.assertEqual(group_order[0], run.GROUPS[(n - 1) % len(run.GROUPS)])
         reads = [row for row in rows if row.get("static")]
         self.assertEqual({row["keys"] for row in reads}, {12 * run.GIB // 1024})
         concurrent = [row for row in rows if row["scenario"] == "randomread-4t"]
-        self.assertEqual({row["group"] for row in concurrent}, {"U", "B", "S"})
+        self.assertEqual({row["group"] for row in concurrent}, {"U", "D"})
         specials = run.special_matrix()
-        self.assertEqual(len(specials), 21)
-        for row in specials:
-            if row["workload"] == "gc":
-                self.assertEqual(row["ops"], row["keys"])
-                self.assertEqual(row.get("seconds", 0), 0)
+        self.assertEqual(len(specials), 9)
+        self.assertEqual({row["group"] for row in specials}, {"D"})
+        self.assertEqual({row["workload"] for row in specials}, {"sst"})
+        self.assertEqual({row["sst_mode"] for row in specials}, {"disabled", "observe", "adaptive"})
 
     def test_owned_boundary_cannot_reuse_or_escape_or_follow_symlink(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -354,14 +353,16 @@ class ContractTests(unittest.TestCase):
             for path in (experiment.ssd, experiment.hdd, experiment.output):
                 path.mkdir()
             experiment.run_id = "test"
-            paths = experiment.paths("test")
-            for key in ("index", "data", "backup", "staging"):
-                self.assertEqual(list(paths[key].iterdir()), [])
-                self.assertTrue((paths[key].parent / run.OWNER).is_file())
-            experiment.remove_data(paths)
+            for group, expected in (("U", {"index"}), ("D", {"index", "backup"})):
+                paths = experiment.paths("test-" + group, group)
+                self.assertEqual(set(paths), expected | {"state"})
+                for key in expected:
+                    self.assertEqual(list(paths[key].iterdir()), [])
+                    self.assertTrue((paths[key].parent / run.OWNER).is_file())
+                experiment.remove_data(paths)
 
     def test_special_restores_before_cleanup_and_core_does_not_restore(self):
-        for stage, workload in (("specials", "gc"), ("core", "overwrite")):
+        for stage, workload in (("specials", "sst"), ("core", "overwrite")):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 experiment = object.__new__(run.Experiment)
@@ -377,8 +378,9 @@ class ContractTests(unittest.TestCase):
                 stats = event("stats", flushes=3, compactions=1, wal_bytes=1024,
                               flush_data_bytes=1024, compaction_output_bytes=1024,
                               mirrored_wal_bytes=1024, recovery_points=1, peak_queued_bytes=1024,
-                              backpressure_micros=0, candidate_copied_bytes=1024, hdd_extents=1,
-                              peak_staging_bytes=1024, staging_spill_bytes=0, staging_backpressure_micros=0)
+                              backpressure_micros=0, candidate_copied_bytes=1024,
+                              io_index_write_bytes=1024, io_backup_write_bytes=1024,
+                              sst_sampled_reads=100, sst_observed_demotions=1)
                 def invoke(spec, paths, action, **_):
                     calls.append(action)
                     directory = experiment.output / str(len(calls))
@@ -397,8 +399,9 @@ class ContractTests(unittest.TestCase):
                     calls.append("cleanup")
                     original_cleanup(paths)
                 experiment.invoke, experiment.restore_gate, experiment.remove_data = invoke, restore, cleanup
-                spec = {"stage": stage, "scenario": "test", "round": 1, "group": "S",
-                        "workload": workload, "keys": 32, "ops": 32, "value_size": 1024, "gc": False}
+                spec = {"stage": stage, "scenario": "test", "round": 1, "group": "D",
+                        "workload": workload, "keys": 32, "ops": 32, "value_size": 1024,
+                        "sst_mode": "observe"}
                 row = experiment.sample(spec)
                 self.assertTrue(row["valid"])
                 if stage == "specials":
@@ -426,14 +429,20 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(result["logical_bytes"], 100)
             self.assertEqual(result["files"], 1)
 
-    def test_staging_quota_is_failure_and_unhit_gc_is_incomplete(self):
-        spec = {"group": "S", "workload": "gc", "stage": "specials", "staging_capacity": 1024}
-        stats = event("stats", peak_staging_bytes=1025)
-        with self.assertRaises(run.DriverFailure):
-            run.mechanism_coverage(spec, [stats])
-        result = run.mechanism_coverage({**spec, "staging_capacity": 2048}, [stats])
-        self.assertFalse(result["complete"])
-        self.assertTrue(any("reclaimed" in item for item in result["missing"]))
+    def test_sst_modes_require_their_own_demotion_counter(self):
+        stats = event("stats", flushes=1, compactions=0, wal_bytes=1024,
+                      flush_data_bytes=1024, compaction_output_bytes=0,
+                      mirrored_wal_bytes=1024, recovery_points=1, peak_queued_bytes=1024,
+                      backpressure_micros=0, candidate_copied_bytes=1024,
+                      io_index_write_bytes=1024, io_backup_write_bytes=1024,
+                      sst_sampled_reads=100, sst_demotions=1)
+        spec = {"group": "D", "workload": "sst", "stage": "specials"}
+        for mode, complete in (("disabled", True), ("adaptive", True), ("observe", False)):
+            with self.subTest(mode=mode):
+                result = run.mechanism_coverage({**spec, "sst_mode": mode}, [stats])
+                self.assertEqual(result["complete"], complete)
+                if not complete:
+                    self.assertIn("SST policy/demotion mechanism not observed", result["missing"])
 
 
 if __name__ == "__main__":

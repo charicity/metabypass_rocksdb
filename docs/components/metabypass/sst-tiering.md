@@ -1,23 +1,17 @@
-> Current writes use ordinary Integrated BlobDB and full-value WAL. Native
-> no-flush checkpoint capture supplies SST recovery roots; formats older than
-> MBN2/MBI2/MBT2 are rejected without migration. See [current design](index.md).
-
 # Whole-SST SSD/HDD tiering
 
-See the shared [migration lifecycle contract and scenario matrix](migration-lifecycle.md)
-for persistence, route switching, physical I/O draining and reclamation.
+See [SST migration lifetimes](migration-lifecycle.md) for persistence, route
+switching, physical I/O draining, and reclamation.
 
 Metabypass can place complete immutable index SST files in a fast index
 directory or in the backup directory's `sst-store`. The cold store holds the
 same protected SST content used for online reads and published recovery points.
-The ordinary RocksDB compaction policy, blob placement, blob reference checks,
-and point-publication protocol still govern their respective work. Blob garbage
-collection is outside this feature.
+RocksDB still controls SST creation and compaction.
 
 ## Contract and configuration
 
-`MetaBypassOptions::sst_tiering` is independent of blob staging. Its default
-`SstTieringMode::kDisabled` leaves all SSTs in the SSD index directory while
+The default `MetaBypassOptions::sst_tiering` mode,
+`SstTieringMode::kDisabled`, leaves all SSTs in the SSD index directory while
 Metabypass still protects them in the backup. `kObserveOnly` runs the tiering
 routing, sampling, decision thread, protected SST links and placement metadata,
 but records migration intentions without moving SSTs. Its overhead is the
@@ -57,7 +51,6 @@ This recommendation does not establish a stable latency sweet spot.
 // Fixed full-SSD logical SST baseline: 1 GiB, measured before tiering.
 constexpr uint64_t baseline_sst_bytes = 1ULL << 30;
 rocksdb::MetaBypassOptions bypass;
-bypass.data_dir = "/experiment/hdd/data";
 bypass.backup_dir = "/experiment/hdd/backup";
 bypass.sst_tiering.mode = rocksdb::SstTieringMode::kAdaptive;
 // floor(baseline * 80 / 100), without overflowing baseline * 80.
@@ -84,9 +77,8 @@ published `point-*` and `sst-store`; hardlinks are not extra physical copies.
 The feature is experimental and scoped to the C++ MetaBypass wrapper. It does
 not add a general RocksDB option, C or Java API, or an automatic layout for
 existing ordinary databases. Offline restore must use an empty or marked
-retry destination and the same durable data and backup directories. The data
-and backup directories must outlive loss of the SSD index. Local directory
-deletion tests do not establish power-failure durability of a real device.
+retry destination and the same durable backup directory. The backup directory
+must outlive loss of the SSD index. Local directory deletion tests do not establish power-failure durability of a real device.
 An existing tiered library with placement metadata cannot be silently reopened
 in disabled mode. Observe mode can still read cold files left by an earlier
 adaptive run.

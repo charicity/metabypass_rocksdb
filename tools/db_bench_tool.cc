@@ -103,7 +103,6 @@
 #include "utilities/merge_operators.h"
 #include "utilities/merge_operators/bytesxor.h"
 #include "utilities/merge_operators/sortlist.h"
-#include "utilities/metabypass/separated_storage.h"
 #include "utilities/persistent_cache/block_cache_tier.h"
 #include "utilities/trie_index/trie_index_factory.h"
 #ifdef MEMKIND
@@ -1118,27 +1117,32 @@ DEFINE_bool(fifo_compaction_use_kv_ratio_compaction, false,
             "Enable capacity-derived intra-L0 compaction for FIFO with "
             "BlobDB. Requires fifo_compaction_max_data_files_size_mb > 0.");
 
-// Stacked BlobDB Options
+// Standalone Metabypass options
 DEFINE_string(
     metabypass_mode, "",
-    "Standalone Metabypass benchmark: write, baseline, restore, verify. "
+    "Standalone Metabypass benchmark: write, baseline, restore, verify, "
+    "sst_tiering. "
     "Uses --db, --num, --value_size, --sync and the metabypass flags.");
-DEFINE_string(metabypass_data_dir, "", "Separate retained blob directory");
-DEFINE_string(metabypass_staging_dir, "",
-              "Optional fast blob staging directory");
-DEFINE_uint64(metabypass_staging_capacity, 0,
-              "Required tiered staging byte budget");
 DEFINE_uint64(metabypass_slow_write_delay_us, 0,
               "Benchmark-only delay per slow writable-file append/sync call");
 DEFINE_string(metabypass_backup_dir, "", "Native index backup directory");
-DEFINE_uint64(metabypass_queue_capacity, 64 * 1024 * 1024,
-              "Pending event bytes");
-DEFINE_uint64(metabypass_batch_bytes, 256 * 1024, "Background trigger bytes");
-DEFINE_uint64(metabypass_interval_ms, 1000, "Mirror trigger interval");
-DEFINE_uint64(
-    metabypass_checkpoint_interval_ms, 5000,
-    "Recovery point trigger interval, independent of mirror interval");
-DEFINE_bool(metabypass_blob_file_gc, true, "Reclaim obsolete whole blob files");
+DEFINE_uint64(metabypass_wal_queue_capacity,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.wal_queue_capacity,
+              "WAL queue budget in bytes");
+DEFINE_uint64(metabypass_metadata_queue_capacity,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.metadata_queue_capacity,
+              "Metadata queue budget in bytes");
+DEFINE_uint64(metabypass_batch_bytes,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.batch_bytes,
+              "Background trigger bytes across both queues");
+DEFINE_uint64(metabypass_interval_ms,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.interval_ms,
+              "Mirror trigger interval in milliseconds");
+DEFINE_uint64(metabypass_checkpoint_interval_ms,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.checkpoint_interval_ms,
+              "Recovery point trigger interval in milliseconds");
+DEFINE_bool(metabypass_recovery_time_sampling, true,
+            "Sample PROGRESS and estimate recovery time bounds");
 DEFINE_string(metabypass_sst_action, "legacy",
               "SST protocol: legacy, seed, run, rpo_write, rpo_restore");
 DEFINE_uint64(metabypass_sst_warmup_seconds, 60,
@@ -1194,6 +1198,7 @@ DEFINE_uint64(
     metabypass_sst_target_ops_per_sec, 10000,
     "Maximum offered SST workload operations per second; 0 unlimited");
 
+// Stacked BlobDB Options
 DEFINE_bool(use_blob_db, false, "[Stacked BlobDB] Open a BlobDB instance.");
 
 DEFINE_bool(
@@ -11104,13 +11109,10 @@ class MetaBypassDelayedFS : public FileSystemWrapper {
     uint64_t delay_;
   };
   void Wrap(const std::string& p, std::unique_ptr<FSWritableFile>* f) {
-    for (const auto& dir :
-         {FLAGS_metabypass_data_dir, FLAGS_metabypass_backup_dir}) {
-      if (!dir.empty() && p.compare(0, dir.size() + 1, dir + "/") == 0) {
-        f->reset(new MetaBypassDelayedFile(
-            std::move(*f), FLAGS_metabypass_slow_write_delay_us));
-        break;
-      }
+    const auto& dir = FLAGS_metabypass_backup_dir;
+    if (!dir.empty() && p.compare(0, dir.size() + 1, dir + "/") == 0) {
+      f->reset(new MetaBypassDelayedFile(std::move(*f),
+                                         FLAGS_metabypass_slow_write_delay_us));
     }
   }
 };
@@ -11249,7 +11251,7 @@ static int RunMetaBypassNodeSst(Options options,
   const uint64_t key_count = lossless_cast<uint64_t>(FLAGS_num);
   const std::string marker = "!mb_rpo_marker!!";
   printf(
-      "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"histogram_schema\","
+      "MB_SST_JSON {\"protocol\":\"node_v2\",\"event\":\"histogram_schema\","
       "\"quantiles\":\"bucket_upper_bound\",\"upper_bounds_us\":[");
   for (unsigned i = 0; i < MetaBypassNodeHistogram::kBuckets; ++i)
     printf("%s%" PRIu64, i ? "," : "", MetaBypassNodeHistogram::Upper(i));
@@ -11304,11 +11306,6 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(t, copied_bytes);
     MB_NODE_FIELD(t, reused_links);
     MB_NODE_FIELD(t, over_budget_micros);
-    MB_NODE_FIELD(b, staging_bytes);
-    MB_NODE_FIELD(b, peak_staging_bytes);
-    MB_NODE_FIELD(b, pending_blob_bytes);
-    MB_NODE_FIELD(b, migrated_blob_bytes);
-    MB_NODE_FIELD(b, staging_backpressure_micros);
     MB_NODE_FIELD(b, sync_write_micros);
     MB_NODE_FIELD(b, queued_bytes);
     MB_NODE_FIELD(b, peak_queued_bytes);
@@ -11317,11 +11314,6 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, mirrored_wal_bytes);
     MB_NODE_FIELD(b, recovery_points);
     MB_NODE_FIELD(b, checkpoint_wait_micros);
-    MB_NODE_FIELD(b, staging_spill_files);
-    MB_NODE_FIELD(b, staging_spill_bytes);
-    MB_NODE_FIELD(b, tier_queued_bytes);
-    MB_NODE_FIELD(b, peak_tier_queued_bytes);
-    MB_NODE_FIELD(b, hdd_extents);
     MB_NODE_FIELD(b, last_publish_micros);
     MB_NODE_FIELD(b, last_build_micros);
     MB_NODE_FIELD(b, last_point_lag_micros);
@@ -11329,14 +11321,12 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, pending_gc_points);
     MB_NODE_FIELD(b, pending_gc_bytes);
     MB_NODE_FIELD(b, gc_micros);
-    MB_NODE_FIELD(b, pending_blob_gc_files);
-    MB_NODE_FIELD(b, pending_blob_gc_bytes);
-    MB_NODE_FIELD(b, reclaimed_blob_files);
-    MB_NODE_FIELD(b, reclaimed_blob_bytes);
-    MB_NODE_FIELD(b, blob_gc_micros);
     MB_NODE_FIELD(b, candidate_copied_bytes);
 #undef MB_NODE_FIELD
-    field("queue_capacity", bypass.queue_capacity);
+    field("wal_queue_capacity", bypass.wal_queue_capacity);
+    field("metadata_queue_capacity", bypass.metadata_queue_capacity);
+    field("queue_capacity",
+          bypass.wal_queue_capacity + bypass.metadata_queue_capacity);
     field("batch_bytes", bypass.batch_bytes);
     field("interval_ms", bypass.interval_ms);
     field("ssd_capacity_bytes", bypass.sst_tiering.ssd_capacity_bytes);
@@ -11376,7 +11366,7 @@ static int RunMetaBypassNodeSst(Options options,
     }
     if (s.ok() && action == "rpo_restore") {
       printf(
-          "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"recovered\","
+          "MB_SST_JSON {\"protocol\":\"node_v2\",\"event\":\"recovered\","
           "\"recovered_marker\":%" PRIu64 ",\"rto_us\":%" PRIu64
           ",\"steady_time_us\":%" PRIu64 "}\n",
           sequence, MetaBypassNodeNow() - open_start, MetaBypassNodeNow());
@@ -11401,7 +11391,7 @@ static int RunMetaBypassNodeSst(Options options,
   };
   if (s.ok() && action != "seed") {
     printf(
-        "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"ready\","
+        "MB_SST_JSON {\"protocol\":\"node_v2\",\"event\":\"ready\","
         "\"action\":\"%s\",\"steady_time_us\":%" PRIu64 "}\n",
         action.c_str(), MetaBypassNodeNow());
     fflush(stdout);
@@ -11418,7 +11408,7 @@ static int RunMetaBypassNodeSst(Options options,
                     const MetaBypassNodeOperations& operations, uint64_t start,
                     uint64_t now) {
       printf(
-          "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"%s\","
+          "MB_SST_JSON {\"protocol\":\"node_v2\",\"event\":\"%s\","
           "\"phase\":\"%s\",\"window\":%" PRIu64 ",\"elapsed_us\":%" PRIu64
           ",\"phase_elapsed_us\":%" PRIu64 ",\"steady_time_us\":%" PRIu64
           ",\"target_ops_per_sec\":%" PRIu64,
@@ -11461,7 +11451,7 @@ static int RunMetaBypassNodeSst(Options options,
         switched = true;
         printf(
             "MB_SST_JSON "
-            "{\"protocol\":\"node_v1\",\"event\":\"hotspot_switch\","
+            "{\"protocol\":\"node_v2\",\"event\":\"hotspot_switch\","
             "\"elapsed_us\":%" PRIu64 "}\n",
             now - begin);
         fflush(stdout);
@@ -11500,7 +11490,7 @@ static int RunMetaBypassNodeSst(Options options,
         if (s.ok()) {
           ++sequence;
           printf(
-              "MB_SST_JSON {\"protocol\":\"node_v1\",\"event\":\"ack\","
+              "MB_SST_JSON {\"protocol\":\"node_v2\",\"event\":\"ack\","
               "\"seq\":%" PRIu64 ",\"steady_time_us\":%" PRIu64
               ",\"business_bytes\":%" PRIu64 "}\n",
               sequence, MetaBypassNodeNow(), uint64_t{16} + FLAGS_value_size);
@@ -11569,7 +11559,7 @@ static int RunMetaBypassNodeSst(Options options,
   s.UpdateIfOk(close);
   printf(
       "MB_SST_JSON "
-      "{\"protocol\":\"node_v1\",\"event\":\"summary\",\"action\":\"%s\"",
+      "{\"protocol\":\"node_v2\",\"event\":\"summary\",\"action\":\"%s\"",
       action.c_str());
   stats();
   printf(",\"ok\":%s}\n", s.ok() ? "true" : "false");
@@ -11979,6 +11969,11 @@ static int RunMetaBypassSstBenchmark(const Options& base_options,
 }
 
 static int RunMetaBypassBenchmark() {
+  if (FLAGS_use_blob_db || FLAGS_enable_blob_files ||
+      FLAGS_enable_blob_direct_write || FLAGS_enable_blob_garbage_collection) {
+    fprintf(stderr, "Metabypass benchmarks require inline values\n");
+    return 1;
+  }
   Options options;
   std::unique_ptr<Env> delayed_env;
   if (FLAGS_metabypass_slow_write_delay_us != 0 ||
@@ -11988,28 +11983,34 @@ static int RunMetaBypassBenchmark() {
   }
   options.env = delayed_env ? delayed_env.get() : FLAGS_env;
   options.create_if_missing = true;
-  options.enable_blob_files = true;
-  options.enable_blob_direct_write = FLAGS_enable_blob_direct_write;
   options.allow_concurrent_memtable_write =
       FLAGS_allow_concurrent_memtable_write;
-  options.min_blob_size = 0;
   options.compression = kNoCompression;
   MetaBypassOptions bypass;
-  bypass.data_dir = FLAGS_metabypass_data_dir;
-  bypass.staging_dir = FLAGS_metabypass_staging_dir;
-  bypass.staging_capacity = FLAGS_metabypass_staging_capacity;
   bypass.backup_dir = FLAGS_metabypass_backup_dir;
-  bypass.queue_capacity = FLAGS_metabypass_queue_capacity;
+  const size_t max_size = std::numeric_limits<size_t>::max();
+  if (FLAGS_metabypass_wal_queue_capacity > max_size ||
+      FLAGS_metabypass_metadata_queue_capacity > max_size ||
+      FLAGS_metabypass_batch_bytes > max_size) {
+    fprintf(stderr, "Metabypass queue size exceeds size_t\n");
+    return 1;
+  }
+  bypass.wal_queue_capacity = FLAGS_metabypass_wal_queue_capacity;
+  bypass.metadata_queue_capacity = FLAGS_metabypass_metadata_queue_capacity;
   bypass.batch_bytes = FLAGS_metabypass_batch_bytes;
   bypass.interval_ms = FLAGS_metabypass_interval_ms;
   bypass.checkpoint_interval_ms = FLAGS_metabypass_checkpoint_interval_ms;
-  bypass.enable_blob_file_gc = FLAGS_metabypass_blob_file_gc;
+  bypass.enable_recovery_time_sampling =
+      FLAGS_metabypass_recovery_time_sampling;
   printf(
-      "metabypass effective_options enable_blob_direct_write=%d"
-      " allow_concurrent_memtable_write=%d mirror_interval_ms=%" PRIu64
-      " checkpoint_interval_ms=%" PRIu64 " sync=%d\n",
-      options.enable_blob_direct_write, options.allow_concurrent_memtable_write,
-      bypass.interval_ms, bypass.checkpoint_interval_ms, FLAGS_sync);
+      "metabypass effective_options allow_concurrent_memtable_write=%d"
+      " mirror_interval_ms=%" PRIu64 " checkpoint_interval_ms=%" PRIu64
+      " recovery_time_sampling=%d sync=%d"
+      " wal_queue_capacity=%zu metadata_queue_capacity=%zu batch_bytes=%zu\n",
+      options.allow_concurrent_memtable_write, bypass.interval_ms,
+      bypass.checkpoint_interval_ms, bypass.enable_recovery_time_sampling,
+      FLAGS_sync, bypass.wal_queue_capacity, bypass.metadata_queue_capacity,
+      bypass.batch_bytes);
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();
@@ -12035,27 +12036,11 @@ static int RunMetaBypassBenchmark() {
     return 1;
   }
   Status s;
-  std::shared_ptr<metabypass::SeparatedStorage> storage;
-  std::unique_ptr<Env> env;
   std::unique_ptr<DB> raw;
   std::unique_ptr<MetaBypassDB> db;
   if (baseline) {
     options.error_if_exists = true;
-    storage = std::make_shared<metabypass::SeparatedStorage>(
-        options.env->GetFileSystem(), FLAGS_db, bypass.data_dir);
-    s = storage->Lock();
-    std::vector<std::string> children;
-    if (s.ok())
-      s = FLAGS_env->GetFileSystem()->GetChildren(bypass.data_dir, IOOptions(),
-                                                  &children, nullptr);
-    for (const auto& child : children) {
-      if (child != "." && child != ".." && child != "METABYPASS-LOCK")
-        s = Status::InvalidArgument(
-            "baseline requires an empty data directory");
-    }
-    env = NewCompositeEnv(storage);
-    options.env = env.get();
-    if (s.ok()) s = DB::Open(options, FLAGS_db, &raw);
+    s = DB::Open(options, FLAGS_db, &raw);
   } else {
     options.error_if_exists = !verify;
     s = MetaBypassDB::Open(options, bypass, FLAGS_db, &db);
@@ -12083,7 +12068,6 @@ static int RunMetaBypassBenchmark() {
   const uint64_t p99 =
       latencies.empty() ? 0 : latencies[(latencies.size() - 1) * 99 / 100];
   const uint64_t flush_start = clock->NowMicros();
-  // Exercise ordinary BlobDB flush and HDD spill separately from WAL writes.
   if (s.ok() && !verify)
     s = baseline ? raw->Flush(FlushOptions()) : db->Flush(FlushOptions());
   const uint64_t flush_us = clock->NowMicros() - flush_start;
@@ -12103,39 +12087,22 @@ static int RunMetaBypassBenchmark() {
          " mirrored_bytes=%" PRIu64 " mirrored_wal_bytes=%" PRIu64
          " retained_index_bytes=%" PRIu64 " checkpoint_wait_us=%" PRIu64
          " pending_gc_points=%" PRIu64 " pending_gc_bytes=%" PRIu64
-         " gc_micros=%" PRIu64 " pending_blob_gc_files=%" PRIu64
-         " pending_blob_gc_bytes=%" PRIu64 " reclaimed_blob_files=%" PRIu64
-         " reclaimed_blob_bytes=%" PRIu64 " blob_gc_micros=%" PRIu64
-         " candidate_copied_bytes=%" PRIu64 " status=%s\n",
+         " gc_micros=%" PRIu64 " candidate_copied_bytes=%" PRIu64
+         " status=%s\n",
          FLAGS_metabypass_mode.c_str(), FLAGS_num, foreground, flush_us,
          sync_us, close_us, stats.backpressure_micros, stats.last_build_micros,
          stats.last_point_lag_micros, stats.peak_queued_bytes,
          stats.mirrored_bytes, stats.mirrored_wal_bytes,
          stats.retained_index_bytes, stats.checkpoint_wait_micros,
          stats.pending_gc_points, stats.pending_gc_bytes, stats.gc_micros,
-         stats.pending_blob_gc_files, stats.pending_blob_gc_bytes,
-         stats.reclaimed_blob_files, stats.reclaimed_blob_bytes,
-         stats.blob_gc_micros, stats.candidate_copied_bytes,
-         s.ToString().c_str());
+         stats.candidate_copied_bytes, s.ToString().c_str());
   printf("metabypass checkpoint_captures=%" PRIu64
-         " checkpoint_capture_us=%" PRIu64 " checkpoint_flush_us=%" PRIu64
-         " checkpoint_persist_us=%" PRIu64 " checkpoint_publish_us=%" PRIu64
+         " checkpoint_capture_us=%" PRIu64 " checkpoint_publish_us=%" PRIu64
          "\n",
          stats.checkpoint_captures, stats.checkpoint_capture_micros,
-         stats.checkpoint_flush_micros, stats.checkpoint_persist_micros,
          stats.checkpoint_publish_micros);
-  printf("metabypass tiered=%d p99_us=%" PRIu64 " staging_bytes=%" PRIu64
-         " staging_peak=%" PRIu64 " migrated_blob_bytes=%" PRIu64
-         " pending_blob_bytes=%" PRIu64 " staging_wait_us=%" PRIu64
-         " sync_write_us=%" PRIu64 " staging_spill_files=%" PRIu64
-         " staging_spill_bytes=%" PRIu64 " tier_queued_bytes=%" PRIu64
-         " peak_tier_queued_bytes=%" PRIu64 " hdd_extents=%" PRIu64 "\n",
-         !bypass.staging_dir.empty(), p99, stats.staging_bytes,
-         stats.peak_staging_bytes, stats.migrated_blob_bytes,
-         stats.pending_blob_bytes, stats.staging_backpressure_micros,
-         stats.sync_write_micros, stats.staging_spill_files,
-         stats.staging_spill_bytes, stats.tier_queued_bytes,
-         stats.peak_tier_queued_bytes, stats.hdd_extents);
+  printf("metabypass p99_us=%" PRIu64 " sync_write_us=%" PRIu64 "\n", p99,
+         stats.sync_write_micros);
   return s.ok() ? 0 : 1;
 }
 

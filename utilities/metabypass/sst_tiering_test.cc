@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <set>
 #include <thread>
 
 #include "file/filename.h"
@@ -28,12 +29,31 @@ class SstFaultFileSystem : public FileSystemWrapper {
       : FileSystemWrapper(std::move(fs)) {}
   const char* Name() const override { return "SstFaultFileSystem"; }
   bool no_links = false, no_space = false;
+  bool link_no_space = false;
+  std::string fail_before_delete;
+  std::set<std::string> fail_after_delete;
   std::atomic<uint64_t> placement_writes{0};
   std::atomic<uint64_t> placement_renames{0};
   IOStatus LinkFile(const std::string& a, const std::string& b,
                     const IOOptions& o, IODebugContext* d) override {
+    if (link_no_space) return IOStatus::NoSpace("injected hardlink failure");
     if (no_links) return IOStatus::NotSupported("injected no hardlinks");
     return target()->LinkFile(a, b, o, d);
+  }
+  IOStatus DeleteFile(const std::string& path, const IOOptions& o,
+                      IODebugContext* d) override {
+    if (path == fail_before_delete) {
+      fail_before_delete.clear();
+      return IOStatus::IOError("injected failure before unlink", path);
+    }
+    IOStatus s = target()->DeleteFile(path, o, d);
+    if (s.ok() && fail_after_delete.count(path)) {
+      IOStatus error = IOStatus::IOError("injected delete failure", path);
+      error.SetRetryable(true);
+      error.SetScope(IOStatus::kIOErrorScopeFile);
+      return error;
+    }
+    return s;
   }
   IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
                            std::unique_ptr<FSWritableFile>* result,
@@ -103,10 +123,13 @@ class SstStorageTest : public testing::Test {
   void Add(uint64_t number, const std::string& data, bool protect = true) {
     ASSERT_OK(Write(fs_.get(), MakeTableFileName(index_, number), data));
     if (protect) {
-      ASSERT_OK(Write(fs_.get(), MakeTableFileName(point_, number), data));
-      NativeState state;
-      state.tables[number] = data.size();
-      ASSERT_OK(storage_->Protect(point_, state));
+      LiveFileStorageInfo table;
+      table.relative_filename = MakeTableFileName(number);
+      table.file_type = kTableFile;
+      table.file_number = number;
+      table.size = data.size();
+      ASSERT_OK(Write(fs_.get(), point_ + "/" + table.relative_filename, data));
+      ASSERT_OK(storage_->Protect(point_, {table}));
     }
   }
   void Move(uint64_t number, bool hot) {
@@ -465,6 +488,115 @@ TEST_F(SstStorageTest, HardlinkFallbackNoSpaceAndChecksumFailure) {
   ASSERT_TRUE(
       fs_->FileExists(MakeTableFileName(index_, 3), IOOptions(), nullptr)
           .IsNotFound());
+}
+TEST_F(SstStorageTest, HardlinkIoErrorDoesNotFallBackToCopy) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  Open();
+  const auto source = MakeTableFileName(point_, 1);
+  ASSERT_OK(Write(fs_.get(), source, "table"));
+  fault->link_no_space = true;
+  ASSERT_TRUE(storage_->RestoreTables({{source, 1, 5}}).IsNoSpace());
+  ASSERT_FALSE(HasEntry(1));
+  ASSERT_EQ(Stats().copied_bytes, 0U);
+  ASSERT_EQ(fault->placement_writes.load(), 0U);
+}
+TEST_F(SstStorageTest, DeleteIoErrorPropagatesAfterFileDisappears) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  Open();
+  const std::string data = "table";
+  const auto local = MakeTableFileName(index_, 1);
+  for (bool fail_object : {false, true}) {
+    SCOPED_TRACE(fail_object);
+    Add(1, data);
+    const auto object = Object(1);
+    auto reader = Reader(1);
+    ASSERT_NE(reader, nullptr);
+    fault->fail_after_delete = {local};
+    if (fail_object) fault->fail_after_delete.insert(object);
+    IOStatus deleted = storage_->DeleteFile(local, IOOptions(), nullptr);
+    ASSERT_TRUE(deleted.IsIOError());
+    ASSERT_EQ(deleted.ToString(),
+              IOStatus::IOError("injected delete failure",
+                                fail_object ? object : local)
+                  .ToString());
+    ASSERT_TRUE(deleted.GetRetryable());
+    ASSERT_EQ(deleted.GetScope(), IOStatus::kIOErrorScopeFile);
+    ASSERT_TRUE(fs_->FileExists(object, IOOptions(), nullptr).IsNotFound());
+    ASSERT_TRUE(fs_->FileExists(local, IOOptions(), nullptr).IsNotFound());
+    ASSERT_EQ(Stats().pending_delete_bytes, data.size());
+    Check(reader.get(), data);
+    Reap();
+    ASSERT_EQ(Stats().pending_delete_bytes, data.size());
+    reader.reset();
+    Reap();
+    ASSERT_EQ(Stats().pending_delete_bytes, 0U);
+  }
+}
+TEST_F(SstStorageTest, FailedUnlinkRemainsChargedWithoutRediscovery) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  Open();
+  const std::string data = "table";
+  const auto local = MakeTableFileName(index_, 1);
+  for (bool with_reader : {false, true}) {
+    SCOPED_TRACE(with_reader);
+    Add(1, data);
+    auto reader = with_reader ? Reader(1) : nullptr;
+    if (with_reader) {
+      ASSERT_NE(reader, nullptr);
+    }
+    fault->fail_before_delete = local;
+    ASSERT_TRUE(storage_->DeleteFile(local, IOOptions(), nullptr).IsIOError());
+    ASSERT_OK(fs_->FileExists(local, IOOptions(), nullptr));
+    Tick();
+    ASSERT_FALSE(HasEntry(1));
+    ASSERT_EQ(Stats().ssd_bytes, data.size());
+    ASSERT_EQ(Stats().pending_delete_bytes, data.size());
+    std::unique_ptr<FSRandomAccessFile> reopened;
+    ASSERT_TRUE(
+        storage_->NewRandomAccessFile(local, FileOptions(), &reopened, nullptr)
+            .IsNotFound());
+    if (reader) {
+      Check(reader.get(), data);
+      Reap();
+      ASSERT_OK(fs_->FileExists(local, IOOptions(), nullptr));
+      reader.reset();
+    }
+    fault->fail_before_delete = local;
+    Reap();
+    ASSERT_OK(fs_->FileExists(local, IOOptions(), nullptr));
+    Tick();
+    ASSERT_FALSE(HasEntry(1));
+    ASSERT_EQ(Stats().ssd_bytes, data.size());
+    Reap();
+    ASSERT_TRUE(fs_->FileExists(local, IOOptions(), nullptr).IsNotFound());
+    Tick();
+    ASSERT_FALSE(HasEntry(1));
+    ASSERT_EQ(Stats().pending_delete_bytes, 0U);
+    ASSERT_EQ(Stats().ssd_bytes, 0U);
+  }
+}
+TEST_F(SstStorageTest, FailedUnlinkReusesDemotionCleanup) {
+  auto fault = std::make_shared<SstFaultFileSystem>(fs_);
+  fs_ = fault;
+  Open();
+  const std::string data = "table";
+  const auto local = MakeTableFileName(index_, 1);
+  Add(1, data);
+  ASSERT_OK(TryDemote(1));
+  ASSERT_EQ(Stats().pending_delete_bytes, data.size());
+  fault->fail_before_delete = local;
+  ASSERT_TRUE(storage_->DeleteFile(local, IOOptions(), nullptr).IsIOError());
+  ASSERT_OK(fs_->FileExists(local, IOOptions(), nullptr));
+  Tick();
+  ASSERT_FALSE(HasEntry(1));
+  ASSERT_EQ(Stats().ssd_bytes, data.size());
+  ASSERT_EQ(Stats().pending_delete_bytes, data.size());
+  Reap();
+  ASSERT_TRUE(fs_->FileExists(local, IOOptions(), nullptr).IsNotFound());
+  ASSERT_EQ(Stats().pending_delete_bytes, 0U);
 }
 TEST_F(SstStorageTest, FailedInstalledPromotionRemainsChargedUntilSafeCleanup) {
   for (const auto& stage :

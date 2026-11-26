@@ -288,11 +288,11 @@ class NodeTest(unittest.TestCase):
         trial_hdd = self.hdd / "trial"
         trial_ssd.mkdir()
         trial_hdd.mkdir()
-        (trial_hdd / "active.blob").write_bytes(b"x" * 8192)
-        (self.hdd / "seed.blob").write_bytes(b"x" * 16384)
+        (trial_hdd / "active.sst").write_bytes(b"x" * 8192)
+        (self.hdd / "seed.sst").write_bytes(b"x" * 16384)
         result = RUN.space_snapshot(trial_ssd, trial_hdd, self.hdd, self.ssd)
-        self.assertEqual(8192, result["logical_bytes"]["hdd_blob"])
-        self.assertEqual(24576, result["run_scope"]["logical_bytes"]["hdd_blob"])
+        self.assertEqual(8192, result["logical_bytes"]["hdd_sst"])
+        self.assertEqual(24576, result["run_scope"]["logical_bytes"]["hdd_sst"])
 
     def test_phase_validation_rejects_truncated_and_bad_histogram(self):
         buckets = [1] + [0] * 192
@@ -417,7 +417,11 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(str(96 * 1024 * 1024), (cg / "memory.limit_in_bytes").read_text())
         runner.keys = 1000000
         command = runner.command("run", (runner.ssd, runner.hdd))
-        self.assertIn("--metabypass_queue_capacity=2097152", command)
+        self.assertIn("--metabypass_wal_queue_capacity=1835008", command)
+        self.assertIn("--metabypass_metadata_queue_capacity=262144", command)
+        self.assertIn("--metabypass_batch_bytes=262144", command)
+        self.assertIn("--metabypass_interval_ms=1000", command)
+        self.assertIn("--metabypass_checkpoint_interval_ms=5000", command)
         self.assertIn("--metabypass_sst_warmup_seconds=30", command)
         self.assertIn("--metabypass_sst_measure_seconds=60", command)
         self.assertIn("--metabypass_sst_saturated_seconds=15", command)
@@ -451,7 +455,11 @@ class NodeTest(unittest.TestCase):
         small = RUN.PROFILES["small"]
         self.assertEqual(1000000, small["keys"])
         self.assertEqual(48 * 1024 * 1024, small["memory_bytes"])
-        self.assertEqual(2 * 1024 * 1024, small["queue_bytes"])
+        self.assertEqual(1792 * 1024, small["wal_queue_bytes"])
+        self.assertEqual(256 * 1024, small["metadata_queue_bytes"])
+        legacy = RUN.PROFILES["legacy"]
+        self.assertEqual(7 * 1024 * 1024, legacy["wal_queue_bytes"])
+        self.assertEqual(1024 * 1024, legacy["metadata_queue_bytes"])
         self.assertEqual((5400, 900, 30, 60, 15), tuple(small[k] for k in
                          ("deadline_s", "calibration_s", "warmup_s", "measured_s", "saturated_s")))
         self.assertAlmostEqual(472.086, RUN.round_forecast([
@@ -506,7 +514,9 @@ class NodeTest(unittest.TestCase):
         costs = [row["total_s"] for row in runner.report["budget_forecast"]["rpo_samples"]]
         self.assertEqual([sum(costs[i:]) for i in range(6)], [call.args[0] for call in runner.deadline.require.call_args_list[-6:]])
         bench = [cmd for _name, cmd, _kw, _end in commands if any(flag.startswith("--num=") for flag in cmd)]
-        self.assertTrue(all("--num=1000000" in cmd and "--metabypass_queue_capacity=2097152" in cmd for cmd in bench))
+        self.assertTrue(all("--num=1000000" in cmd and
+                            "--metabypass_wal_queue_capacity=1835008" in cmd and
+                            "--metabypass_metadata_queue_capacity=262144" in cmd for cmd in bench))
         self.assertTrue(all("--metabypass_sst_cache_bytes=65536" in cmd for cmd in bench))
 
     def test_partial_sample_log_retains_prior_sample_and_reports_missing(self):
@@ -657,7 +667,7 @@ class NodeTest(unittest.TestCase):
             'seen=[]\n'
             'def inspect(): seen.append(sorted(os.sched_getaffinity(0)))\n'
             'thread=threading.Thread(target=inspect); thread.start(); thread.join()\n'
-            'print("MB_SST_JSON " + json.dumps({"protocol":"node_v1","event":"summary",'
+            'print("MB_SST_JSON " + json.dumps({"protocol":"node_v2","event":"summary",'
             '"ok":True,"main_cpus":sorted(os.sched_getaffinity(0)),"thread_cpus":seen}),flush=True)\n')
         row = runner.execute("affinity", [sys.executable, str(fake)], (self.ssd, self.hdd))
         self.assertTrue(row["valid"])
@@ -724,9 +734,9 @@ class NodeTest(unittest.TestCase):
         fake = self.root / "fake.py"
         fake.write_text('import json, signal, time\n'
             'def emit(e):\n'
-            ' e["protocol"]="node_v1"; print("MB_SST_JSON " + json.dumps(e), flush=True)\n'
-            'ready={"protocol":"node_v1","event":"ready","steady_time_us":time.monotonic_ns()//1000}\n'
-            'ack={"protocol":"node_v1","event":"ack","seq":1,"steady_time_us":time.monotonic_ns()//1000,"business_bytes":1040}\n'
+            ' e["protocol"]="node_v2"; print("MB_SST_JSON " + json.dumps(e), flush=True)\n'
+            'ready={"protocol":"node_v2","event":"ready","steady_time_us":time.monotonic_ns()//1000}\n'
+            'ack={"protocol":"node_v2","event":"ack","seq":1,"steady_time_us":time.monotonic_ns()//1000,"business_bytes":1040}\n'
             'print("MB_SST_JSON "+json.dumps(ready)+"\\nMB_SST_JSON "+json.dumps(ack),flush=True)\n'
             'signal.pause()\n')
         row = runner.execute("fault", [sys.executable, str(fake)], (self.ssd, self.hdd), fault_seconds=0)

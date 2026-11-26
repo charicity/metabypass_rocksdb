@@ -28,8 +28,6 @@
 #include <thread>
 #include <vector>
 
-#include "verification_sample.h"
-
 #include "rocksdb/cache.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
@@ -38,12 +36,16 @@
 #include "rocksdb/statistics.h"
 #include "rocksdb/table.h"
 #include "rocksdb/write_batch.h"
+#include "verification_sample.h"
 #ifndef MB_UPSTREAM
 #include "rocksdb/utilities/metabypass.h"
 #endif
 using namespace ROCKSDB_NAMESPACE;
 namespace {
 using Clock = std::chrono::steady_clock;
+constexpr size_t kWalQueueBytes = 56 * 1024 * 1024;
+constexpr size_t kMetadataQueueBytes = 8 * 1024 * 1024;
+constexpr size_t kMirrorBatchBytes = 256 * 1024;
 uint64_t Us(Clock::time_point t) {
   return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - t)
       .count();
@@ -68,7 +70,7 @@ std::mutex output_mutex;
 void Emit(const std::string& event, const std::string& fields = "") {
   std::lock_guard<std::mutex> lock(output_mutex);
   std::cout
-      << "MB_NATIVE_JSON {\"protocol\":\"metabypass-native-perf-v1\",\"event\":"
+      << "MB_NATIVE_JSON {\"protocol\":\"metabypass-native-perf-v2\",\"event\":"
       << Q(event) << fields << "}" << std::endl;
 }
 void Check(const Status& s) {
@@ -80,9 +82,7 @@ struct Config {
       {"action", "run"},
       {"workload", "insert"},
       {"index", ""},
-      {"data", ""},
       {"backup", ""},
-      {"staging", ""},
       {"state", ""},
       {"verify-acks", ""},
       {"verify-samples", "0"},
@@ -97,16 +97,12 @@ struct Config {
       {"sync", "false"},
       {"flush", "true"},
       {"fresh", "false"},
-      {"staging-capacity", "268435456"},
       {"sst-mode", "disabled"},
       {"sst-budget", "0"},
-      {"gc", "true"},
       {"disable-auto-compactions", "false"},
       {"cache-bytes", "268435456"},
       {"flush-every", "0"},
       {"seed", "20261017"},
-      {"gc-wait-seconds", "0"},
-      {"direct-write", "false"},
       {"mirror-interval-ms", "1000"},
       {"checkpoint-interval-ms", "1000"}};
   std::string S(const std::string& k) const { return flags.at(k); }
@@ -131,27 +127,24 @@ struct Config {
         throw std::runtime_error("unknown argument: " + a);
       flags[a.substr(2, p - 2)] = a.substr(p + 1);
     }
-    for (auto k :
-         {"keys", "ops", "value-size", "threads", "warmup-seconds",
-          "measure-seconds", "staging-capacity", "sst-budget", "cache-bytes",
-          "flush-every", "seed", "gc-wait-seconds", "mirror-interval-ms",
-          "checkpoint-interval-ms", "verify-samples", "batch-size"})
+    for (auto k : {"keys", "ops", "value-size", "threads", "warmup-seconds",
+                   "measure-seconds", "sst-budget", "cache-bytes",
+                   "flush-every", "seed", "mirror-interval-ms",
+                   "checkpoint-interval-ms", "verify-samples", "batch-size"})
       N(k);
-    for (auto k : {"sync", "flush", "fresh", "gc", "disable-auto-compactions",
-                   "direct-write"})
-      B(k);
-    if (!std::set<std::string>{"U", "B", "D", "S"}.count(S("variant")) ||
+    for (auto k : {"sync", "flush", "fresh", "disable-auto-compactions"}) B(k);
+    if (!std::set<std::string>{"U", "D"}.count(S("variant")) ||
         !std::set<std::string>{"prepare", "run", "verify", "restore",
                                "append-reopen", "crashwrite"}
              .count(S("action")) ||
         !std::set<std::string>{"insert", "overwrite", "randomread", "hotspot",
-                               "scan", "mixed", "sync", "gc", "sst"}
+                               "scan", "mixed", "sync", "sst"}
              .count(S("workload")))
       throw std::runtime_error("invalid variant/action/workload");
     if (N("keys") == 0 || N("keys") > 100000000 || N("threads") == 0 ||
         N("threads") > 64 || N("keys") < N("threads") || N("value-size") < 32 ||
         N("value-size") > 64 * 1024 * 1024 || N("measure-seconds") > 86400 ||
-        N("warmup-seconds") > 86400 || N("gc-wait-seconds") > 60)
+        N("warmup-seconds") > 86400)
       throw std::runtime_error("argument outside supported bounds");
     if (N("mirror-interval-ms") == 0 || N("checkpoint-interval-ms") == 0 ||
         N("mirror-interval-ms") > 86400000 ||
@@ -170,54 +163,52 @@ struct Config {
     if (N("verify-samples") != 0 && !S("verify-acks").empty())
       throw std::runtime_error(
           "sample verification does not support verify-acks");
-    if (B("direct-write") && S("variant") == "U")
-      throw std::runtime_error("inline variant U does not support direct-write");
     if (!std::set<std::string>{"disabled", "observe", "adaptive"}.count(
             S("sst-mode")))
       throw std::runtime_error("invalid sst-mode");
-    if (S("sst-mode") != "disabled" && N("sst-budget") == 0)
-      throw std::runtime_error("sst-budget required");
+    if (S("sst-mode") != "disabled" &&
+        (S("variant") != "D" || N("sst-budget") == 0))
+      throw std::runtime_error(
+          "SST tiering requires D and a positive sst-budget");
     for (auto k : {"index", "state"})
       if (S(k).empty() || !std::filesystem::path(S(k)).is_absolute())
         throw std::runtime_error(std::string(k) + " must be absolute");
-    if (S("variant") != "U" && S("data").empty())
-      throw std::runtime_error("data required");
-    if ((S("variant") == "D" || S("variant") == "S") && S("backup").empty())
+    if (S("variant") == "D" && S("backup").empty())
       throw std::runtime_error("backup required");
-    if (S("variant") == "S" &&
-        (S("staging").empty() || N("staging-capacity") == 0))
-      throw std::runtime_error("staging required");
-    if (!std::set<std::string>{"", "write", "publish", "migration"}.count(
-            S("crash-stage")))
+    if (S("variant") == "U" &&
+        (!S("backup").empty() || S("action") == "restore"))
+      throw std::runtime_error("backup and restore require D");
+    if (!std::set<std::string>{"", "write", "publish"}.count(S("crash-stage")))
       throw std::runtime_error("invalid crash-stage");
-    if (!S("crash-stage").empty() &&
-        (S("action") != "crashwrite" ||
-         (S("variant") != "D" && S("variant") != "S")))
-      throw std::runtime_error("crash-stage requires D/S crashwrite");
-    if (S("crash-stage") == "migration" && S("variant") != "S")
-      throw std::runtime_error("migration gate requires staging");
+    if ((S("action") == "crashwrite") != !S("crash-stage").empty() ||
+        (!S("crash-stage").empty() && S("variant") != "D"))
+      throw std::runtime_error("crashwrite requires D and a crash-stage");
+    const auto is_within = [](const std::filesystem::path& path,
+                              const std::filesystem::path& parent) {
+      auto relative = path.lexically_relative(parent);
+      return !relative.empty() && *relative.begin() != "..";
+    };
+    const std::filesystem::path state(S("state"));
+    if (state.lexically_normal() != state || state.filename().empty())
+      throw std::runtime_error("state path must be normalized");
     std::vector<std::filesystem::path> dirs;
-    for (auto name : {"index", "data", "backup", "staging"}) {
+    for (auto name : {"index", "backup"}) {
       if (S(name).empty()) continue;
-      std::filesystem::path p(S(name));
-      if (!p.is_absolute() || p.lexically_normal() != p || p.filename().empty())
+      std::filesystem::path path(S(name));
+      if (!path.is_absolute() || path.lexically_normal() != path ||
+          path.filename().empty())
         throw std::runtime_error("paths must be absolute and normalized");
-      for (const auto& d : dirs) {
-        auto sub = p.lexically_relative(d).string();
-        auto reverse = d.lexically_relative(p).string();
-        if (sub == "." || sub.rfind("..", 0) != 0 ||
-            reverse.rfind("..", 0) != 0)
+      for (const auto& dir : dirs) {
+        if (is_within(path, dir) || is_within(dir, path))
           throw std::runtime_error("database directories overlap");
       }
-      auto state_relative =
-          std::filesystem::path(S("state")).lexically_relative(p).string();
-      if (state_relative.rfind("..", 0) != 0)
+      if (is_within(state, path))
         throw std::runtime_error("state must be outside database directories");
-      dirs.push_back(p);
+      dirs.push_back(path);
     }
 #ifdef MB_UPSTREAM
-    if (S("variant") != "U" && S("variant") != "B")
-      throw std::runtime_error("upstream binary only accepts U/B");
+    if (S("variant") != "U")
+      throw std::runtime_error("upstream binary requires U");
 #else
     if (S("variant") == "U")
       throw std::runtime_error("U requires pinned upstream binary");
@@ -226,7 +217,7 @@ struct Config {
 };
 // Fault gates belong solely to this experiment's filesystem adapter.
 struct CrashGate {
-  std::string stage, backup, data;
+  std::string stage, backup;
   std::atomic<bool> armed{false}, hit{false};
   void Wait(const std::string& at, const std::string& path) {
     if (!armed || stage != at || hit.exchange(true)) return;
@@ -253,141 +244,9 @@ class GateFS : public FileSystemWrapper {
     if (to == gate_->backup + "/LATEST") gate_->Wait("publish", to);
     return target()->RenameFile(from, to, o, d);
   }
-  IOStatus NewWritableFile(const std::string& path, const FileOptions& o,
-                           std::unique_ptr<FSWritableFile>* f,
-                           IODebugContext* d) override {
-    if (path.rfind(gate_->data + "/segment-", 0) == 0)
-      gate_->Wait("migration", path);
-    return target()->NewWritableFile(path, o, f, d);
-  }
 
  private:
   std::shared_ptr<CrashGate> gate_;
-};
-// Only native .blob files directly under index are routed. Native DeleteFile
-// reaches the physical file; this adapter has no backup or retention policy.
-class BlobFS : public FileSystemWrapper {
- public:
-  BlobFS(std::string index, std::string data)
-      : FileSystemWrapper(FileSystem::Default()),
-        index_(std::move(index)),
-        data_(std::move(data)) {}
-  const char* Name() const override { return "NativePerfBlobRouting"; }
-  std::string P(const std::string& p) const {
-    std::filesystem::path x(p);
-    return x.parent_path() == index_ && x.extension() == ".blob"
-               ? (std::filesystem::path(data_) / x.filename()).string()
-               : p;
-  }
-#define OPEN_METHOD(M, T)                                         \
-  IOStatus M(const std::string& p, const FileOptions& o,          \
-             std::unique_ptr<T>* r, IODebugContext* d) override { \
-    return target()->M(P(p), o, r, d);                            \
-  }
-  OPEN_METHOD(NewSequentialFile, FSSequentialFile)
-  OPEN_METHOD(NewRandomAccessFile, FSRandomAccessFile)
-  OPEN_METHOD(NewWritableFile, FSWritableFile)
-  OPEN_METHOD(ReopenWritableFile, FSWritableFile)
-  OPEN_METHOD(NewRandomRWFile, FSRandomRWFile)
-#undef OPEN_METHOD
-#define ONE_METHOD(M)                                                     \
-  IOStatus M(const std::string& p, const IOOptions& o, IODebugContext* d) \
-      override {                                                          \
-    return target()->M(P(p), o, d);                                       \
-  }
-  ONE_METHOD(FileExists)
-#undef ONE_METHOD
-  IOStatus DeleteFile(const std::string& p, const IOOptions& o,
-                      IODebugContext* d) override {
-    const auto physical = P(p);
-    auto status = target()->DeleteFile(physical, o, d);
-    if (status.ok() && physical != p)
-      native_blob_deletes.fetch_add(1, std::memory_order_relaxed);
-    return status;
-  }
-  std::atomic<uint64_t> native_blob_deletes{0};
-  IOStatus ReuseWritableFile(const std::string& p, const std::string& old,
-                             const FileOptions& o,
-                             std::unique_ptr<FSWritableFile>* r,
-                             IODebugContext* d) override {
-    return target()->ReuseWritableFile(P(p), P(old), o, r, d);
-  }
-  IOStatus GetFileSize(const std::string& p, const IOOptions& o, uint64_t* r,
-                       IODebugContext* d) override {
-    return target()->GetFileSize(P(p), o, r, d);
-  }
-  IOStatus GetFileModificationTime(const std::string& p, const IOOptions& o,
-                                   uint64_t* r, IODebugContext* d) override {
-    return target()->GetFileModificationTime(P(p), o, r, d);
-  }
-  IOStatus Truncate(const std::string& p, size_t n, const IOOptions& o,
-                    IODebugContext* d) override {
-    return target()->Truncate(P(p), n, o, d);
-  }
-  IOStatus RenameFile(const std::string& p, const std::string& q,
-                      const IOOptions& o, IODebugContext* d) override {
-    return target()->RenameFile(P(p), P(q), o, d);
-  }
-  IOStatus LinkFile(const std::string& p, const std::string& q,
-                    const IOOptions& o, IODebugContext* d) override {
-    return target()->LinkFile(P(p), P(q), o, d);
-  }
-  IOStatus NumFileLinks(const std::string& p, const IOOptions& o, uint64_t* r,
-                        IODebugContext* d) override {
-    return target()->NumFileLinks(P(p), o, r, d);
-  }
-  IOStatus AreFilesSame(const std::string& p, const std::string& q,
-                        const IOOptions& o, bool* r,
-                        IODebugContext* d) override {
-    return target()->AreFilesSame(P(p), P(q), o, r, d);
-  }
-  IOStatus SyncFile(const std::string& p, const FileOptions& f,
-                    const IOOptions& o, bool full, IODebugContext* d) override {
-    return target()->SyncFile(P(p), f, o, full, d);
-  }
-  IOStatus GetChildren(const std::string& p, const IOOptions& o,
-                       std::vector<std::string>* r,
-                       IODebugContext* d) override {
-    auto s = target()->GetChildren(p, o, r, d);
-    if (!s.ok() || p != index_) return s;
-    std::vector<std::string> b;
-    s = target()->GetChildren(data_, o, &b, d);
-    if (!s.ok()) return s;
-    for (auto& n : b)
-      if (std::filesystem::path(n).extension() == ".blob") r->push_back(n);
-    std::sort(r->begin(), r->end());
-    r->erase(std::unique(r->begin(), r->end()), r->end());
-    return IOStatus::OK();
-  }
-  IOStatus GetChildrenFileAttributes(const std::string& p, const IOOptions& o,
-                                     std::vector<FileAttributes>* r,
-                                     IODebugContext* d) override {
-    return FileSystem::GetChildrenFileAttributes(p, o, r, d);
-  }
-  class Dirs : public FSDirectory {
-   public:
-    std::unique_ptr<FSDirectory> a, b;
-    IOStatus Fsync(const IOOptions& o, IODebugContext* d) override {
-      auto s = b->Fsync(o, d);
-      if (!s.ok()) return s;
-      return a->Fsync(o, d);
-    }
-  };
-  IOStatus NewDirectory(const std::string& p, const IOOptions& o,
-                        std::unique_ptr<FSDirectory>* r,
-                        IODebugContext* d) override {
-    if (p != index_) return target()->NewDirectory(p, o, r, d);
-    auto dirs = std::make_unique<Dirs>();
-    auto s = target()->NewDirectory(p, o, &dirs->a, d);
-    if (!s.ok()) return s;
-    s = target()->NewDirectory(data_, o, &dirs->b, d);
-    if (!s.ok()) return s;
-    *r = std::move(dirs);
-    return IOStatus::OK();
-  }
-
- private:
-  std::string index_, data_;
 };
 struct Events : EventListener {
   std::atomic<uint64_t> flushes{0}, compactions{0}, flush_bytes{0},
@@ -406,32 +265,23 @@ class Database {
   explicit Database(const Config& c) : c_(c) {
     gate->stage = c.S("crash-stage");
     gate->backup = c.S("backup");
-    gate->data = c.S("data");
     o_.compression = kNoCompression;
     o_.write_buffer_size = 128 * 1024 * 1024;
     o_.max_write_buffer_number = 2;
     o_.max_background_jobs = 4;
     o_.disable_auto_compactions = c.B("disable-auto-compactions");
-    o_.enable_blob_files = c.S("variant") != "U";
-    o_.min_blob_size = 0;
-    o_.enable_blob_garbage_collection = false;
     o_.statistics = CreateDBStatistics();
     o_.listeners.push_back(events);
     BlockBasedTableOptions table;
     table.block_cache = NewLRUCache(c.N("cache-bytes"));
     o_.table_factory.reset(NewBlockBasedTableFactory(table));
-    o_.enable_blob_direct_write = c.B("direct-write");
-    o_.allow_concurrent_memtable_write = !c.B("direct-write");
 #ifndef MB_UPSTREAM
+    b_.wal_queue_capacity = kWalQueueBytes;
+    b_.metadata_queue_capacity = kMetadataQueueBytes;
+    b_.batch_bytes = kMirrorBatchBytes;
     b_.interval_ms = c.N("mirror-interval-ms");
     b_.checkpoint_interval_ms = c.N("checkpoint-interval-ms");
-    b_.data_dir = c.S("data");
     b_.backup_dir = c.S("backup");
-    b_.enable_blob_file_gc = c.B("gc");
-    if (c.S("variant") == "S") {
-      b_.staging_dir = c.S("staging");
-      b_.staging_capacity = c.N("staging-capacity");
-    }
     b_.sst_tiering.mode =
         c.S("sst-mode") == "adaptive"  ? SstTieringMode::kAdaptive
         : c.S("sst-mode") == "observe" ? SstTieringMode::kObserveOnly
@@ -439,10 +289,6 @@ class Database {
     b_.sst_tiering.ssd_capacity_bytes = c.N("sst-budget");
 #endif
     std::shared_ptr<FileSystem> fs = FileSystem::Default();
-    if (c.S("variant") == "B") {
-      blob_fs_ = std::make_shared<BlobFS>(c.S("index"), c.S("data"));
-      fs = blob_fs_;
-    }
     if (!c.S("crash-stage").empty()) fs = std::make_shared<GateFS>(gate);
     env_ = NewCompositeEnv(fs);
     o_.env = env_.get();
@@ -451,10 +297,8 @@ class Database {
   void Open(bool fresh) {
     o_.create_if_missing = fresh;
     o_.error_if_exists = fresh;
-    if (c_.S("variant") == "B")
-      std::filesystem::create_directories(c_.S("data"));
 #ifndef MB_UPSTREAM
-    if (c_.S("variant") == "D" || c_.S("variant") == "S") {
+    if (c_.S("variant") == "D") {
       Check(MetaBypassDB::Open(o_, b_, c_.S("index"), &mb_));
       return;
     }
@@ -463,12 +307,12 @@ class Database {
   }
   void Restore() {
 #ifndef MB_UPSTREAM
-    if (c_.S("variant") == "D" || c_.S("variant") == "S") {
+    if (c_.S("variant") == "D") {
       Check(MetaBypassDB::Restore(o_, b_, c_.S("index")));
       return;
     }
 #endif
-    throw std::runtime_error("restore requires D/S");
+    throw std::runtime_error("restore requires D");
   }
   Status Put(const std::string& k, const std::string& v, bool sync) {
     WriteOptions w;
@@ -517,15 +361,6 @@ class Database {
 #endif
     Check(raw_->Flush(f));
   }
-  void Compact() {
-#ifndef MB_UPSTREAM
-    if (mb_) {
-      Check(mb_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
-      return;
-    }
-#endif
-    Check(raw_->CompactRange(CompactRangeOptions(), nullptr, nullptr));
-  }
   void Sync() {
 #ifndef MB_UPSTREAM
     if (mb_) Check(mb_->SyncBackup());
@@ -534,11 +369,7 @@ class Database {
   void Stats(const std::string& boundary = "snapshot") {
     std::ostringstream s;
     s << ",\"boundary\":" << Q(boundary);
-    s << ",\"native_blob_deletes\":"
-      << (blob_fs_
-              ? blob_fs_->native_blob_deletes.load(std::memory_order_relaxed)
-              : 0)
-      << ",\"flushes\":" << events->flushes
+    s << ",\"flushes\":" << events->flushes
       << ",\"compactions\":" << events->compactions
       << ",\"flush_data_bytes\":" << events->flush_bytes
       << ",\"compaction_output_bytes\":" << events->compaction_bytes
@@ -548,10 +379,6 @@ class Database {
       auto v = mb_->GetBackupStats();
       Check(v.error);
 #define FIELD(n) s << ",\"" #n "\":" << v.n
-      FIELD(staging_bytes);
-      FIELD(peak_staging_bytes);
-      FIELD(migrated_blob_bytes);
-      FIELD(staging_backpressure_micros);
       FIELD(sync_write_micros);
       FIELD(queued_bytes);
       FIELD(peak_queued_bytes);
@@ -562,14 +389,7 @@ class Database {
       FIELD(checkpoint_wait_micros);
       FIELD(checkpoint_captures);
       FIELD(checkpoint_capture_micros);
-      FIELD(checkpoint_flush_micros);
-      FIELD(checkpoint_persist_micros);
       FIELD(checkpoint_publish_micros);
-      FIELD(staging_spill_files);
-      FIELD(staging_spill_bytes);
-      FIELD(tier_queued_bytes);
-      FIELD(peak_tier_queued_bytes);
-      FIELD(hdd_extents);
       FIELD(last_publish_micros);
       FIELD(last_build_micros);
       FIELD(last_point_lag_micros);
@@ -577,12 +397,23 @@ class Database {
       FIELD(pending_gc_points);
       FIELD(pending_gc_bytes);
       FIELD(gc_micros);
-      FIELD(pending_blob_gc_files);
-      FIELD(pending_blob_gc_bytes);
-      FIELD(reclaimed_blob_files);
-      FIELD(reclaimed_blob_bytes);
-      FIELD(blob_gc_micros);
       FIELD(candidate_copied_bytes);
+      FIELD(io_index_write_bytes);
+      FIELD(io_backup_write_bytes);
+      FIELD(io_caller_write_bytes);
+      FIELD(io_bulk_write_bytes);
+      FIELD(io_barrier_write_bytes);
+      FIELD(io_failed_writes);
+      FIELD(hdd_append_calls);
+      FIELD(hdd_flush_calls);
+      FIELD(hdd_sync_calls);
+      FIELD(hdd_dirsync_calls);
+      FIELD(hdd_read_calls);
+      FIELD(hdd_append_micros);
+      FIELD(hdd_flush_micros);
+      FIELD(hdd_sync_micros);
+      FIELD(hdd_dirsync_micros);
+      FIELD(hdd_read_micros);
 #undef FIELD
 #define SF(n) s << ",\"sst_" #n "\":" << v.sst_tiering.n
       SF(ssd_bytes);
@@ -602,9 +433,6 @@ class Database {
 #undef SF
       if (!v.sst_tiering.error.empty())
         throw std::runtime_error(v.sst_tiering.error);
-      if (c_.S("variant") == "S" &&
-          v.peak_staging_bytes > c_.N("staging-capacity"))
-        throw std::runtime_error("staging capacity exceeded");
     }
 #endif
     Emit("stats", s.str());
@@ -629,7 +457,6 @@ class Database {
  private:
   const Config& c_;
   Options o_;
-  std::shared_ptr<BlobFS> blob_fs_;
   std::unique_ptr<Env> env_;
   std::unique_ptr<DB> raw_;
 #ifndef MB_UPSTREAM
@@ -829,8 +656,10 @@ uint64_t Verify(Database& db, const Config& c, State& state) {
         Check(s);
         throw std::runtime_error("deleted key present");
       }
-      if (state.version[k] == 0) ++unwritten;
-      else ++deleted;
+      if (state.version[k] == 0)
+        ++unwritten;
+      else
+        ++deleted;
     } else {
       Check(s);
       Validate(v, k, state.version[k], c.N("value-size"), minimum);
@@ -936,8 +765,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
                (timed ? Us(start) < seconds * 1000000 : seq < quota)) {
           auto r = Random(rng);
           uint64_t k = lo + (r % width);
-          if (workload == "insert" || workload == "gc" || ack)
-            k = lo + (seq % width);
+          if (workload == "insert" || ack) k = lo + (seq % width);
           if (workload == "hotspot" || workload == "sst") {
             uint64_t hot = std::max<uint64_t>(1, width / 4);
             bool last =
@@ -953,7 +781,7 @@ void Work(Database& db, const Config& c, State& state, bool warmup = false) {
           }
           auto key = Key(k);
           bool put = workload == "insert" || workload == "overwrite" ||
-                     workload == "sync" || workload == "gc" || ack;
+                     workload == "sync" || ack;
           bool del = false;
           if (workload == "mixed") {
             auto choice = Random(rng) % 100;
@@ -1063,7 +891,7 @@ int main(int argc, char** argv) {
     Database db(c);
     uint64_t verified = 0;
     const auto& actual = db.options();
-    const bool backup = c.S("variant") == "D" || c.S("variant") == "S";
+    const bool backup = c.S("variant") == "D";
     std::ostringstream options;
     options << ",\"variant\":" << Q(c.S("variant"))
             << ",\"batch_size\":" << c.N("batch-size")
@@ -1072,27 +900,22 @@ int main(int argc, char** argv) {
                "background_jobs\":4,\"block_cache_bytes\":"
             << c.N("cache-bytes") << ",\"disable_auto_compactions\":"
             << (c.B("disable-auto-compactions") ? "true" : "false")
-            << ",\"enable_blob_files\":"
-            << (actual.enable_blob_files ? "true" : "false")
-            << ",\"enable_blob_direct_write\":"
-            << (actual.enable_blob_direct_write ? "true" : "false")
             << ",\"allow_concurrent_memtable_write\":"
             << (actual.allow_concurrent_memtable_write ? "true" : "false")
+            << ",\"wal_queue_bytes\":"
+            << (backup ? std::to_string(kWalQueueBytes) : "null")
+            << ",\"metadata_queue_bytes\":"
+            << (backup ? std::to_string(kMetadataQueueBytes) : "null")
+            << ",\"mirror_batch_bytes\":"
+            << (backup ? std::to_string(kMirrorBatchBytes) : "null")
             << ",\"mirror_interval_ms\":"
             << (backup ? std::to_string(c.N("mirror-interval-ms")) : "null")
             << ",\"checkpoint_interval_ms\":"
             << (backup ? std::to_string(c.N("checkpoint-interval-ms")) : "null")
             << ",\"sync\":" << (c.B("sync") ? "true" : "false")
-            << ",\"blob_file_size\":" << actual.blob_file_size
-            << ",\"min_blob_size\":0,\"blob_"
-               "value_gc\":false,\"sst_mode\":"
-            << (backup ? Q(c.S("sst-mode")) : "null")
+            << ",\"sst_mode\":" << (backup ? Q(c.S("sst-mode")) : "null")
             << ",\"sst_budget\":"
             << (backup ? std::to_string(c.N("sst-budget")) : "null")
-            << ",\"staging_capacity\":"
-            << (c.S("variant") == "S" ? c.N("staging-capacity") : 0)
-            << ",\"whole_blob_gc\":"
-            << (backup ? (c.B("gc") ? "true" : "false") : "null")
             << ",\"backup_enabled\":" << (backup ? "true" : "false") << "}";
     Emit("options", options.str());
     if (c.S("action") == "restore") {
@@ -1118,20 +941,7 @@ int main(int argc, char** argv) {
     } else {
       if (c.S("action") != "prepare" && c.N("warmup-seconds"))
         Work(db, c, state, true);
-      if (c.S("action") != "prepare" && c.S("workload") == "gc") {
-        for (int gen = 0; gen < 3; ++gen) {
-          Work(db, c, state);
-          t = Clock::now();
-          db.Flush();
-          Phase("generation_flush", t);
-          t = Clock::now();
-          db.Compact();
-          Phase("generation_compact", t);
-          db.Sync();
-          db.Stats();
-        }
-      } else
-        Work(db, c, state);
+      Work(db, c, state);
     }
     if (c.S("action") == "prepare") {
       if (!std::all_of(state.version.begin(), state.version.end(),
@@ -1145,8 +955,8 @@ int main(int argc, char** argv) {
         c.S("action") == "prepare" || c.S("action") == "append-reopen" ||
         c.S("action") == "crashwrite" ||
         (c.S("action") == "run" &&
-         std::set<std::string>{"insert", "overwrite", "mixed", "sync", "gc"}
-             .count(c.S("workload")));
+         std::set<std::string>{"insert", "overwrite", "mixed", "sync"}.count(
+             c.S("workload")));
     if (mutating) {
       if (c.B("flush")) {
         t = Clock::now();
@@ -1156,15 +966,6 @@ int main(int argc, char** argv) {
       t = Clock::now();
       db.Sync();
       Phase("sync_backup", t);
-    }
-    if (c.N("gc-wait-seconds")) {
-      t = Clock::now();
-      auto until = Clock::now() + std::chrono::seconds(c.N("gc-wait-seconds"));
-      while (Clock::now() < until) {
-        db.Stats();
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      }
-      Phase("background_tail", t);
     }
     db.Stats();
     t = Clock::now();

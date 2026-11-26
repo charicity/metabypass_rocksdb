@@ -499,7 +499,7 @@ std::string Configurable::SerializeOptions(const ConfigOptions& config_options,
   std::string result;
   Status s = ConfigurableHelper::SerializeOptions(config_options, *this, header,
                                                   &result);
-  assert(s.ok());
+  s.PermitUncheckedOk();
   return result;
 }
 

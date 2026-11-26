@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # SSD index and HDD blob storage
 
 Without staging, MetaBypass routes ordinary Integrated BlobDB files directly to
@@ -21,3 +23,13 @@ No business WAL/SST/blob scanner, blob sealing or MANIFEST repair is part of
 the backup or restore path. The current format rejects old databases and backups
 without migration. See the [component entry point](index.md) for API, format,
 metrics and benchmark details, and [blob GC](blob-gc.md) for whole-file retention.
+
+## Repeated native blob persistence
+
+The single backup validator passes sealed, immutable native snapshot blobs to
+ordinary `SeparatedStorage::Persist`. Each call still validates every file size
+and syncs the data directory. A number/length match in the last fully successful
+call skips only the named-file sync. File or directory sync failure leaves the
+previous cache intact; an empty successful call drops all cached entries.
+The cache belongs to one storage object, so Open/Restore starts cold. Tiered
+storage keeps its existing persistence protocol.

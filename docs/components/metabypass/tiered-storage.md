@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # SSD-local metadata and bounded segmented staging
 
 Ordinary Integrated BlobDB produces blobs in native flush and compaction.

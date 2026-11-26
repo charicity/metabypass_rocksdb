@@ -57,11 +57,12 @@ def normalize_spec(spec, budget):
     if value.get("workload") == "sst" and value.get("sst_mode") != "disabled":
         if value.get("sst_budget", 0) not in (0, budget):
             raise run.RunFailure("SST capacity differs from frozen disabled result")
-        value["sst_budget"] = budget
+        if budget is not None:
+            value["sst_budget"] = budget
     return value
 
 
-def remaining_plan(report, frozen, expected_budget):
+def remaining_plan(report, frozen):
     """Original identities remain unique; invalid originals are never replaced."""
     if report.get("protocol") != run.PROTOCOL or frozen.get("protocol") != run.PROTOCOL or \
             report.get("profile") != "formal" or frozen.get("profile") != "formal":
@@ -76,17 +77,24 @@ def remaining_plan(report, frozen, expected_budget):
     generated = run.matrix("formal", counts["write_keys"], counts["sync_ops"])
     if frozen.get("core") != generated or frozen.get("specials") != run.special_matrix("formal"):
         raise run.RunFailure("frozen matrix differs from the approved native workload")
-    freeze = report.get("sst_capacity_freeze", {})
-    if freeze.get("budget_bytes") != expected_budget or freeze.get("sst_files", 0) < 4 or \
-            int(freeze.get("disabled_logical_sst_bytes", 0) * .65) != expected_budget:
-        raise run.RunFailure("missing or different SST capacity freeze")
+    freeze = report.get("sst_capacity_freeze")
+    expected_budget = freeze["budget_bytes"] if freeze else None
+    if freeze and (type(expected_budget) is not int or expected_budget <= 0 or
+                   freeze.get("sst_files", 0) < 4 or
+                   int(freeze.get("disabled_logical_sst_bytes", 0) * .65) != expected_budget):
+        raise run.RunFailure("invalid SST capacity freeze")
     planned = {identity(s): normalize_spec(s, expected_budget)
                for s in frozen["core"] + frozen["specials"]}
     seen, successful, failed = {}, [], []
+    calibration = []
     for index, row in enumerate(report.get("runs", [])):
         if row.get("phase") != "measured":
             if row.get("phase") != "calibration":
                 raise run.RunFailure("source already contains attempts/retests; refusing ambiguous restart")
+            spec = row["spec"]
+            if row.get("valid") is not True or row.get("status") != "pass":
+                raise run.RunFailure("source lacks complete passing calibration")
+            calibration.append((spec["group"], spec["workload"]))
             continue
         key = identity(row["spec"])
         if key in seen or key not in planned:
@@ -98,28 +106,22 @@ def remaining_plan(report, frozen, expected_budget):
             successful.append(index)
         else:
             failed.append(index)
-    if any(identity(s) not in seen or not seen[identity(s)].get("valid")
-           for s in frozen["core"]):
-        raise run.RunFailure("all 120 core originals must already have passed")
-    # This entry point deliberately targets the audited v7 instrumentation stop.
-    originals = [r for r in report["runs"] if r.get("phase") == "measured"]
-    special_rows = [r for r in originals if r["spec"]["stage"] == "specials"]
-    if len(report["runs"]) != 135 or len(successful) != 126 or len(failed) != 1 or \
-            len(special_rows) != 7 or identity(special_rows[-1]["spec"]) != \
-            ("specials", "sst-adaptive", "S", 1) or \
-            special_rows[-1].get("status") != "incomplete" or \
-            special_rows[-1].get("error") != "required telemetry could not be collected":
-        raise run.RunFailure("source stop differs from the audited v7 incident")
-    if [identity(r["spec"]) for r in special_rows] != [identity(s) for s in frozen["specials"][:7]] or \
-            len([r for r in report["runs"] if r.get("phase") == "calibration" and
-                 r.get("valid") is True and r.get("status") == "pass"]) != 8:
-        raise run.RunFailure("source prefix/calibration evidence differs from the audited incident")
+    expected_calibration = {(group, workload) for group in run.GROUPS for workload in ("insert", "sync")}
+    if set(calibration) != expected_calibration or len(calibration) != len(expected_calibration):
+        raise run.RunFailure("source lacks complete passing calibration")
+    if list(seen) != list(planned)[:len(seen)]:
+        raise run.RunFailure("source originals must follow frozen matrix order")
+    passed = {identity(report["runs"][index]["spec"]) for index in successful}
+    if any(identity(s) not in passed for s in frozen["core"]):
+        raise run.RunFailure("resume requires passing original core samples and completed gates")
+    if expected_budget is None and any(key[1] == "sst-disabled" for key in passed):
+        raise run.RunFailure("passing disabled SST evidence lacks its capacity freeze")
     todo = [planned[identity(s)] for s in frozen["specials"] if identity(s) not in seen]
-    if len(todo) != 14:
-        raise run.RunFailure("remaining original special count is not fourteen")
+    attempts = [planned[identity(report["runs"][index]["spec"])] for index in failed]
+    if not todo and not attempts:
+        raise run.RunFailure("no pending or incomplete SST samples")
     return {"successful_original_indexes": successful, "original_incomplete_indexes": failed,
-            "pending_original_specs": todo,
-            "independent_attempt_specs": [planned[identity(report["runs"][failed[0]]["spec"])]]}
+            "pending_original_specs": todo, "independent_attempt_specs": attempts}
 
 
 class SourceEvidence:
@@ -129,16 +131,17 @@ class SourceEvidence:
         self.artifacts = {}
         self.report, self.report_sha = checked_json(self.path, args.source_sha256)
         self.frozen, self.frozen_sha = checked_json(self.root / "frozen-protocol.json", args.protocol_sha256)
-        self.plan = remaining_plan(self.report, self.frozen, args.expected_sst_budget)
+        self.plan = remaining_plan(self.report, self.frozen)
         self.build, _ = self.load(self.root / "build.json")
         current, _ = checked_json(args.build_manifest)
-        if current != self.build:
+        if current != self.build or current.get("protocol") != run.PROTOCOL:
             raise run.RunFailure("current build/source manifest differs from source run")
         for name, entry in current["binaries"].items():
             if run.digest(run.no_symlinks(entry["path"])) != entry["sha256"]:
                 raise run.RunFailure("current binary SHA256 mismatch: " + name)
         self.preflight, _ = self.load(self.root / "preflight.json")
-        if self.preflight.get("host") != socket.gethostname() or self.preflight.get("uid") != os.getuid():
+        if self.preflight.get("protocol") != run.PROTOCOL or \
+                self.preflight.get("host") != socket.gethostname() or self.preflight.get("uid") != os.getuid():
             raise run.RunFailure("source host/uid mismatch")
         tools, tools_sha = checked_json(args.source_tools_manifest, args.source_tools_sha256)
         command = self.report.get("controller_command", [])
@@ -186,6 +189,8 @@ class SourceEvidence:
         if not isinstance(ref, dict) or not ref.get("result"):
             raise run.RunFailure("required source process evidence missing")
         raw, _ = self.load(ref["result"])
+        if raw.get("protocol") != run.PROTOCOL:
+            raise run.RunFailure("source process result protocol mismatch")
         if ref.get("events") is not None and ref["events"] != raw.get("events"):
             raise run.RunFailure("embedded process events differ from raw evidence")
         binary, options = command_identity(raw.get("command"))
@@ -218,6 +223,8 @@ class SourceEvidence:
         if any(snapshot.get("errors") for snapshot in raw.get("telemetry", [])):
             raise run.RunFailure("passing source process contains telemetry errors")
         if action == "crashwrite":
+            if any(event.get("protocol") != run.PROTOCOL for event in raw["events"]):
+                raise run.RunFailure("source crash event protocol mismatch")
             run.validate_crash_boundary(raw["events"], options.get("crash-stage"),
                                         raw.get("injected_sigkill"), raw.get("exit"))
         else:
@@ -261,28 +268,28 @@ class SourceEvidence:
     def audit_gates(self):
         gates = self.report.get("gates", [])
         keys = [(gate["group"], gate["scenario"]) for gate in gates]
-        expected = {(g, s) for g, scenes in {
-            "U": ("concurrent-mixed", "concurrent-sync"),
-            "B": ("concurrent-mixed", "concurrent-sync", "concurrent-gc"),
-            "D": ("wal-only", "checkpoint-blob", "concurrent-mixed", "concurrent-sync", "sigkill-write", "sigkill-publish"),
-            "S": ("wal-only", "checkpoint-blob", "staging-prefix-2m", "staging-direct-64k", "staging-large-value",
-                  "concurrent-mixed", "concurrent-sync", "sigkill-write", "sigkill-publish", "sigkill-migration")}.items()
-                    for s in scenes}
-        if len(keys) != 21 or set(keys) != expected or any(g["status"] != "pass" for g in gates):
-            raise run.RunFailure("source does not contain exactly twenty-one passing gates")
+        expected = run.expected_gates()
+        if len(keys) != len(expected) or set(keys) != expected or any(g["status"] != "pass" for g in gates):
+            raise run.RunFailure("source lacks a complete set of passing recovery and availability gates")
         for gate in gates:
-            for name in ("write", "verify", "verification", "recovery", "append_reopen", "crash"):
-                if name in gate:
-                    self.artifact(gate[name], gate["group"])
+            if gate["scenario"].startswith("sigkill-"):
+                initial = ("crash", "crashwrite")
+            else:
+                initial = ("write", "run")
+            recovery = ("recovery", "restore") if gate["group"] == "D" else ("verify", "verify")
+            for field, action in (initial, recovery, ("append_reopen", "append-reopen")):
+                self.artifact(gate.get(field), gate["group"], action=action)
 
     def audit_static_records(self):
         if set(self.report.get("static_datasets", {})) != set(run.GROUPS):
-            raise run.RunFailure("source must retain all four static datasets")
+            raise run.RunFailure("source must retain both static datasets")
         for group, record in self.report["static_datasets"].items():
             if record.get("keys") != 12 * run.GIB // 1024 or record.get("payload_bytes") != 12 * run.GIB:
                 raise run.RunFailure("source static payload identity mismatch")
-            for name in ("index", "data", "backup", "staging"):
-                label = "ssd" if name in ("index", "staging") else "hdd"
+            if set(record["paths"]) != set(run.database_roles(group)) | {"state"}:
+                raise run.RunFailure("source static path roles differ from the proof")
+            for name in run.database_roles(group):
+                label = "ssd" if name == "index" else "hdd"
                 root = self.source_roots[label]
                 expected = root / ("static-" + group + "-" + name) / "db"
                 path = run.no_symlinks(record["paths"][name])
@@ -316,12 +323,15 @@ class ResumeExperiment(run.Experiment):
                 self.preflight.get("target_mounts") != evidence.preflight.get("target_mounts"):
             raise run.RunFailure("resume CPU affinity or target mounts changed")
         self.rows.extend(copy.deepcopy(old["runs"]))
-        for name in ("gates", "blocked_groups", "failure_ledger", "calibration", "static_datasets", "sst_capacity_freeze"):
+        for name in ("gates", "blocked_groups", "failure_ledger", "calibration", "static_datasets"):
             self.report[name] = copy.deepcopy(old[name])
-        self.sst_budget = old["sst_capacity_freeze"]["budget_bytes"]
+        if "sst_capacity_freeze" in old:
+            self.report["sst_capacity_freeze"] = copy.deepcopy(old["sst_capacity_freeze"])
+            self.sst_budget = old["sst_capacity_freeze"]["budget_bytes"]
         self.report["error"] = old.get("error")
         self.report["limitations"].extend(old.get("limitations", []))
-        self.report["limitations"].append("The original instrumentation incomplete remains invalid; independent attempts never replace it.")
+        if evidence.plan["original_incomplete_indexes"]:
+            self.report["limitations"].append("Incomplete originals remain invalid in the paired results.")
         self.report["resume_provenance"] = {
             "source_results": str(evidence.path), "source_sha256": evidence.report_sha,
             "source_run_uuid": old["run_uuid"], "source_protocol_sha256": evidence.frozen_sha,
@@ -336,8 +346,8 @@ class ResumeExperiment(run.Experiment):
 
     def physical_space(self, paths):
         roots = {"ssd": [], "hdd": []}
-        for name in ("index", "data", "backup", "staging"):
-            path = run.no_symlinks(paths[name])
+        for value in run.database_paths(paths).values():
+            path = run.no_symlinks(value)
             parent = path.parent.parent
             if parent in (self.ssd, self.hdd):
                 label = "ssd" if parent == self.ssd else "hdd"
@@ -355,8 +365,8 @@ class ResumeExperiment(run.Experiment):
         if record.get("keys") != 12 * run.GIB // 1024 or record.get("payload_bytes") != 12 * run.GIB:
             raise run.RunFailure("source static dataset size differs from frozen workload")
         paths = {k: run.no_symlinks(v) for k, v in record["paths"].items()}
-        for name in ("index", "data", "backup", "staging"):
-            label = "ssd" if name in ("index", "staging") else "hdd"
+        for name in run.database_roles(group):
+            label = "ssd" if name == "index" else "hdd"
             root = self.evidence.source_roots[label]
             expected = root / ("static-" + group + "-" + name) / "db"
             if paths[name] != expected or not paths[name].is_dir():
@@ -420,25 +430,25 @@ class ResumeExperiment(run.Experiment):
 
     def execute_resume(self):
         try:
-            for spec in self.evidence.plan["pending_original_specs"]:
-                try:
-                    self.sample(spec)
-                except (run.CoverageFailure, run.DriverFailure):
-                    continue
-            for spec in self.evidence.plan["independent_attempt_specs"]:
-                try:
-                    self.sample(spec, "attempt")
-                except (run.CoverageFailure, run.DriverFailure):
-                    continue
+            for plan, phase in (("pending_original_specs", "measured"),
+                                ("independent_attempt_specs", "attempt")):
+                for spec in self.evidence.plan[plan]:
+                    try:
+                        self.sample_sst(spec, phase)
+                    except (run.CoverageFailure, run.DriverFailure):
+                        continue
             self.audit_regression()
             self.reserve_retests(self.evidence.plan["retest_triggers"])
             self.evidence.confirm_unchanged()
             self.report["resume_execution"] = "finished"
+            self.report["state"] = "incomplete" if self.report["blocked_groups"] or \
+                any(not row["valid"] for row in self.rows) else "complete"
+            if self.report["state"] == "complete":
+                self.report.pop("error", None)
         except BaseException as error:
-            self.report["resume_error"] = str(error)
+            self.report.update(state="incomplete", resume_error=str(error))
             raise
         finally:
-            self.report["state"] = "incomplete"  # The original invalid sample remains invalid.
             self.save()
             value = summary.summarize(self.report)
             run.write_json(self.output / "summary.json", value)
@@ -453,7 +463,6 @@ def main():
     parser.add_argument("--protocol-sha256", required=True)
     parser.add_argument("--source-tools-manifest", type=Path, required=True)
     parser.add_argument("--source-tools-sha256", required=True)
-    parser.add_argument("--expected-sst-budget", type=int, default=15337964)
     parser.add_argument("--build-manifest", type=Path, required=True)
     parser.add_argument("--regression-audit", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

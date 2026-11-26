@@ -95,12 +95,12 @@ by this work. Neither full check is described as all-green.
 Use three release binaries built with
 `AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j8 db_bench`: baseline from `e7663cf90`,
 the final implementation, and a final implementation build with
-[the full-scan comparison patch](experiments/pipeline_full_scan.patch).
+`the full-scan comparison patch` (at Git revision `3954f74cb`).
 That comparison keeps the same two-thread pipeline and restores full content
 validation at every point. It produces valid backups, unlike the earlier
 [scan-removal ablation](experiments/README.md).
 
-Run [run_pipeline_benchmark.py](experiments/run_pipeline_benchmark.py) with
+Run `run_pipeline_benchmark.py` (at Git revision `3954f74cb`) with
 `--baseline`, `--pipeline`, `--incremental` pointing to those binaries and
 `--output` naming a JSON result file. It rotates execution order and uses five
 trials per version/workload, fresh directories and a 1000-write warmup. All

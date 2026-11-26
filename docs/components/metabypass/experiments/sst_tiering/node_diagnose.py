@@ -40,7 +40,7 @@ def arm_order(repeat):
 
 
 def placement_snapshot(dirs):
-    """Closed-DB placement and allocation evidence; never read blob payloads."""
+    """Closed-DB placement and allocation evidence; never read SST payloads."""
     ssd, hdd = map(Path, dirs)
     index = ssd / "index"
     local = node_cache.local_tables(index)

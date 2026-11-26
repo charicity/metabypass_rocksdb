@@ -1,25 +1,15 @@
-# Migration lifetimes
+# SST migration lifetimes
 
-Blob and SST migration share the need to publish a durable destination before
-switching reads, but have different capacity and writer contracts.
+SST disabled mode leaves SSTs in the index directory. Observe-only mode records
+policy decisions and preserves file placement. Adaptive mode moves complete
+immutable SSTs protected by a published recovery point. Its SSD budget counts
+logical SST bytes and may be exceeded while new files await protection.
 
-Blob Append atomically reserves from a hard SSD quota. A quota miss freezes the
-current local prefix and permanently switches that file to HDD. A separate
-worker persists the prefix and route, then accepts 4 MiB HDD append tasks aggregated into 32 MiB extents.
-Old local read handles pin SSD unlink only; they do not hold the file's HDD
-append path. HDD read pins retain immutable descriptor versions. Sync/Close
-publishes a durable boundary before native RocksDB can reference the blob in an
-installed SST. Recovery ignores unsynced appended tails.
+Promotion and demotion make the destination durable and publish routing before
+reclaiming the old source. Reads already holding a physical file keep it until
+they finish. A checkpoint candidate pins native file deletion while capturing
+live files and retains its protection through publication or cancellation.
+The GC worker removes retired recovery points after their replacement is
+published.
 
-SST disabled mode preserves ordinary SSD index placement. Observe-only mode
-records policy decisions without moving files. Adaptive mode moves complete
-immutable SSTs protected by a published recovery point. Its SSD budget remains a
-soft logical placement budget and is distinct from the hard blob staging quota.
-Promotions/demotions publish routing before reclaiming the old physical source;
-read handles opened before that change retain their source until completion.
-
-Checkpoint candidates pin native deletion across live-file capture and preserve
-their root through publication or cancellation. Whole-file GC requires native
-obsolescence, all backup roots released, and all physical read/migration pins
-completed. See [staging](tiered-storage.md), [SST tiering](sst-tiering.md), and
-[GC](blob-gc.md) for the associated contracts and metrics.
+See [SST tiering](sst-tiering.md) for configuration and metrics.

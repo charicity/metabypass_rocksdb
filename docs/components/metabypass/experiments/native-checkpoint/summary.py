@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 import statistics
 
-PROTOCOL = "metabypass-native-perf-v1"
+from run import PROTOCOL
 
 
 def distribution(values):
@@ -99,43 +99,41 @@ def summarize(report):
     comparisons = []
     triggers = []
     for scenario in sorted({scenario for scenario, _ in groups}):
-        if scenario == "upstream-hdd":
+        if scenario == "upstream-hdd" or scenario.startswith("sst-"):
             continue
-        for candidate, reference, meaning in (("D", "B", "core_backup_cost"),
-                                              ("S", "D", "staging_cost"),
-                                              ("D", "U", "overall_layout_and_service"),
-                                              ("S", "U", "overall_layout_and_service")):
-            a = dict(groups.get((scenario, candidate), []))
-            b = dict(groups.get((scenario, reference), []))
-            paired = sorted(set(a) & set(b))
-            if len(a) != len(groups.get((scenario, candidate), [])) or \
-                    len(b) != len(groups.get((scenario, reference), [])):
-                raise ValueError("duplicate round identity")
-            complete = paired == [1, 2, 3]
-            blocked = candidate in report.get("blocked_groups", {}) or reference in report.get("blocked_groups", {})
-            complete = complete and not blocked
-            ratios = {}
-            common = set.intersection(*(set(a[r]) & set(b[r]) for r in paired)) if paired else set()
-            for key in sorted(common):
-                values = [{"round": number,
-                           "value": 1 - a[number][key] / b[number][key]
-                           if key == "ops_per_sec" else a[number][key] / b[number][key] - 1}
-                          for number in paired if b[number][key] > 0]
-                if len(values) == len(paired) and values:
-                    ratios[key] = {"pairs": values, **distribution([value["value"] for value in values])}
-            comparison = {"scenario": scenario, "candidate": candidate, "reference": reference,
-                          "meaning": meaning, "complete": complete, "paired_rounds": paired,
-                          "degradation": ratios,
-                          "sync_semantics": "additional_backup_service_cost" if scenario == "sync"
-                          and candidate in ("D", "S") and reference in ("U", "B") else "same_group_contract"}
-            comparisons.append(comparison)
-            exceeded = [key for key, threshold in (("ops_per_sec", .1), ("lifecycle_us", .1),
-                                                   ("p99_us", .2))
-                        if complete and key in ratios and ratios[key]["median"] > threshold]
-            if exceeded:
-                triggers.append({"scenario": scenario, "candidate": candidate,
-                                 "reference": reference, "metrics": exceeded,
-                                 "action": "independent_retest_within_reserve_budget"})
+        candidate, reference = "D", "U"
+        meaning = "inline_backup_service"
+        a = dict(groups.get((scenario, candidate), []))
+        b = dict(groups.get((scenario, reference), []))
+        paired = sorted(set(a) & set(b))
+        if len(a) != len(groups.get((scenario, candidate), [])) or \
+                len(b) != len(groups.get((scenario, reference), [])):
+            raise ValueError("duplicate round identity")
+        complete = paired == [1, 2, 3]
+        blocked = candidate in report.get("blocked_groups", {}) or reference in report.get("blocked_groups", {})
+        complete = complete and not blocked
+        ratios = {}
+        common = set.intersection(*(set(a[r]) & set(b[r]) for r in paired)) if paired else set()
+        for key in sorted(common):
+            values = [{"round": number,
+                       "value": 1 - a[number][key] / b[number][key]
+                       if key == "ops_per_sec" else a[number][key] / b[number][key] - 1}
+                      for number in paired if b[number][key] > 0]
+            if len(values) == len(paired) and values:
+                ratios[key] = {"pairs": values, **distribution([value["value"] for value in values])}
+        comparison = {"scenario": scenario, "candidate": candidate, "reference": reference,
+                      "meaning": meaning, "complete": complete, "paired_rounds": paired,
+                      "degradation": ratios,
+                      "sync_semantics": "additional_backup_service_cost" if scenario == "sync"
+                      else "inline_comparison"}
+        comparisons.append(comparison)
+        exceeded = [key for key, threshold in (("ops_per_sec", .1), ("lifecycle_us", .1),
+                                               ("p99_us", .2))
+                    if complete and key in ratios and ratios[key]["median"] > threshold]
+        if exceeded:
+            triggers.append({"scenario": scenario, "candidate": candidate,
+                             "reference": reference, "metrics": exceeded,
+                             "action": "independent_retest_within_reserve_budget"})
     return {"protocol": PROTOCOL, "profile": report.get("profile"), "state": report.get("state"),
             "absolute": absolute, "comparisons": comparisons, "retest_triggers": triggers,
             "omitted": omitted,
@@ -156,11 +154,10 @@ def report_markdown(report, summary=None):
     title = "\u65b0\u7248 Metabypass \u53ef\u7528\u6027\u4e0e\u6027\u80fd\u7b5b\u67e5"
     lines = ["# " + title, "", "State: **" + report["state"] + "**; profile: " +
              report["profile"] + "; protocol: " + PROTOCOL + ".", "",
-             "\u5386\u53f2\u5b9e\u9a8c\uff1a[\u603b\u89c8](../history.zh-CN.md)\u3002", "",
              "\u7ed3\u8bba\uff1a" + ("\u7ed3\u679c\u5b8c\u6574\uff0c\u53ef\u67e5\u770b\u4e0b\u8868\u3002"
              if summary["ranking_allowed"] else
              "\u5c1a\u672a\u6ee1\u8db3\u6b63\u5f0f\u5b8c\u6574\u9a8c\u6536\u6761\u4ef6\uff0c\u4e0d\u53d1\u5e03\u6027\u80fd\u6392\u540d\u3002"), "",
-             "U: upstream v11.8.1 inline SSD; B: BlobDB SSD/HDD; D: backup; S: staging.", "",
+             "U: upstream v11.8.1 inline SSD. D: inline MetaBypass with HDD backup.", "",
              "\u6574\u4f53 incomplete \u65f6\uff0c\u4ec5\u5217\u51fa\u901a\u8fc7\u529f\u80fd\u95e8\u7981\u4e14\u5177\u5907\u5b8c\u6574\u4e09\u8f6e\u914d\u5bf9\u7684\u914d\u7f6e\u3002", "",
              "\u4e0b\u8868\u4e3a\u6709\u6548\u6837\u672c\u7684\u7edd\u5bf9\u503c\uff0c\u4e2d\u4f4d\u6570 [min, max]\u3002"
              "\u4e09\u8f6e\u4ec5\u7528\u4e8e\u7b5b\u67e5\uff0c\u4e0d\u8868\u793a\u7edf\u8ba1\u663e\u8457\u6027\u3002", "",
@@ -176,8 +173,8 @@ def report_markdown(report, summary=None):
     lines += ["", "\u9000\u5316\u53e3\u5f84\uff1a\u541e\u5410\u4e3a 1 - candidate/reference\uff1b"
               "\u5ef6\u8fdf\u548c\u8d44\u6e90\u4e3a candidate/reference - 1\u3002"
               "\u540c\u8f6e\u914d\u5bf9\u5dee\u5f02\u89c1 summary.json\u3002", "",
-              "\u540c\u6b65\u5199\uff1aU/B \u4fdd\u8bc1\u539f\u751f WAL \u6301\u4e45\u5316\uff1b"
-              "D/S \u8fd8\u4fdd\u8bc1 HDD \u5907\u4efd\u8986\u76d6\u3002\u6bd4\u503c\u4e3a\u989d\u5916\u670d\u52a1\u6210\u672c\u3002", "",
+              "\u540c\u6b65\u5199\uff1aU \u4fdd\u8bc1\u539f\u751f WAL \u6301\u4e45\u5316\uff1b"
+              "D \u8fd8\u4fdd\u8bc1 HDD \u5907\u4efd\u8986\u76d6\u3002\u6bd4\u503c\u4e3a\u989d\u5916\u670d\u52a1\u6210\u672c\u3002", "",
               "\u53ea\u8bfb\u4e09\u8f6e\u590d\u7528\u5404\u7ec4\u9759\u6001\u6570\u636e\u96c6\uff0c"
               "\u662f\u72ec\u7acb\u8ba1\u65f6\u7a97\u53e3\u3002\u5fc5\u987b\u7ed3\u5408 diskstats \u4e0e mincore \u5224\u65ad\u5b9e\u9645\u8bfb\u53d6\u3002", "",
               "\u8bbe\u5907\u603b\u8bfb\u5199\u91cf\u5305\u542b\u5176\u4ed6\u8fdb\u7a0b\uff0c\u4e0d\u76f4\u63a5\u7b49\u540c SST \u6d41\u91cf\u6216\u5f15\u64ce\u5199\u653e\u5927\u3002", ""]

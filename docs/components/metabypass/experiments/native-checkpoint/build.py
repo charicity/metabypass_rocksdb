@@ -85,7 +85,9 @@ def main():
     marker = out / ".mb-native-build"
     if not marker.exists() and any(out.iterdir()):
         p.error("build directory must be empty or owned by this builder")
-    marker.write_text("metabypass-native-perf-v1\n")
+    if marker.exists() and marker.read_text().strip() != "metabypass-native-perf-v2":
+        p.error("use a new build directory for this protocol")
+    marker.write_text("metabypass-native-perf-v2\n")
     # An interrupted rebuild must never leave an apparently valid manifest.
     (out / "build.json").unlink(missing_ok=True)
     upstream = out / "upstream-source"
@@ -103,7 +105,7 @@ def main():
             source.rename(upstream)
     upstream_digest = verify_upstream(upstream)
     before = identity()
-    metadata = {"protocol": "metabypass-native-perf-v1", "build_type": "Release",
+    metadata = {"protocol": "metabypass-native-perf-v2", "build_type": "Release",
                 "created_unix": time.time(), "source": before,
                 "upstream_commit": UPSTREAM, "jobs": a.jobs,
                 "upstream_tree_sha256": upstream_digest,

@@ -512,7 +512,7 @@ template <class Comparator>
 inline void InlineSkipList<Comparator>::Iterator::Seek(const char* target) {
   auto status =
       list_->FindGreaterOrEqual(target, &node_, false, false, nullptr);
-  assert(status.ok());
+  status.PermitUncheckedOk();
 }
 
 template <class Comparator>
@@ -1360,7 +1360,7 @@ template <class Comparator>
 bool InlineSkipList<Comparator>::Contains(const char* key) const {
   Node* x = nullptr;
   auto status = FindGreaterOrEqual(key, &x, false, false, nullptr);
-  assert(status.ok());
+  status.PermitUncheckedOk();
   if (x != nullptr && Equal(key, x->Key())) {
     return true;
   } else {

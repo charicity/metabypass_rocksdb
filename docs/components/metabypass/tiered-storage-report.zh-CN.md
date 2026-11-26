@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 > Historical experiment/review record for the earlier DirectWrite architecture.
 > This document does not specify current behavior or format compatibility. See
 > [native checkpoint design](index.md) for the current implementation.
@@ -10,7 +12,7 @@
 
 ## 实现、原理与链路
 
-- [分离存储与迁移](../../../utilities/metabypass/tiered_storage.cc)：新写入进入快盘，后台把原始 blob 字节拆成最大 256 KiB 的不可变数据段；读取校验副本后同步数据、描述文件和目录。描述文件和恢复点的 `BLOB-MAP` 绑定具体字节范围，后续追加不会覆写旧点内容。
+- `分离存储与迁移` (at Git revision `3954f74cb`)：新写入进入快盘，后台把原始 blob 字节拆成最大 256 KiB 的不可变数据段；读取校验副本后同步数据、描述文件和目录。描述文件和恢复点的 `BLOB-MAP` 绑定具体字节范围，后续追加不会覆写旧点内容。
 - [原生索引备份](../../../utilities/metabypass/backup.cc)：保留 WAL/元数据双队列、镜像线程和校验发布线程。候选点等待 blob 依赖时，镜像继续推进；依赖完整持久化后才替换恢复点指针。
 - [入口与同步屏障](../../../utilities/metabypass/metabypass_db.cc)：前台在进入 DB 之前预留暂存预算；同步写在退出原生写入、释放准入锁后等待恢复点，允许多个请求由同一点覆盖。
 - 空间压力通过 blob manager 的 `SealForSpace` 封口当前及待 flush 代的文件，保留代归属，不主动 flush memtable。已迁移文件先让新读取走慢盘，再等待旧本地读取结束并淘汰，避免持续读取饿死空间回收。
@@ -21,7 +23,7 @@
 
 ## 性能实验
 
-[原始数据与完整命令](experiments/tiered-benchmark.json) · [复现实验脚本](experiments/tiered_benchmark.py)
+[原始数据与完整命令](experiments/tiered-benchmark.json) · `复现实验脚本` (at Git revision `3954f74cb`)
 
 Release 构建：`AUTO_CLEAN=1 DEBUG_LEVEL=0 make -j8 db_bench`。
 每组 2,000 次 Put、value 1,024 字节、`sync=false`，重复 3 次，表中为各指标中位数。

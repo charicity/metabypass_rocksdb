@@ -10,23 +10,32 @@ import tempfile
 import unittest
 
 from run import (allocated_bytes, backpressure_report_markdown, execute,
-                 RunFailure, summarize, validate_result)
+                 PROTOCOL, RunFailure, summarize, validate_result)
 
 
 class RunnerTest(unittest.TestCase):
     def backpressure_result(self):
-        return {"status": "OK", "exit": 0, "metrics": {
+        return {"protocol": PROTOCOL, "status": "OK", "exit": 0, "metrics": {
             "successful_ops": 16384, "foreground_us": 100, "sync_us": 20,
             "close_us": 10, "total_us": 130, "p99_ns": 5,
             "cpu_user_us": 10, "cpu_system_us": 5, "peak_rss_kib": 1000,
             "recovery_points": 1, "foreground_backpressure_us": 4,
             "backpressure_us": 5, "queue_peak_bytes": 1024,
-            "queue_capacity_bytes": 2 * 1024**2, "injected_wait_us": 1000,
+            "queue_capacity_bytes": 2 * 1024**2,
+            "wal_queue_capacity_bytes": 1792 * 1024,
+            "metadata_queue_capacity_bytes": 256 * 1024, "injected_wait_us": 1000,
             "delayed_append_calls": 1, "delayed_sync_calls": 0,
             "delayed_fsync_calls": 0, "delayed_named_sync_calls": 0}}
 
     def check_backpressure_write(self, result):
         validate_result(result, "write", 16384, "current", "backpressure")
+
+    def test_backpressure_result_requires_current_protocol(self):
+        self.check_backpressure_write(self.backpressure_result())
+        result = self.backpressure_result()
+        result["protocol"] = "metabypass-quick-v1"
+        with self.assertRaisesRegex(RunFailure, "protocol mismatch"):
+            self.check_backpressure_write(result)
 
     def test_backpressure_requires_positive_foreground_and_total_wait(self):
         for metric in ("foreground_backpressure_us", "backpressure_us"):
@@ -42,9 +51,17 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaises(RunFailure):
             self.check_backpressure_write(result)
 
+    def test_backpressure_rejects_wrong_queue_split_with_same_total(self):
+        result = self.backpressure_result()
+        result["metrics"]["wal_queue_capacity_bytes"] -= 1
+        result["metrics"]["metadata_queue_capacity_bytes"] += 1
+        with self.assertRaises(RunFailure):
+            self.check_backpressure_write(result)
+
     def test_backpressure_requires_all_metrics(self):
         for metric in ("foreground_backpressure_us", "backpressure_us",
                        "queue_peak_bytes", "queue_capacity_bytes",
+                       "wal_queue_capacity_bytes", "metadata_queue_capacity_bytes",
                        "injected_wait_us", "delayed_append_calls"):
             with self.subTest(metric=metric):
                 result = self.backpressure_result()
@@ -58,7 +75,7 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaises(RunFailure):
             self.check_backpressure_write(result)
 
-    def test_backpressure_report_has_no_three_way_speed_ratio(self):
+    def test_backpressure_report_has_no_speed_ratio(self):
         report = {"state": "complete", "summary": {
             "samples": 1, "metrics": self.backpressure_result()["metrics"]}}
         markdown = backpressure_report_markdown(report)
@@ -67,7 +84,6 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn("ops/s", markdown)
         self.assertNotIn("relative to", markdown)
         self.assertNotIn("baseline", markdown)
-        self.assertNotIn("upstream", markdown)
 
     def test_failed_verification_excludes_fast_write(self):
         def row(foreground, sync, valid=True):

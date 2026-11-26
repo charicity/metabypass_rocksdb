@@ -1,8 +1,16 @@
-# Recovery-point content-scan ablation
+# Metabypass experiments
 
-For the classified archive of all experiment series, architecture applicability,
-and evidence availability, see [历史实验分类与证据索引](history.zh-CN.md).
-The content-scan ablation below is retained as a historical DirectWrite report.
+The current drivers use inline values and whole SSTs.
+
+- [Quick checks](quick/README.zh-CN.md)
+- [Native checkpoint performance](native-checkpoint/README.zh-CN.md)
+- [Whole-SST placement](sst_tiering/README.md)
+
+The remainder of this file records an earlier recovery-point content-scan
+experiment. Reproduce its historical commands from Git revision
+`3954f74cb4593b2ef8a15def2a96709554a70ccf`, which contains the runner and patch.
+
+## Historical recovery-point content-scan ablation
 
 This experiment measures the cost of content rescanning in `Backup::Publish`.
 The patch is an ablation for timing, not a supported configuration or a safe
@@ -143,8 +151,8 @@ preceding point retained and its space usage even for identical mirrored
 bytes. No SIGKILL or recovery-success claim is made for the ablated variant.
 
 Raw commands, output, timings, ranges and binary SHA-256 hashes are saved in
-[results.json](results.json). [run_scan_ablation.py](run_scan_ablation.py) is
-the runner; [skip_content_scans.patch](skip_content_scans.patch) is the exact
+[results.json](results.json). `run_scan_ablation.py` (at Git revision `3954f74cb`) is
+the runner; `skip_content_scans.patch` (at Git revision `3954f74cb`) is the exact
 experimental change. No production option or public API was added. The
 experiment release build passed; the runner completed with exit code 0 and
 was syntax checked. Existing functional/full-suite results for the unchanged

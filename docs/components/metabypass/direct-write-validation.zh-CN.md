@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 # DirectWrite 实施与关键验证交接
 
 记录日期：2026-10-20 UTC。基线为 `23e242cba`，结果对应本轮修改后的工作树。
@@ -156,8 +158,8 @@ condition variable 在 20 秒内等待实际延期事件，保留计数、保护
 真实设备父目录为 `/home/lj/{ssd,hdd}/metabypass_test`，现有 8 GiB cgroup 的空闲与归属
 必须重新确认；继续使用 lj 现有权限，不改全局 swap、缓存、挂载或调度设置。
 
-完整三臂、三轮及 162 样本矩阵见[DirectWrite 比较协议](experiments/direct-write/README.zh-CN.md)，
-结果填写[报告模板](experiments/direct-write/report-template.zh-CN.md)。
+完整三臂、三轮及 162 样本矩阵见`DirectWrite 比较协议` (at Git revision `3954f74cb`)，
+结果填写`报告模板` (at Git revision `3954f74cb`)。
 三臂为 `original1s`、`newfalse5s`、`newtrue5s`，每臂 54 样本；原版 1000 ms，
 新版两臂均 5000 ms，18 个场景只生成 36 项配对比较。
 `newtrue5s/newfalse5s` 比较可用 DirectWrite 配置组合，因为前者必须关闭并发 memtable 写，
@@ -184,7 +186,7 @@ insert false/true，均 round 1、4 线程、16 GiB ample staging。保留原前
 4096 抽样 verify、HDD Restore、append-reopen 和 1800 秒进展停滞 watchdog，任一失败即停止。
 六项全部有效通过并记录 `qualification_completed` 后，才允许在新输出目录完整运行 162 样本；
 资格检查仅为诊断，禁止总体排名，不与正式样本混合。命令及身份归档要求见
-[当前比较协议](experiments/direct-write/README.zh-CN.md)。
+`当前比较协议` (at Git revision `3954f74cb`)。
 
 本轮 verify、Restore 后校验、append-reopen 使用相同 `metabypass-key-sample-v1` 策略：
 实际 min(4096, keys)，唯一排序集合含 key0/末 key/各分区首尾和存在的 live/deleted 代表，

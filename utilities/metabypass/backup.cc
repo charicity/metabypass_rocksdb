@@ -7,16 +7,27 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cstring>
 #include <limits>
 #include <sstream>
 
 #include "file/filename.h"
 #include "test_util/sync_point.h"
-#include "util/crc32c.h"
+#include "util/string_util.h"
+#include "utilities/metabypass/sst_storage.h"
+#include "utilities/metabypass/wal_breakdown.h"
 
 namespace ROCKSDB_NAMESPACE {
 namespace metabypass {
+#ifdef ROCKSDB_MB_WAL_BREAKDOWN
+namespace wal_probe {
+thread_local Trace* active = nullptr;
+thread_local bool mirror_append = false;
+}  // namespace wal_probe
+#endif
 namespace {
+constexpr size_t kMaxWalBatchEvents = 256;
+
 uint64_t Now() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
@@ -25,36 +36,128 @@ uint64_t Now() {
 IOStatus AsIO(const Status& s) {
   return s.ok() ? IOStatus::OK() : IOStatus::IOError(s.ToString());
 }
-bool SafeName(const std::string& s) {
-  return !s.empty() && s != "." && s != ".." &&
-         s.find_first_of("/\\ \t\r\n") == std::string::npos;
+bool IsCheckpointFile(const std::string& name, FileType* type) {
+  if (name.find_first_of("/\\ \t\r\n\v\f") != std::string::npos ||
+      name.find('\0') != std::string::npos)
+    return false;
+  uint64_t number;
+  WalFileType wal_type;
+  if (!ParseFileName(name, &number, type, &wal_type)) return false;
+  switch (*type) {
+    case kCurrentFile:
+    case kDescriptorFile:
+    case kIdentityFile:
+    case kTableFile:
+      return true;
+    case kOptionsFile:
+      return name.find_first_not_of("0123456789",
+                                    kOptionsFileNamePrefix.size()) ==
+             std::string::npos;
+    case kWalFile:
+      return wal_type == kAliveLogFile;
+    default:
+      return false;
+  }
 }
-Status ReadPublishedInventory(FileSystem* fs, const std::string& backup,
-                              std::string* point, std::string* inventory) {
-  std::string owner;
-  Status s = Read(fs, backup + "/METABYPASS-IDENTITY", &owner);
+bool ReadDecimal(std::istream& input, uint64_t* value) {
+  std::string token;
+  if (!(input >> token)) return false;
+  Slice digits(token);
+  return ConsumeDecimalNumber(&digits, value) && digits.empty();
+}
+Status ReadRecoveryBoundary(FileSystem* fs, const std::string& point,
+                            Backup::RecoveryPoint* recovery) {
+  std::string metadata;
+  Status s = Read(fs, point + "/RECOVERY", &metadata);
+  if (s.IsNotFound() || s.IsPathNotFound())
+    return Status::Corruption("missing checkpoint recovery boundary", point);
   if (!s.ok()) return s;
-  std::string pointer;
-  s = Read(fs, backup + "/LATEST", &pointer);
-  if (!s.ok()) return s;
-  std::istringstream p(pointer);
-  std::string name;
-  uint32_t inventory_crc;
-  if (!(p >> name >> inventory_crc) || !SafeName(name) ||
-      name.compare(0, 6, "point-") != 0)
-    return Status::Corruption("invalid published pointer");
-  *point = backup + "/" + name;
-  std::string identity;
-  s = Read(fs, *point + "/IDENTITY", &identity);
-  if (!s.ok()) return s;
-  if (identity != owner) return Status::Corruption("backup identity mismatch");
-  s = Read(fs, *point + "/INVENTORY", inventory);
-  if (!s.ok()) return s;
-  if (crc32c::Value(inventory->data(), inventory->size()) != inventory_crc)
-    return Status::Corruption("published inventory checksum");
-  if (inventory->compare(0, 5, "MBI5\n") != 0)
-    return Status::NotSupported("Metabypass inventory format");
+
+  std::istringstream fields(metadata);
+  std::string extra;
+  if (!ReadDecimal(fields, &recovery->sequence) ||
+      !ReadDecimal(fields, &recovery->wal_floor) || (fields >> extra)) {
+    return Status::Corruption("invalid checkpoint recovery boundary", point);
+  }
   return Status::OK();
+}
+Status ReadPublishedPoint(FileSystem* fs, const std::string& backup,
+                          const std::string& latest,
+                          Backup::RecoveryPoint* recovery) {
+  Status s = ParseLatestPoint(latest, &recovery->name);
+  if (!s.ok()) return s;
+  const std::string point = backup + "/" + recovery->name;
+  s = Read(fs, backup + "/METABYPASS-IDENTITY", &recovery->identity);
+  if (!s.ok()) return s;
+  std::string identity;
+  s = Read(fs, point + "/IDENTITY", &identity);
+  if (!s.ok()) return s;
+  if (identity != recovery->identity)
+    return Status::Corruption("backup identity mismatch");
+  std::string inventory;
+  s = Read(fs, point + "/INVENTORY", &inventory);
+  if (!s.ok()) return s;
+  if (inventory.compare(0, 5, "MBI7\n") != 0)
+    return Status::NotSupported("Metabypass inventory format");
+  s = ReadRecoveryBoundary(fs, point, recovery);
+  if (!s.ok()) return s;
+  std::istringstream entries(inventory.substr(5));
+  std::string line;
+  while (std::getline(entries, line)) {
+    std::istringstream row(line);
+    std::string file, extra;
+    uint64_t length;
+    FileType type;
+    if (!(row >> file) || !ReadDecimal(row, &length) || (row >> extra) ||
+        !IsCheckpointFile(file, &type) ||
+        !recovery->files.emplace(file, length).second)
+      return Status::Corruption("invalid checkpoint inventory entry", line);
+  }
+  if (recovery->files.empty())
+    return Status::Corruption("empty checkpoint inventory");
+  for (const auto& file : recovery->files) {
+    const std::string path = point + "/" + file.first;
+    uint64_t size;
+    s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
+    if (!s.ok()) return s;
+    if (size != file.second)
+      return Status::Corruption("published file size", path);
+  }
+  return Status::OK();
+}
+Status ExtendWal(FileSystem* fs, const std::string& source,
+                 const std::string& target, uint64_t size) {
+  uint64_t prefix = 0;
+  Status s = fs->FileExists(target, IOOptions(), nullptr);
+  if (s.ok()) {
+    s = fs->GetFileSize(target, IOOptions(), &prefix, nullptr);
+    if (!s.ok()) return s;
+  } else if (!s.IsNotFound() && !s.IsPathNotFound())
+    return s;
+  if (prefix >= size) return Status::OK();
+  // Reopen appends: a restart or failed append cannot destroy the previously
+  // surviving prefix. The same rule preserves the checkpoint's trusted bytes.
+  std::unique_ptr<FSRandomAccessFile> reader;
+  std::unique_ptr<FSWritableFile> writer;
+  s = fs->NewRandomAccessFile(source, FileOptions(), &reader, nullptr);
+  if (s.ok())
+    s = fs->ReopenWritableFile(target, FileOptions(), &writer, nullptr);
+  std::string buffer(64 * 1024, '\0');
+  while (s.ok() && prefix < size) {
+    Slice bytes;
+    size_t count = std::min<uint64_t>(buffer.size(), size - prefix);
+    s = reader->Read(prefix, count, IOOptions(), &bytes, buffer.data(),
+                     nullptr);
+    if (s.ok() && bytes.size() != count)
+      s = Status::Corruption("short incremental WAL");
+    if (s.ok()) s = writer->Append(bytes, IOOptions(), nullptr);
+    prefix += count;
+  }
+  if (writer) {
+    if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
+    s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
+  }
+  return s;
 }
 Status RemoveRetiredPoint(FileSystem* fs, const std::string& path) {
   std::vector<std::string> files;
@@ -69,6 +172,67 @@ Status RemoveRetiredPoint(FileSystem* fs, const std::string& path) {
   return fs->DeleteDir(path, IOOptions(), nullptr);
 }
 }  // namespace
+
+void WriteGate::Admit() {
+  uint64_t state = state_.load(std::memory_order_relaxed);
+  for (;;) {
+    if (state & kClosed) {
+      TEST_SYNC_POINT("MetaBypass::WriteGateAdmissionBlocked");
+      Wait(state, std::memory_order_relaxed);
+      state = state_.load(std::memory_order_relaxed);
+      continue;
+    }
+    assert(state < kClosed - 1);
+    if (state_.compare_exchange_weak(state, state + 1,
+                                     std::memory_order_acquire,
+                                     std::memory_order_relaxed)) {
+      TEST_SYNC_POINT("MetaBypass::WriteGateAdmitted");
+      return;
+    }
+  }
+}
+
+void WriteGate::Leave() {
+  if (state_.fetch_sub(1, std::memory_order_release) == kClosed + 1) Notify();
+}
+
+void WriteGate::CloseAndDrain() {
+  uint64_t state = state_.fetch_or(kClosed, std::memory_order_acquire);
+  assert(!(state & kClosed));
+  state |= kClosed;
+  TEST_SYNC_POINT("MetaBypass::WriteGateClosed");
+  while (state != kClosed) {
+    Wait(state, std::memory_order_acquire);
+    state = state_.load(std::memory_order_acquire);
+  }
+}
+
+void WriteGate::Reopen() {
+  assert(state_.load(std::memory_order_relaxed) == kClosed);
+  state_.store(0, std::memory_order_release);
+  Notify();
+  TEST_SYNC_POINT("MetaBypass::WriteGateReopened");
+}
+
+void WriteGate::Wait(uint64_t observed, std::memory_order order) {
+#if ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
+  state_.wait(observed, order);
+#else
+  std::unique_lock<std::mutex> lock(wait_mutex_);
+  wait_cv_.wait(lock, [&] { return state_.load(order) != observed; });
+#endif
+}
+
+void WriteGate::Notify() {
+#if ROCKSDB_MB_WRITE_GATE_ATOMIC_WAIT
+  state_.notify_all();
+#else
+  // Synchronize with the predicate check and transition to waiting.
+  std::lock_guard<std::mutex> lock(wait_mutex_);
+  wait_cv_.notify_all();
+#endif
+}
+
 class MirrorWriter : public FSWritableFileOwnerWrapper {
  public:
   MirrorWriter(std::unique_ptr<FSWritableFile> file, Backup* backup,
@@ -107,25 +271,55 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   IOStatus AppendInternal(const Slice& bytes, const IOOptions& o,
                           const DataVerificationInfo* verification,
                           IODebugContext* d) {
-    std::lock_guard<std::mutex> serial(channel_.operations);
-    Backup::Event e{Backup::Kind::kAppend, name_, {}, {}};
-    e.charge = sizeof(e) + name_.size() + bytes.size();
+    const bool wal = backup_->IsWalChannel(channel_);
+#ifdef ROCKSDB_MB_WAL_BREAKDOWN
+    wal_probe::MirrorAppend append(wal_probe::active && wal);
+#endif
+    MB_WAL_SPAN(build, event_build, wal_probe::mirror_append);
+    Backup::Event e{Backup::Kind::kAppend, name_, {}};
+    e.charge = sizeof(Backup::ChargedEventLayout) + name_.size() + bytes.size();
+    MB_WAL_END(build);
+    MB_WAL_SPAN(wait, operations_wait, wal_probe::mirror_append);
+    std::unique_lock<std::mutex> serial(channel_.operations);
+    MB_WAL_END(wait);
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) return AsIO(s);
     TEST_SYNC_POINT_CALLBACK("MetaBypass::PrimaryReserved", &e.name);
-    e.bytes.assign(bytes.data(), bytes.size());
+    MB_WAL_SPAN(copy, payload_copy, wal_probe::mirror_append);
+    if (wal && bytes.size() >= 32 && bytes.size() <= 1024) {
+      auto& block = backup_->wal_block_;
+      auto& used = backup_->wal_block_used_;
+      if (!block || sizeof(block->data) - used < bytes.size()) {
+        block = std::make_shared<Backup::WalBlock>();
+        used = 0;
+      }
+      char* dest = block->data + used;
+      std::memcpy(dest, bytes.data(), bytes.size());
+      used += bytes.size();
+      e.shared_bytes = std::shared_ptr<const char>(block, dest);
+      e.size = bytes.size();
+    } else {
+      e.contents.assign(bytes.data(), bytes.size());
+    }
+    MB_WAL_END(copy);
     IOStatus primary = verification
                            ? target()->Append(bytes, o, *verification, d)
                            : target()->Append(bytes, o, d);
-    backup_->Finish(channel_, std::move(e), primary);
+    if (wal) {
+      const bool wake = backup_->FinishWal(std::move(e), primary);
+      serial.unlock();
+      if (wake) backup_->SignalMirror();
+    } else {
+      backup_->Finish(channel_, std::move(e), primary);
+    }
     return primary;
   }
   IOStatus Control(Backup::Kind kind, uint64_t n, const IOOptions& o,
                    IODebugContext* d) {
     std::lock_guard<std::mutex> serial(channel_.operations);
-    Backup::Event e{kind, name_, {}, {}};
+    Backup::Event e{kind, name_, {}};
     e.size = n;
-    e.charge = sizeof(e) + name_.size();
+    e.charge = sizeof(Backup::ChargedEventLayout) + name_.size();
     Status s = backup_->Reserve(channel_, e.charge);
     if (!s.ok()) {
       if (kind == Backup::Kind::kClose)
@@ -142,15 +336,74 @@ class MirrorWriter : public FSWritableFileOwnerWrapper {
   std::string name_;
   Backup::Channel& channel_;
 };
-Backup::Backup(std::shared_ptr<SeparatedStorage> storage, std::string index,
-               MetaBypassOptions options, Options db_options)
-    : FileSystemWrapper(storage),
-      storage_(std::move(storage)),
-      disk_(storage_->target()),
+Backup::WalQueue::WalQueue()
+    : tail(nullptr), head(std::make_unique<Segment>()) {
+  tail = head.get();
+}
+
+void Backup::WalQueue::Prepare() {
+  if (tail_slot == kSlots) {
+    tail->next = std::make_unique<Segment>();
+    tail = tail->next.get();
+    tail_slot = 0;
+  }
+}
+
+bool Backup::WalQueue::Publish(Event&& event) {
+  auto& slot = tail->events[tail_slot];
+  slot.emplace(std::move(event));
+  uint64_t expected = tail_count;
+  // Also pairs with the metadata wake threshold check. A failed CAS can
+  // only mean that shutdown or failure sealed the queue.
+  if (!published.compare_exchange_strong(expected, tail_count + 1)) {
+    assert(expected & kClosed);
+    slot.reset();
+    return false;
+  }
+  ++tail_count;
+  ++tail_slot;
+  return true;
+}
+
+const Backup::Event& Backup::WalQueue::Front() const {
+  return head_slot == kSlots ? *head->next->events[0]
+                             : *head->events[head_slot];
+}
+
+Backup::Event Backup::WalQueue::Pop() {
+  if (head_slot == kSlots) {
+    auto next = std::move(head->next);
+    head = std::move(next);
+    head_slot = 0;
+  }
+  auto& slot = head->events[head_slot++];
+  Event event = std::move(*slot);
+  slot.reset();
+  return event;
+}
+
+uint64_t Backup::WalQueue::ChargedBytes() const {
+  uint64_t returned_before;
+  uint64_t reserved_snapshot;
+  // Refunds run outside the queue mutex. Bracket the reservation read with
+  // the same returned total to avoid mixing counts from different batches.
+  do {
+    returned_before = returned.load(std::memory_order_acquire);
+    reserved_snapshot = reserved.load(std::memory_order_acquire);
+  } while (returned_before != returned.load(std::memory_order_acquire));
+  return reserved_snapshot - returned_before;
+}
+
+Backup::Backup(std::shared_ptr<FileSystem> fs, std::string index,
+               MetaBypassOptions options, std::shared_ptr<SstStorage> sst)
+    : FileSystemWrapper(sst ? std::shared_ptr<FileSystem>(sst) : fs),
+      fs_(std::move(fs)),
+      sst_(sst.get()),
+      disk_(fs_.get()),
       index_(std::move(index)),
       options_(std::move(options)),
-      db_options_(std::move(db_options)),
-      work_(options_.backup_dir + "/work") {}
+      work_(options_.backup_dir + "/work"),
+      wal_wake_charge_(options_.batch_bytes) {}
 Backup::~Backup() {
   Stop().PermitUncheckedError();
   if (lock_)
@@ -161,14 +414,14 @@ Backup::~Backup() {
 std::string Backup::Base(const std::string& path) const {
   return path.substr(index_.size() + 1);
 }
-bool Backup::Tracked(const std::string& path) const {
+bool Backup::Tracked(const std::string& path, bool include_tables) const {
   if (path.compare(0, index_.size() + 1, index_ + "/") != 0) return false;
   uint64_t number;
   FileType type;
   if (!ParseFileName(Base(path), &number, &type)) return false;
-  return type == kWalFile || type == kTableFile || type == kDescriptorFile ||
-         type == kCurrentFile || type == kOptionsFile ||
-         type == kIdentityFile || type == kTempFile;
+  return type == kWalFile || (include_tables && type == kTableFile) ||
+         type == kDescriptorFile || type == kCurrentFile ||
+         type == kOptionsFile || type == kIdentityFile || type == kTempFile;
 }
 Backup::Channel& Backup::ChannelFor(const std::string& name) {
   uint64_t number;
@@ -178,90 +431,66 @@ Backup::Channel& Backup::ChannelFor(const std::string& name) {
   return parsed && type == kWalFile ? wal_channel_ : metadata_channel_;
 }
 Status Backup::Lock() {
-  if (lock_) return Status::OK();
+  assert(!lock_);
   Status s = EnsureDir(disk_, options_.backup_dir);
   if (s.ok())
     s = disk_->LockFile(options_.backup_dir + "/LOCK", IOOptions(), &lock_,
                         nullptr);
   return s;
 }
-Status Backup::Start(bool existing) {
-  Status s = Lock();
+Status Backup::LoadLatest() {
+  assert(lock_);
+  std::string pointer;
+  Status s = Read(disk_, options_.backup_dir + "/LATEST", &pointer);
+  if (s.IsNotFound() || s.IsPathNotFound()) return Status::OK();
   if (!s.ok()) return s;
+  RecoveryPoint recovery;
+  s = ReadPublishedPoint(disk_, options_.backup_dir, pointer, &recovery);
+  if (!s.ok()) return s;
+  Point point{std::move(recovery.name), 0, recovery.wal_floor};
+  std::vector<FileAttributes> attributes;
+  s = disk_->GetChildrenFileAttributes(options_.backup_dir + "/" + point.name,
+                                       IOOptions(), &attributes, nullptr);
+  if (!s.ok()) return s;
+  for (const auto& attribute : attributes) point.bytes += attribute.size_bytes;
+  published_point_ = std::move(point);
+  return Status::OK();
+}
+Status Backup::Start(bool existing) {
+  assert(lock_);
   std::vector<std::string> files;
-  s = disk_->GetChildren(options_.backup_dir, IOOptions(), &files, nullptr);
+  Status s =
+      disk_->GetChildren(options_.backup_dir, IOOptions(), &files, nullptr);
   if (!s.ok()) return s;
   // Generation names are monotonic even after interrupted publication.
   for (const auto& f : files) {
-    if (f.compare(0, 6, "point-") == 0) {
-      std::istringstream in(f.substr(6));
-      uint64_t n;
-      if (in >> n) generation_ = std::max(generation_, n);
-    }
+    if (f.compare(0, 6, "point-") != 0) continue;
+    Slice digits(f.data() + 6, f.size() - 6);
+    uint64_t n;
+    if (!digits.empty() && digits[0] != '0' &&
+        ConsumeDecimalNumber(&digits, &n) && digits.empty())
+      generation_ = std::max(generation_, n);
   }
-  std::string pointer;
-  s = Read(disk_, options_.backup_dir + "/LATEST", &pointer);
-  if (s.ok()) {
-    std::istringstream in(pointer);
-    std::string p;
-    uint32_t inventory_crc;
-    while (in >> p >> inventory_crc) {
-      if (!SafeName(p) || p.compare(0, 6, "point-") != 0)
-        return Status::Corruption("invalid recovery point pointer");
-      Point point{p + " " + std::to_string(inventory_crc), 0, {}};
-      std::string inventory;
-      s = Read(disk_, options_.backup_dir + "/" + p + "/INVENTORY", &inventory);
-      if (!s.ok()) return s;
-      if (crc32c::Value(inventory.data(), inventory.size()) != inventory_crc)
-        return Status::Corruption("published inventory checksum");
-      if (inventory.compare(0, 5, "MBI5\n") != 0)
-        return Status::NotSupported("Metabypass inventory format");
-      std::istringstream entries(inventory.substr(5));
-      std::string kind, file;
-      uint64_t length;
-      uint32_t crc;
-      while (entries >> kind >> file >> length >> crc) {
-        if (kind == "B") {
-          uint64_t number;
-          std::istringstream id(file);
-          if (!(id >> number) || !id.eof())
-            return Status::Corruption("invalid blob inventory entry");
-          point.blobs.insert(number);
-        } else if (kind != "I" && kind != "D") {
-          return Status::Corruption("invalid inventory entry");
-        }
-      }
-      if (!entries.eof()) return Status::Corruption("invalid inventory");
-      points_.push_back(std::move(point));
-    }
-    if (points_.empty() || points_.size() > 2)
-      return Status::Corruption("invalid recovery point pointer");
-  } else if (!s.IsNotFound())
-    return s;
   for (const auto& f : files) {
     if (f.compare(0, 6, "point-") != 0) continue;
-    bool retained = false;
-    for (const auto& point : points_)
-      if (point.Name() == f) retained = true;
-    if (!retained) {
-      s = RemoveDir(disk_, options_.backup_dir + "/" + f);
-      if (!s.ok()) return s;
-    }
-  }
-  s = disk_->FileExists(work_, IOOptions(), nullptr);
-  if (s.ok())
-    s = RemoveDir(disk_, work_);
-  else if (s.IsNotFound())
-    s = Status::OK();
-  if (s.ok()) s = disk_->CreateDir(work_, IOOptions(), nullptr);
-  if (!s.ok()) return s;
-  for (auto& point : points_) {
-    std::vector<FileAttributes> attributes;
-    s = disk_->GetChildrenFileAttributes(
-        options_.backup_dir + "/" + point.Name(), IOOptions(), &attributes,
-        nullptr);
+    if (published_point_ && published_point_->name == f) continue;
+    s = RemoveDir(disk_, options_.backup_dir + "/" + f);
     if (!s.ok()) return s;
-    for (const auto& file : attributes) point.bytes += file.size_bytes;
+  }
+  s = EnsureDir(disk_, work_);
+  if (!s.ok()) return s;
+  std::vector<std::string> previous;
+  s = disk_->GetChildren(work_, IOOptions(), &previous, nullptr);
+  if (!s.ok()) return s;
+  for (const auto& file : previous) {
+    if (file == "." || file == "..") continue;
+    uint64_t number;
+    FileType type;
+    if (ParseFileName(file, &number, &type) && type == kWalFile) {
+      continue;
+    }
+    s = disk_->DeleteFile(work_ + "/" + file, IOOptions(), nullptr);
+    if (!s.ok()) return s;
   }
   if (existing) {
     s = disk_->GetChildren(index_, IOOptions(), &files, nullptr);
@@ -273,65 +502,150 @@ Status Backup::Start(bool existing) {
       if (s.ok()) {
         uint64_t number;
         FileType type;
-        if (storage_->sst() && ParseFileName(f, &number, &type) &&
-            type == kTableFile) {
-          s = disk_->LinkFile(index_ + "/" + f, work_ + "/" + f, IOOptions(),
-                              nullptr);
-          if (!s.ok()) s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
+        if (ParseFileName(f, &number, &type) && type == kWalFile) {
+          TEST_SYNC_POINT("MetaBypass::BeforeWalReseed");
+          s = ExtendWal(disk_, index_ + "/" + f, work_ + "/" + f, size);
+          TEST_SYNC_POINT("MetaBypass::AfterWalReseed");
         } else {
           s = Copy(disk_, index_ + "/" + f, work_ + "/" + f, size);
         }
       }
       if (!s.ok()) return s;
-      closed_.insert(f);
-      epochs_[f] = ++next_epoch_;
     }
   }
   garbage_collector_ = std::thread(&Backup::GarbageCollectLoop, this);
   validator_ = std::thread(&Backup::ValidateLoop, this);
   thread_ = std::thread(&Backup::Run, this);
+  if (options_.enable_recovery_time_sampling)
+    sampler_ = std::thread(&Backup::SampleLoop, this);
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::SamplerStarted", &sampler_);
   return Status::OK();
 }
-Status Backup::Activate(const std::string& identity, DB* db) {
-  for (const auto& dir : {options_.data_dir, options_.backup_dir}) {
-    const std::string path = dir + "/METABYPASS-IDENTITY";
-    std::string owner;
-    Status s = Read(disk_, path, &owner);
-    if (s.IsNotFound()) {
-      s = Write(disk_, path, identity);
-      if (s.ok()) s = SyncDir(disk_, dir);
-    } else if (s.ok() && owner != identity) {
-      return Status::Corruption("Metabypass directory identity mismatch");
-    }
-    if (!s.ok()) return s;
+Status Backup::Activate(const std::string& identity, DB* db,
+                        std::shared_ptr<SystemClock> clock) {
+  const std::string path = options_.backup_dir + "/METABYPASS-IDENTITY";
+  std::string owner;
+  Status s = Read(disk_, path, &owner);
+  if (s.IsNotFound() || s.IsPathNotFound()) {
+    s = Write(disk_, path, identity);
+    if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+  } else if (s.ok() && owner != identity) {
+    return Status::Corruption("Metabypass directory identity mismatch");
   }
+  if (!s.ok()) return s;
   std::lock_guard<std::mutex> lock(mutex_);
   db_ = db;
+  clock_ = std::move(clock);
   identity_ = identity;
   active_ = true;
   validator_cv_.notify_one();
   WakeMirror();
   return Status::OK();
 }
-Status Backup::Reserve(Channel& channel, size_t charge) {
-  std::unique_lock<std::mutex> lock(mutex_);
-  if (charge > options_.queue_capacity)
+bool Backup::IsWalChannel(const Channel& channel) const {
+  return &channel == &wal_channel_;
+}
+
+Status Backup::ReserveWal(size_t charge) {
+  MB_WAL_SPAN(bookkeeping, reserve_bookkeeping, wal_probe::mirror_append);
+  auto& queue = wal_queue_;
+  const size_t capacity = options_.wal_queue_capacity;
+  if (charge > capacity)
     return Status::InvalidArgument(
-        "file operation exceeds Metabypass queue capacity");
-  const uint64_t start = Now();
-  const bool blocked = stats_.queued_bytes > options_.queue_capacity - charge;
+        "file operation exceeds Metabypass WAL queue capacity");
+  auto closed = [&] {
+    return queue.published.load(std::memory_order_relaxed) & WalQueue::kClosed;
+  };
+  auto has_space = [&] {
+    if (queue.reserved_total - queue.cached_returned <= capacity - charge)
+      return true;
+    queue.cached_returned = queue.returned.load(std::memory_order_acquire);
+    return queue.reserved_total - queue.cached_returned <= capacity - charge;
+  };
+  if (!closed() && !has_space()) {
+    const uint64_t start = Now();
+    std::unique_lock<std::mutex> lock(queue.space_mutex);
+    queue.space_return_target = queue.reserved_total - (capacity - charge);
+    queue.waiting_for_space.store(true);
+    SignalMirror();
+    TEST_SYNC_POINT("MetaBypass::Backpressure");
+    MB_WAL_SPAN(capacity_wait_span, capacity_wait, wal_probe::mirror_append);
+    queue.space.wait(lock, [&] { return closed() || has_space(); });
+    MB_WAL_END(capacity_wait_span);
+    queue.waiting_for_space.store(false);
+    queue.backpressure_micros.fetch_add(Now() - start,
+                                        std::memory_order_relaxed);
+  }
+  if (closed()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stats_.error.ok() ? Status::ShutdownInProgress() : stats_.error;
+  }
+  queue.Prepare();
+  const uint64_t peak = queue.peak.load(std::memory_order_relaxed);
+  if (queue.reserved_total - queue.cached_returned + charge > peak) {
+    queue.cached_returned = queue.returned.load(std::memory_order_acquire);
+  }
+  queue.reserved_total += charge;
+  const uint64_t used = queue.reserved_total - queue.cached_returned;
+  if (used > peak) queue.peak.store(used, std::memory_order_relaxed);
+  // Stats acquires the reservation before reading the corresponding peak.
+  queue.reserved.store(queue.reserved_total, std::memory_order_release);
+  return Status::OK();
+}
+
+void Backup::CloseWalQueue() {
+  bool was_closed;
+  {
+    std::lock_guard<std::mutex> lock(wal_queue_.space_mutex);
+    was_closed =
+        wal_queue_.published.fetch_or(WalQueue::kClosed) & WalQueue::kClosed;
+    wal_queue_.space.notify_one();
+  }
+  if (!was_closed) {
+    TEST_SYNC_POINT("MetaBypass::WalQueueSealed");
+  }
+}
+
+void Backup::ReturnWalBytes(uint64_t charge, uint64_t mirrored_bytes) {
+  auto& queue = wal_queue_;
+  std::lock_guard<std::mutex> lock(queue.space_mutex);
+  const uint64_t returned = queue.returned.load(std::memory_order_relaxed);
+  if (mirrored_bytes != 0) {
+    queue.mirrored_bytes.store(
+        queue.mirrored_bytes.load(std::memory_order_relaxed) + mirrored_bytes,
+        std::memory_order_relaxed);
+  }
+  // Stats acquires returned before loading the mirrored byte count.
+  queue.returned.store(returned + charge, std::memory_order_release);
+  if (queue.waiting_for_space.load(std::memory_order_relaxed)) {
+    // Compare the bytes returned by this batch with the unsigned distance to
+    // the target, including when the cumulative counters wrap.
+    const uint64_t needed = queue.space_return_target - returned;
+    if (needed != 0 && needed <= charge) queue.space.notify_one();
+  }
+}
+
+Status Backup::Reserve(Channel& channel, size_t charge) {
+  if (IsWalChannel(channel)) return ReserveWal(charge);
+  std::unique_lock<std::mutex> lock(mutex_);
+  const size_t capacity = options_.metadata_queue_capacity;
+  if (charge > capacity)
+    return Status::InvalidArgument(
+        "file operation exceeds Metabypass metadata queue capacity");
+  const bool blocked = stats_.queued_bytes > capacity - charge;
   if (blocked) {
-    assert(channel.waiting_charge == 0);
-    channel.waiting_charge = charge;
+    const uint64_t start = Now();
+    assert(metadata_channel_.waiting_charge == 0);
+    metadata_channel_.waiting_charge = charge;
     // A reservation can run out of space before reaching batch_bytes.
     // Drain immediately rather than waiting for the batching timer.
     WakeMirror();
     TEST_SYNC_POINT("MetaBypass::Backpressure");
-    channel.capacity.wait(lock, [&] {
+    metadata_channel_.capacity.wait(lock, [&] {
       return stopping_ || !stats_.error.ok() ||
-             stats_.queued_bytes <= options_.queue_capacity - charge;
+             stats_.queued_bytes <= capacity - charge;
     });
-    channel.waiting_charge = 0;
+    metadata_channel_.waiting_charge = 0;
     stats_.backpressure_micros += Now() - start;
   }
   if (!stats_.error.ok()) return stats_.error;
@@ -339,36 +653,60 @@ Status Backup::Reserve(Channel& channel, size_t charge) {
   stats_.queued_bytes += charge;
   stats_.peak_queued_bytes =
       std::max(stats_.peak_queued_bytes, stats_.queued_bytes);
+  UpdateWalWakeCharge();
+  WakeMirror();
   return Status::OK();
 }
 void Backup::Fail(const Status& status) {
-  if (storage_->tier()) storage_->tier()->Cancel(status);
   std::lock_guard<std::mutex> publish(publication_mutex_);
   std::lock_guard<std::mutex> lock(mutex_);
-  if (stats_.error.ok()) stats_.error = status;
+  if (stats_.error.ok()) {
+    stats_.error = status;
+    CloseWalQueue();
+    failed_.store(true, std::memory_order_release);
+  }
   WakeMirror();
   validator_cv_.notify_one();
   gc_cv_.notify_all();
-  WakeCapacity();
+  WakeMetadataCapacity();
   sync_cv_.notify_all();
 }
+bool Backup::FinishWal(Event&& e, const Status& primary) {
+  if (!primary.ok()) Fail(primary);
+  MB_WAL_SPAN(bookkeeping, finish_bookkeeping, wal_probe::mirror_append);
+  auto& queue = wal_queue_;
+  const auto charge = e.charge;
+  if (!primary.ok() || !queue.Publish(std::move(e))) {
+    queue.reserved_total -= charge;
+    queue.reserved.store(queue.reserved_total, std::memory_order_release);
+    return false;
+  }
+  const uint64_t threshold = wal_wake_charge_.load();
+  if (queue.reserved_total - queue.cached_returned < threshold) return false;
+  queue.cached_returned = queue.returned.load(std::memory_order_acquire);
+  return queue.reserved_total - queue.cached_returned >= threshold;
+}
+
 void Backup::Finish(Channel& channel, Event&& e, const Status& primary) {
+  if (IsWalChannel(channel)) {
+    if (FinishWal(std::move(e), primary)) SignalMirror();
+    return;
+  }
   if (!primary.ok()) Fail(primary);
   std::lock_guard<std::mutex> lock(mutex_);
   if (primary.ok() && stats_.error.ok() && !stopping_) {
-    e.seq = ++accepted_;
-    e.queued_micros = Now();
-    if (e.kind == Kind::kRetireBlob) {
-      ++native_changes_;
-      MarkDirty();
-    }
-    channel.queue.push_back(std::move(e));
+    ++accepted_;
+    // The published WAL tail is the ordering point for this metadata event.
+    e.seq = Accepted();
+    TEST_SYNC_POINT("MetaBypass::MetadataSequenceAssigned");
+    metadata_channel_.queue.push_back(std::move(e));
   } else {
     // Failure cleanup owns queued events, but a producer still owns its
     // reservation until Finish. Do not enqueue after either worker has failed.
     assert(stats_.queued_bytes >= e.charge);
     stats_.queued_bytes -= e.charge;
-    WakeCapacity();
+    UpdateWalWakeCharge();
+    WakeMetadataCapacity();
   }
   WakeMirror();
 }
@@ -378,8 +716,8 @@ IOStatus Backup::NewWritableFile(const std::string& p, const FileOptions& o,
   if (!Tracked(p)) return target()->NewWritableFile(p, o, r, d);
   Channel& channel = ChannelFor(Base(p));
   std::lock_guard<std::mutex> serial(channel.operations);
-  Event e{Kind::kCreate, Base(p), {}, {}};
-  e.charge = sizeof(e) + e.name.size();
+  Event e{Kind::kCreate, Base(p), {}};
+  e.charge = sizeof(Backup::ChargedEventLayout) + e.name.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->NewWritableFile(p, o, r, d);
@@ -409,64 +747,37 @@ IOStatus Backup::ReuseWritableFile(const std::string&, const std::string&,
 }
 IOStatus Backup::DeleteFile(const std::string& p, const IOOptions& o,
                             IODebugContext* d) {
-  if (storage_->IsBlob(p)) {
-    if (!options_.enable_blob_file_gc) return IOStatus::OK();
-    Channel& channel = metadata_channel_;
-    std::lock_guard<std::mutex> serial(channel.operations);
-    uint64_t number;
-    FileType type;
-    if (!ParseFileName(Base(p), &number, &type))
-      return IOStatus::Corruption("invalid retiring blob name");
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!retiring_blobs_.insert(number).second) return IOStatus::OK();
-    }
-    Event e{Kind::kRetireBlob, Base(p), {}, {}};
-    e.size = number;
-    e.charge = sizeof(e) + e.name.size();
-    Status s = Reserve(channel, e.charge);
-    if (!s.ok()) return AsIO(s);
-    Finish(channel, std::move(e), Status::OK());
-    return IOStatus::OK();
-  }
   if (!Tracked(p)) return target()->DeleteFile(p, o, d);
   Channel& channel = ChannelFor(Base(p));
   std::lock_guard<std::mutex> serial(channel.operations);
-  Event e{Kind::kDelete, Base(p), {}, {}};
-  e.charge = sizeof(e) + e.name.size();
+  Event e{Kind::kDelete, Base(p), {}};
+  e.charge = sizeof(Backup::ChargedEventLayout) + e.name.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->DeleteFile(p, o, d);
-  Status mirrored = primary;
-  if (!primary.ok()) {
-    // Native obsolete-file cleanup tolerates a file already removed by a
-    // prior purge. Preserve its filesystem result, but mirror the resulting
-    // absence instead of turning that benign race into a sticky DB failure.
-    IOStatus exists = target()->FileExists(p, o, d);
-    if (exists.IsNotFound()) mirrored = Status::OK();
-  }
+  // Mirror the absence left by an earlier purge while preserving the primary
+  // filesystem result for its caller.
+  Status mirrored =
+      primary.IsNotFound() || primary.IsPathNotFound() ? Status::OK() : primary;
   Finish(channel, std::move(e), mirrored);
   return primary;
 }
 IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
                             const IOOptions& o, IODebugContext* d) {
-  if (!Tracked(a) && !Tracked(b)) return target()->RenameFile(a, b, o, d);
-  if (!Tracked(a) || !Tracked(b))
+  if (Tracked(a, true) != Tracked(b, true))
     return IOStatus::NotSupported("cross-boundary rename");
-  Channel& source = ChannelFor(Base(a));
-  Channel& destination = ChannelFor(Base(b));
-  std::unique_lock<std::mutex> first(source.operations, std::defer_lock);
-  std::unique_lock<std::mutex> second(destination.operations, std::defer_lock);
-  if (&source == &destination) {
-    first.lock();
-  } else {
-    std::lock(first, second);
-  }
-  // A cross-channel rename is one globally ordered control event. Holding
-  // both operation locks prevents either file from being modified around it.
-  Channel& channel = &source == &destination ? source : metadata_channel_;
-  Event e{Kind::kRename, Base(a), Base(b), {}};
-  e.charge = sizeof(e) + e.name.size() + e.other.size();
+  const bool tracked_a = Tracked(a);
+  const bool tracked_b = Tracked(b);
+  if (!tracked_a && !tracked_b) return target()->RenameFile(a, b, o, d);
+  if (!tracked_a || !tracked_b)
+    return IOStatus::NotSupported("cross-boundary rename");
+  Event e{Kind::kRename, Base(a), Base(b)};
+  if (IsWalChannel(ChannelFor(e.name)) || IsWalChannel(ChannelFor(e.contents)))
+    return IOStatus::NotSupported("Metabypass WAL rename");
+  Channel& channel = metadata_channel_;
+  std::lock_guard<std::mutex> serial(channel.operations);
+  e.charge =
+      sizeof(Backup::ChargedEventLayout) + e.name.size() + e.contents.size();
   Status s = Reserve(channel, e.charge);
   if (!s.ok()) return AsIO(s);
   IOStatus primary = target()->RenameFile(a, b, o, d);
@@ -475,7 +786,7 @@ IOStatus Backup::RenameFile(const std::string& a, const std::string& b,
 }
 IOStatus Backup::LinkFile(const std::string& a, const std::string& b,
                           const IOOptions& o, IODebugContext* d) {
-  if (Tracked(a) || Tracked(b))
+  if (Tracked(a, true) || Tracked(b, true))
     return IOStatus::NotSupported("Metabypass external links");
   return target()->LinkFile(a, b, o, d);
 }
@@ -496,27 +807,12 @@ Status Backup::Append(const std::string& name, const Slice& bytes) {
                                          &writer, nullptr);
     if (!s.ok()) return s;
   }
-  closed_.erase(name);
   return writer->Append(bytes, IOOptions(), nullptr);
 }
 Status Backup::Apply(const Event& e) {
   Status injected = BeforeApply(e);
   if (!injected.ok()) return injected;
-  if (e.kind == Kind::kAppend) return Append(e.name, e.bytes);
-  if (e.kind == Kind::kRetireBlob) {
-    uint64_t size = 0;
-    Status s = storage_->GetFileSize(index_ + "/" + e.name, IOOptions(), &size,
-                                     nullptr);
-    // An obsolete orphan may consist only of tiered extent debris. Its bytes
-    // are determined from the qualified physical inventory by the tier worker.
-    if (s.IsNotFound() || s.IsPathNotFound()) s = Status::OK();
-    if (!s.ok()) return s;
-    std::lock_guard<std::mutex> lock(mutex_);
-    pending_blobs_.emplace(e.size, RetiredBlob{e.seq, size});
-    ++stats_.pending_blob_gc_files;
-    stats_.pending_blob_gc_bytes += size;
-    return Status::OK();
-  }
+  if (e.kind == Kind::kAppend) return Append(e.name, e.Payload());
   const std::string path = work_ + "/" + e.name;
   auto close = [&]() -> Status {
     auto it = writers_.find(e.name);
@@ -528,48 +824,46 @@ Status Backup::Apply(const Event& e) {
   if (e.kind == Kind::kCreate) {
     Status s = close();
     if (!s.ok()) return s;
-    closed_.erase(e.name);
-    epochs_[e.name] = ++next_epoch_;
     return disk_->NewWritableFile(path, FileOptions(), &writers_[e.name],
                                   nullptr);
   }
   if (e.kind == Kind::kTruncate) {
-    epochs_[e.name] = ++next_epoch_;
     auto& writer = writers_[e.name];
     if (!writer) {
       Status s =
           disk_->ReopenWritableFile(path, FileOptions(), &writer, nullptr);
       if (!s.ok()) return s;
     }
-    closed_.erase(e.name);
     return writer->Truncate(e.size, IOOptions(), nullptr);
   }
   Status s = close();
   if (!s.ok()) return s;
   if (e.kind == Kind::kClose) {
-    closed_.insert(e.name);
     return Status::OK();
   }
-  closed_.erase(e.name);
-  epochs_.erase(e.name);
   if (e.kind == Kind::kDelete) {
-    s = disk_->DeleteFile(path, IOOptions(), nullptr);
-    if (!s.ok()) {
-      IOStatus exists = disk_->FileExists(path, IOOptions(), nullptr);
-      if (exists.IsNotFound()) return Status::OK();
+    uint64_t number;
+    FileType type;
+    if (ParseFileName(e.name, &number, &type) && type == kWalFile) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      // Retain incremental logs until every published recovery root moves on.
+      if (!published_point_ || number >= published_point_->wal_floor ||
+          (retired_point_ && number >= retired_point_->wal_floor))
+        return Status::OK();
     }
+    s = disk_->DeleteFile(path, IOOptions(), nullptr);
+    if (s.IsNotFound() || s.IsPathNotFound()) return Status::OK();
     return s;
   }
-  closed_.insert(e.other);
-  epochs_[e.other] = ++next_epoch_;
-  return disk_->RenameFile(path, work_ + "/" + e.other, IOOptions(), nullptr);
+  return disk_->RenameFile(path, work_ + "/" + e.contents, IOOptions(),
+                           nullptr);
 }
 Status Backup::Capture(Candidate* candidate) {
+  if (generation_ == std::numeric_limits<uint64_t>::max())
+    return Status::InvalidArgument(
+        "Metabypass checkpoint generation exhausted");
   candidate->name = "point-" + std::to_string(++generation_);
   candidate->path = options_.backup_dir + "/" + candidate->name;
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforeCaptureSnapshot", &closed_);
-  candidate->closed = closed_;
-  candidate->epochs = epochs_;
   for (const auto& writer : writers_) {
     if (!writer.second) continue;
     Status s = writer.second->Flush(IOOptions(), nullptr);
@@ -580,11 +874,10 @@ Status Backup::Capture(Candidate* candidate) {
   TEST_SYNC_POINT("MetaBypass::BeforeCaptureFiles");
   for (const auto& info : candidate->files) {
     const auto& file = info.relative_filename;
-    if (!SafeName(file)) return Status::Corruption("invalid native file name");
-    if (info.file_type == kBlobFile) {
-      candidate->blobs.emplace(info.file_number, info.size);
-      continue;
-    }
+    FileType type;
+    if (!IsCheckpointFile(file, &type) || type != info.file_type)
+      return Status::Corruption("invalid native file name", file);
+    if (info.file_type == kTableFile) continue;
     const std::string destination = candidate->path + "/" + file;
     if (!info.replacement_contents.empty()) {
       // These bytes are private to this candidate. Publish synchronizes and
@@ -595,7 +888,6 @@ Status Backup::Capture(Candidate* candidate) {
         s = writer->Append(info.replacement_contents, IOOptions(), nullptr);
         s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
       }
-      candidate->epochs[file] = ++next_epoch_;
     } else {
       uint64_t size = 0;
       const std::string source = work_ + "/" + file;
@@ -603,65 +895,107 @@ Status Backup::Capture(Candidate* candidate) {
       if (!s.ok()) return s;
       if (size < info.size || (!info.trim_to_size && size != info.size))
         return Status::Corruption("native checkpoint size mismatch", file);
-      if (!candidate->epochs.count(file))
-        return Status::Corruption("missing mirrored file generation", file);
-      const bool immutable = info.file_type == kTableFile;
-      if (immutable) {
-        candidate->state.tables.emplace(info.file_number, info.size);
-        s = disk_->LinkFile(source, destination, IOOptions(), nullptr);
-      }
-      if (!immutable || !s.ok()) {
-        StagedCopy staged;
-        s = StageCopy(disk_, source, destination, info.size, &staged);
-        if (s.ok()) {
-          candidate->staged.emplace(file, staged);
-          std::lock_guard<std::mutex> lock(mutex_);
-          stats_.candidate_copied_bytes += info.size;
-        }
+      s = StageCopy(disk_, source, destination, info.size);
+      if (s.ok()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.candidate_copied_bytes += info.size;
       }
     }
     if (!s.ok()) return s;
     candidate->work_bytes += info.size;
   }
+  s = PruneWal(candidate->wal_floor);
+  if (!s.ok()) return s;
+  TEST_SYNC_POINT("MetaBypass::MutableFilesCaptured");
+  return Status::OK();
+}
+Status Backup::CaptureTables(Candidate* candidate) {
+  std::string published_point;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The sole validator cannot retire this point before Publish completes.
+    if (published_point_)
+      published_point = options_.backup_dir + "/" + published_point_->name;
+  }
+  TEST_SYNC_POINT("MetaBypass::BeforeCaptureTables");
+  for (const auto& info : candidate->files) {
+    if (info.file_type != kTableFile) continue;
+    const auto& file = info.relative_filename;
+    const std::string destination = candidate->path + "/" + file;
+    if (!published_point.empty()) {
+      const std::string previous = published_point + "/" + file;
+      uint64_t previous_size = 0;
+      Status s =
+          disk_->GetFileSize(previous, IOOptions(), &previous_size, nullptr);
+      if (s.ok() && previous_size == info.size) {
+        s = disk_->LinkFile(previous, destination, IOOptions(), nullptr);
+        if (s.ok()) {
+          candidate->durable_tables.insert(info.file_number);
+          continue;
+        }
+        if (!s.IsNotSupported()) return s;
+      } else if (!s.ok() && !s.IsNotFound() && !s.IsPathNotFound()) {
+        return s;
+      }
+    }
+    // Resolve through the logical filesystem, including cold SST routing.
+    // Native deletions remain pinned until every table has been captured.
+    const std::string source = info.directory + "/" + file;
+    uint64_t size = 0;
+    Status s = target()->GetFileSize(source, IOOptions(), &size, nullptr);
+    if (!s.ok()) return s;
+    if (size != info.size)
+      return Status::Corruption("native checkpoint size mismatch", file);
+    s = target()->LinkFile(source, destination, IOOptions(), nullptr);
+    if (s.IsNotSupported()) {
+      s = StageCopy(target(), source, destination, info.size);
+      if (!s.ok()) return s;
+      std::lock_guard<std::mutex> lock(mutex_);
+      stats_.candidate_copied_bytes += info.size;
+    }
+    if (!s.ok()) return s;
+  }
   TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateCaptured", &candidate->path);
+  return Status::OK();
+}
+Status Backup::PruneWal(uint64_t floor) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!published_point_) return Status::OK();
+    floor = std::min(floor, published_point_->wal_floor);
+    if (retired_point_) floor = std::min(floor, retired_point_->wal_floor);
+    if (candidate_ && !capture_done_)
+      floor = std::min(floor, candidate_->wal_floor);
+  }
+  if (!floor) return Status::OK();
+  std::vector<std::string> names;
+  Status s = disk_->GetChildren(work_, IOOptions(), &names, nullptr);
+  if (!s.ok()) return s;
+  for (const auto& name : names) {
+    uint64_t number;
+    FileType type;
+    if (!ParseFileName(name, &number, &type) || type != kWalFile ||
+        number >= floor || writers_.count(name))
+      continue;
+    s = disk_->DeleteFile(work_ + "/" + name, IOOptions(), nullptr);
+    if (!s.ok()) return s;
+  }
+  TEST_SYNC_POINT("MetaBypass::WalPruned");
   return Status::OK();
 }
 Status Backup::Publish(const Candidate& candidate) {
   TEST_SYNC_POINT("MetaBypass::ValidateCandidate");
   const std::string& point = candidate.path;
   const std::string& name = candidate.name;
-  const NativeState& state = candidate.state;
   Status s;
   std::map<std::string, uint64_t> files;
-  for (const auto& info : candidate.files)
-    if (info.file_type != kBlobFile)
-      files.emplace(info.relative_filename, info.size);
-  const auto& blobs = candidate.blobs;
-  const uint64_t persist_started = Now();
-  s = storage_->Persist(blobs);
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    stats_.checkpoint_persist_micros += Now() - persist_started;
+  for (const auto& info : candidate.files) {
+    if (!files.emplace(info.relative_filename, info.size).second)
+      return Status::Corruption("duplicate native checkpoint file",
+                                info.relative_filename);
   }
-  if (!s.ok()) return s;
-  for (const auto& blob : blobs) {
-    auto& digest = blob_cache_[blob.first];
-    if (digest.length != blob.second) {
-      s = storage_->DigestBlob(blob.first, blob.second, &digest.crc);
-      if (!s.ok()) return s;
-      digest.length = blob.second;
-    }
-  }
-  for (auto it = digest_cache_.begin(); it != digest_cache_.end();) {
-    if (!files.count(it->first))
-      it = digest_cache_.erase(it);
-    else
-      ++it;
-  }
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::DependenciesSynced", &s);
-  if (!s.ok()) return s;
   std::ostringstream inventory;
-  inventory << "MBI5\n";
+  inventory << "MBI7\n";
   uint64_t total = 0;
   for (const auto& f : files) {
     uint64_t number;
@@ -676,69 +1010,35 @@ Status Backup::Publish(const Candidate& candidate) {
       if (!s.ok()) return s;
       s = writer->Truncate(f.second, IOOptions(), nullptr);
       if (s.ok()) s = writer->Fsync(IOOptions(), nullptr);
+      if (s.ok()) {
+        // Non-table candidates own independent copies. Their durable bytes are
+        // cold until recovery; never invalidate shared SSTs or active mirrors.
+        Status cold = writer->InvalidateCache(0, f.second);
+        if (!cold.IsNotSupported()) s = cold;
+      }
       s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
-    } else {
+    } else if (!candidate.durable_tables.count(number)) {
       s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
                           true, nullptr);
     }
     TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileSyncStatus", &s);
     if (!s.ok()) return s;
-    auto& digest = digest_cache_[f.first];
-    const uint64_t epoch = candidate.epochs.at(f.first);
-    const auto staged = candidate.staged.find(f.first);
-    if (staged != candidate.staged.end()) {
-      // A fresh copy must verify its prefix too, even when the source epoch
-      // and length match the preceding recovery point's cached digest.
-      TEST_SYNC_POINT("MetaBypass::BeforeCandidateFileReadback");
-      s = Digest(disk_, point + "/" + f.first, f.second, &digest.crc);
-      TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileReadbackStatus", &s);
-      if (s.ok() && (staged->second.length != f.second ||
-                     staged->second.crc != digest.crc))
-        s = Status::Corruption("staged file checksum mismatch", f.first);
-    } else {
-      if (digest.epoch != epoch || digest.length > f.second)
-        digest = FileDigest();
-      s = ExtendDigest(disk_, point + "/" + f.first, digest.length, f.second,
-                       &digest.crc);
-    }
-    if (!s.ok()) return s;
-    digest.epoch = epoch;
-    digest.length = f.second;
-    inventory << "I " << f.first << ' ' << f.second << ' ' << digest.crc
-              << '\n';
+    inventory << f.first << ' ' << f.second << '\n';
     total += f.second;
-  }
-  if (storage_->tier()) {
-    s = storage_->tier()->SaveCheckpoint(point + "/BLOB-MAP", blobs);
-    if (!s.ok()) return s;
-    std::string map;
-    s = Read(disk_, point + "/BLOB-MAP", &map);
-    if (!s.ok()) return s;
-    total += map.size();
-    inventory << "D BLOB-MAP " << map.size() << ' '
-              << crc32c::Value(map.data(), map.size()) << '\n';
-  }
-  for (const auto& b : blobs) {
-    inventory << "B " << b.first << ' ' << b.second << ' '
-              << blob_cache_.at(b.first).crc << '\n';
   }
   const std::string inventory_bytes = inventory.str();
   total += inventory_bytes.size();
-  const uint32_t inventory_crc =
-      crc32c::Value(inventory_bytes.data(), inventory_bytes.size());
+  if (s.ok())
+    s = Write(disk_, point + "/RECOVERY",
+              std::to_string(candidate.native_sequence) + " " +
+                  std::to_string(candidate.wal_floor) + "\n");
   if (s.ok()) s = Write(disk_, point + "/INVENTORY", inventory_bytes);
   if (s.ok()) s = SyncDir(disk_, point);
   // Persist the candidate directory entry before LATEST can reference it.
   if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateSynced", &s);
   if (!s.ok()) return s;
-  const std::string reference = name + " " + std::to_string(inventory_crc);
-  std::string pointer = reference + "\n";
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!points_.empty()) pointer += points_.front().reference + "\n";
-  }
-  if (s.ok()) s = Write(disk_, options_.backup_dir + "/LATEST.tmp", pointer);
+  s = Write(disk_, options_.backup_dir + "/LATEST.tmp", name + "\n");
   TEST_SYNC_POINT_CALLBACK("MetaBypass::BeforePointerReplace", &s);
   if (!s.ok()) return s;
   TEST_SYNC_POINT("MetaBypass::BeforeGCSlotWait");
@@ -747,7 +1047,7 @@ Status Backup::Publish(const Candidate& candidate) {
     // A retired directory occupies the only GC slot until deletion ends.
     // Closing still needs the final publication, so stopping_ cannot cancel
     // this wait. Fail() wakes it when cleanup or mirroring fails.
-    gc_cv_.wait(lock, [&] { return !retired_pending_ || !stats_.error.ok(); });
+    gc_cv_.wait(lock, [&] { return !retired_point_ || !stats_.error.ok(); });
     if (!stats_.error.ok()) return stats_.error;
   }
   {
@@ -763,21 +1063,13 @@ Status Backup::Publish(const Candidate& candidate) {
     if (!s.ok()) return s;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      Point retired;
-      if (points_.size() == 2) retired = points_.back();
-      Point published{reference, total, {}};
-      for (const auto& blob : blobs) published.blobs.insert(blob.first);
-      points_.push_front(std::move(published));
-      if (points_.size() > 2) points_.pop_back();
-      uint64_t retained = candidate.work_bytes;
-      for (const auto& retained_point : points_)
-        retained += retained_point.bytes;
-      if (!retired.reference.empty()) {
-        assert(!retired_pending_);
-        retired_ = std::move(retired);
-        retired_pending_ = true;
+      Point published{name, total, candidate.wal_floor};
+      assert(!retired_point_);
+      retired_point_ = std::move(published_point_);
+      published_point_ = std::move(published);
+      if (retired_point_) {
         stats_.pending_gc_points = 1;
-        stats_.pending_gc_bytes = retired_.bytes;
+        stats_.pending_gc_bytes = retired_point_->bytes;
         gc_cv_.notify_one();
       }
       published_ = candidate.seq;
@@ -788,78 +1080,143 @@ Status Backup::Publish(const Candidate& candidate) {
       stats_.last_build_micros = Now() - candidate.started;
       stats_.last_publish_micros = Now();
       stats_.last_point_lag_micros = Now() - candidate.oldest;
-      stats_.retained_index_bytes = retained;
+      stats_.retained_index_bytes =
+          candidate.work_bytes + published_point_->bytes;
       sync_cv_.notify_all();
     }
   }
   // Only a fully verified and durably published point may authorize eviction.
-  if (storage_->sst()) {
-    s = storage_->sst()->Protect(point, state);
+  if (sst_) {
+    s = sst_->Protect(point, candidate.files);
     if (!s.ok()) return s;
   }
   TEST_SYNC_POINT("MetaBypass::PointerSynced");
   return Status::OK();
 }
 bool Backup::MirrorReady() const {
-  return stopping_ || !stats_.error.ok() || (candidate_ && !capture_done_) ||
+  return stopping_ || prune_wal_ || !stats_.error.ok() ||
+         (candidate_ && !capture_done_) ||
          (!QueuesEmpty() &&
-          (wal_channel_.waiting_charge != 0 ||
+          (wal_queue_.waiting_for_space.load() ||
            metadata_channel_.waiting_charge != 0 || requested_ > applied_ ||
-           stats_.queued_bytes >= options_.batch_bytes));
+           QueuedBytes() >= options_.batch_bytes));
 }
-void Backup::WakeMirror() {
-  TEST_SYNC_POINT_CALLBACK("MetaBypass::MirrorReadyProbe", this);
-  if (mirror_waiting_ && MirrorReady()) {
-    TEST_SYNC_POINT("MetaBypass::MirrorNotified");
-    mirror_cv_.notify_one();
+
+uint64_t Backup::Accepted() const { return accepted_ + wal_queue_.Published(); }
+
+uint64_t Backup::QueuedBytes() const {
+  return stats_.queued_bytes + wal_queue_.ChargedBytes();
+}
+
+void Backup::WaitForMirror(std::unique_lock<std::mutex>& lock) {
+  const auto interval = std::chrono::milliseconds(options_.interval_ms);
+  const auto deadline = std::chrono::steady_clock::now() + interval;
+  for (;;) {
+    // Consume any previous signal before testing the current work. A signal
+    // sent after this check stays pending until the next iteration.
+    mirror_signal_.exchange(false);
+    if (MirrorReady()) return;
+    TEST_SYNC_POINT("MetaBypass::BeforeSpscMirrorSleep");
+    lock.unlock();
+    bool signaled;
+    {
+      std::unique_lock<std::mutex> sleep_lock(mirror_sleep_mutex_);
+      signaled = mirror_cv_.wait_until(sleep_lock, deadline,
+                                       [&] { return mirror_signal_.load(); });
+    }
+    lock.lock();
+    if (!signaled) return;
   }
 }
-bool Backup::QueuesEmpty() const {
-  return wal_channel_.queue.empty() && metadata_channel_.queue.empty();
+
+void Backup::SignalMirror() {
+  // Work is made visible before checking the bit. If a signal was already
+  // pending, the mirror clears it before its next readiness check.
+  if (mirror_signal_.load() || mirror_signal_.exchange(true)) return;
+  std::lock_guard<std::mutex> lock(mirror_sleep_mutex_);
+  TEST_SYNC_POINT("MetaBypass::MirrorNotified");
+  mirror_cv_.notify_one();
 }
-Backup::Channel* Backup::NextChannel() {
-  if (wal_channel_.queue.empty())
+
+void Backup::UpdateWalWakeCharge() {
+  wal_wake_charge_.store(
+      options_.batch_bytes -
+      std::min<uint64_t>(stats_.queued_bytes, options_.batch_bytes));
+}
+
+void Backup::WakeMirror() {
+  TEST_SYNC_POINT_CALLBACK("MetaBypass::MirrorReadyProbe", this);
+  if (mirror_waiting_ && MirrorReady()) SignalMirror();
+}
+bool Backup::QueuesEmpty() const {
+  // Read the WAL tail even with pending metadata. Together with the producer
+  // reading wal_wake_charge_ after publishing, this covers a simultaneous
+  // WAL publication and metadata threshold update.
+  const bool wal_empty = wal_taken_ == wal_queue_.Published();
+  return wal_empty && metadata_channel_.queue.empty();
+}
+Backup::Channel* Backup::NextChannel(uint64_t wal_tail) {
+  if (wal_taken_ == wal_tail)
     return metadata_channel_.queue.empty() ? nullptr : &metadata_channel_;
   if (metadata_channel_.queue.empty()) return &wal_channel_;
-  return wal_channel_.queue.front().seq < metadata_channel_.queue.front().seq
+  return FrontSequence(wal_channel_) < FrontSequence(metadata_channel_)
              ? &wal_channel_
              : &metadata_channel_;
 }
-void Backup::WakeCapacity() {
-  for (auto* channel : {&wal_channel_, &metadata_channel_}) {
-    if (channel->waiting_charge != 0 &&
-        (stopping_ || !stats_.error.ok() ||
-         stats_.queued_bytes <=
-             options_.queue_capacity - channel->waiting_charge)) {
-      channel->capacity.notify_one();
-    }
+
+uint64_t Backup::FrontSequence(const Channel& channel) const {
+  if (!IsWalChannel(channel)) return metadata_channel_.queue.front().seq;
+  // Metadata sequences incorporate the WAL tail at publication. All entries
+  // at the current WAL head belong before the next WAL event, including ties.
+  // The picker holds mutex_, so it cannot pass metadata assigning its sequence.
+  const uint64_t metadata_taken = accepted_ - metadata_channel_.queue.size();
+  return wal_taken_ + metadata_taken + 1;
+}
+
+uint64_t Backup::WalBatchLimit(uint64_t first, uint64_t boundary) const {
+  // The first metadata event ends the globally adjacent WAL prefix. A known
+  // capture cut also ends a batch that starts at or before that cut.
+  if (!metadata_channel_.queue.empty())
+    boundary = std::min(boundary, metadata_channel_.queue.front().seq - 1);
+  if (candidate_ && !capture_done_ && first <= candidate_->seq)
+    boundary = std::min(boundary, candidate_->seq);
+  return boundary;
+}
+
+Backup::Event Backup::TakeMetadataEvent() {
+  Event event = std::move(metadata_channel_.queue.front());
+  metadata_channel_.queue.pop_front();
+  return event;
+}
+
+void Backup::WakeMetadataCapacity() {
+  const size_t waiting = metadata_channel_.waiting_charge;
+  if (waiting != 0 &&
+      (stopping_ || !stats_.error.ok() ||
+       stats_.queued_bytes <= options_.metadata_queue_capacity - waiting)) {
+    metadata_channel_.capacity.notify_one();
   }
 }
-void Backup::TakeBatch(Channel* channel, uint64_t boundary,
-                       std::vector<Event>* batch) {
-  batch->clear();
-  batch->push_back(std::move(channel->queue.front()));
-  channel->queue.pop_front();
+void Backup::TakeWalBatch(uint64_t first_seq, uint64_t last,
+                          std::vector<Event>* batch) {
+  assert(batch->empty() && first_seq <= last);
+  batch->push_back(wal_queue_.Pop());
+  batch->back().seq = first_seq;
   const Event& first = batch->front();
   constexpr size_t kMaxBytes = 64 * 1024;
-  constexpr size_t kMaxEvents = 64;
-  if (channel != &wal_channel_ || first.kind != Kind::kAppend ||
-      first.bytes.empty() || first.bytes.size() > kMaxBytes)
+  if (first.kind != Kind::kAppend || first.Payload().empty() ||
+      first.Payload().size() > kMaxBytes)
     return;
-  // Control events delimit file lifetimes. Global adjacency also excludes
-  // interleaved metadata operations. Capture still runs after the full drain.
-  if (candidate_ && !capture_done_ && first.seq <= candidate_->seq)
-    boundary = std::min(boundary, candidate_->seq);
-  size_t bytes = first.bytes.size();
-  while (batch->size() < kMaxEvents && NextChannel() == channel) {
-    const Event& next = channel->queue.front();
-    if (next.seq > boundary || next.seq != batch->back().seq + 1 ||
-        next.kind != Kind::kAppend || next.name != batch->front().name ||
-        next.bytes.empty() || next.bytes.size() > kMaxBytes - bytes)
+  size_t bytes = first.Payload().size();
+  for (uint64_t seq = first_seq + 1;
+       seq <= last && batch->size() < kMaxWalBatchEvents; ++seq) {
+    const Event& next = wal_queue_.Front();
+    if (next.kind != Kind::kAppend || next.name != batch->front().name ||
+        next.Payload().empty() || next.Payload().size() > kMaxBytes - bytes)
       break;
-    bytes += next.bytes.size();
-    batch->push_back(std::move(channel->queue.front()));
-    channel->queue.pop_front();
+    bytes += next.Payload().size();
+    batch->push_back(wal_queue_.Pop());
+    batch->back().seq = seq;
   }
 }
 Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
@@ -878,7 +1235,8 @@ Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
     // physical batch boundary; later logical hooks do not imply prior I/O.
     injected = BeforeApply(event);
     if (!injected.ok()) break;
-    scratch->append(event.bytes);
+    const Slice payload = event.Payload();
+    scratch->append(payload.data(), payload.size());
     ++ready;
   }
   if (ready != 0) {
@@ -895,7 +1253,7 @@ Status Backup::ApplyBatch(const std::vector<Event>& batch, std::string* scratch,
 void Backup::Run() {
   HddPurposeScope background(HddPurpose::kBulk);
   std::vector<Event> batch;
-  batch.reserve(64);
+  batch.reserve(kMaxWalBatchEvents);
   std::string scratch;
   scratch.reserve(64 * 1024);
   std::unique_lock<std::mutex> lock(mutex_);
@@ -907,39 +1265,79 @@ void Backup::Run() {
   while (stats_.error.ok()) {
     mirror_waiting_ = true;
     TEST_SYNC_POINT("MetaBypass::BeforeMirrorWait");
-    mirror_cv_.wait_for(lock, std::chrono::milliseconds(options_.interval_ms),
-                        [&] { return MirrorReady(); });
+    WaitForMirror(lock);
     mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
-    const uint64_t boundary = accepted_;
-    const uint64_t before_applied = applied_;
-    while (auto* channel = NextChannel()) {
-      if (channel->queue.front().seq > boundary) break;
-      TakeBatch(channel, boundary, &batch);
-      const bool barrier = requested_point_ > published_request_;
+    if (prune_wal_) {
+      prune_wal_ = false;
       lock.unlock();
-      HddPurposeScope purpose(barrier ? HddPurpose::kBarrier
-                                      : HddPurpose::kBulk);
-      size_t completed = 0;
-      Status s = ApplyBatch(batch, &scratch, &completed);
+      Status s = PruneWal(std::numeric_limits<uint64_t>::max());
       lock.lock();
-      for (size_t i = 0; i < batch.size(); ++i) {
-        const Event& e = batch[i];
-        assert(stats_.queued_bytes >= e.charge);
-        stats_.queued_bytes -= e.charge;
-        if (i < completed) {
-          stats_.mirrored_bytes += e.bytes.size();
-          if (channel == &wal_channel_ && e.kind == Kind::kAppend)
-            stats_.mirrored_wal_bytes += e.bytes.size();
-          assert(e.seq == applied_ + 1);
-          applied_ = e.seq;
-        }
-      }
       if (!s.ok()) {
         fail(s);
         break;
       }
-      WakeCapacity();
+    }
+    // The metadata tail and the WAL publication snapshot define this round.
+    const uint64_t wal_tail = wal_queue_.Published();
+    const uint64_t boundary = accepted_ + wal_tail;
+    while (true) {
+      MB_WAL_BG_SPAN(selection, mirror_selection_hold);
+      auto* channel = NextChannel(wal_tail);
+      if (!channel) break;
+      const uint64_t first = FrontSequence(*channel);
+      if (first > boundary) break;
+      const bool wal = IsWalChannel(*channel);
+      const uint64_t last = wal ? WalBatchLimit(first, boundary) : first;
+      if (!wal) batch.push_back(TakeMetadataEvent());
+      const bool barrier = requested_point_ > published_request_;
+      MB_WAL_END(selection);
+      lock.unlock();
+      if (wal) {
+#ifndef NDEBUG
+        std::array<uint64_t, 2> selected{{first, last}};
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::WalBatchSelected", &selected);
+#endif
+        TakeWalBatch(first, last, &batch);
+      }
+      HddPurposeScope purpose(barrier ? HddPurpose::kBarrier
+                                      : HddPurpose::kBulk);
+      size_t completed = 0;
+      Status s = ApplyBatch(batch, &scratch, &completed);
+      uint64_t charge = 0;
+      uint64_t mirrored_bytes = 0;
+      for (size_t i = 0; i < batch.size(); ++i) {
+        const Event& e = batch[i];
+        charge += e.charge;
+        if (i < completed && e.kind == Kind::kAppend)
+          mirrored_bytes += e.Payload().size();
+      }
+      const size_t taken = batch.size();
+      batch.clear();
+      const bool success = s.ok();
+      if (wal && success) ReturnWalBytes(charge, mirrored_bytes);
+      lock.lock();
+      MB_WAL_BG_SPAN(completion, mirror_completion_hold);
+      assert(first == applied_ + 1);
+      applied_ += completed;
+      if (wal) {
+        wal_taken_ += taken;
+      } else {
+        stats_.mirrored_bytes += mirrored_bytes;
+        assert(stats_.queued_bytes >= charge);
+        stats_.queued_bytes -= charge;
+        UpdateWalWakeCharge();
+      }
+      if (!success) {
+        MB_WAL_END(completion);
+        lock.unlock();
+        Fail(s);
+        if (wal) ReturnWalBytes(charge, mirrored_bytes);
+        lock.lock();
+        break;
+      }
+      if (stats_.error.ok() && !wal) WakeMetadataCapacity();
+      MB_WAL_END(completion);
       if (!stats_.error.ok()) break;
     }
     if (!stats_.error.ok()) break;
@@ -952,16 +1350,21 @@ void Backup::Run() {
       capture_done_ = true;
       validator_cv_.notify_all();
     }
-    if (applied_ != before_applied) validator_cv_.notify_one();
     if (stopping_ && QueuesEmpty()) break;
   }
-  for (auto* channel : {&wal_channel_, &metadata_channel_}) {
-    for (const auto& e : channel->queue) {
-      assert(stats_.queued_bytes >= e.charge);
-      stats_.queued_bytes -= e.charge;
-    }
-    channel->queue.clear();
+  for (const auto& e : metadata_channel_.queue) {
+    assert(stats_.queued_bytes >= e.charge);
+    stats_.queued_bytes -= e.charge;
   }
+  metadata_channel_.queue.clear();
+  const uint64_t tail = wal_queue_.Published();
+  const uint64_t discarded = tail - wal_taken_;
+  lock.unlock();
+  uint64_t charge = 0;
+  for (uint64_t i = 0; i < discarded; ++i) charge += wal_queue_.Pop().charge;
+  if (charge != 0) ReturnWalBytes(charge);
+  lock.lock();
+  wal_taken_ = tail;
   // Outstanding primary operations retain their charges until Finish.
   TEST_SYNC_POINT("MetaBypass::QueuesDiscarded");
   mirror_done_ = true;
@@ -972,25 +1375,115 @@ void Backup::Run() {
   }
   writers_.clear();
 }
+void Backup::SampleProgress() {
+  uint64_t begin, steady_begin, sequence, end, steady_end;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_ || !db_) return;
+    begin = clock_->NowMicros();
+    steady_begin = clock_->NowNanos() / 1000;
+    sequence = db_->GetLatestSequenceNumber();
+    end = clock_->NowMicros();
+    steady_end = clock_->NowNanos() / 1000;
+  }
+  TEST_SYNC_POINT("MetaBypass::ProgressSampled");
+  std::string row = std::to_string(begin) + " " + std::to_string(steady_begin) +
+                    " " + std::to_string(sequence) + " " + std::to_string(end) +
+                    " " + std::to_string(steady_end) + "\n";
+  std::unique_ptr<FSWritableFile> file;
+  Status s = disk_->ReopenWritableFile(options_.backup_dir + "/PROGRESS",
+                                       FileOptions(), &file, nullptr);
+  if (s.ok()) {
+    s = file->Append(row, IOOptions(), nullptr);
+    if (s.ok()) {
+      s = file->Fsync(IOOptions(), nullptr);
+    }
+    s.UpdateIfOk(file->Close(IOOptions(), nullptr));
+  }
+  // Samples carry no recovery correctness dependency. A gap widens the time
+  // bracket; an interrupted last row is ignored by the estimator.
+  s.PermitUncheckedError();
+}
+void Backup::SampleLoop() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!stopping_) {
+    sync_cv_.wait_for(lock, std::chrono::seconds(1), [&] { return stopping_; });
+    if (stopping_) break;
+    lock.unlock();
+    SampleProgress();
+    lock.lock();
+  }
+}
+void Backup::EstimateRecoveryTime(const std::string& samples,
+                                  MetaBypassRecoveryReport* report) {
+  report->has_time_lower_bound = report->has_time_upper_bound = false;
+  std::istringstream input(samples);
+  std::string row;
+  uint64_t prior_sequence = 0, prior_wall = 0, prior_steady = 0;
+  bool first = true;
+  while (std::getline(input, row)) {
+    // A torn final append cannot supply a bound.
+    if (input.eof()) break;
+    uint64_t begin, steady_begin, sequence, end, steady_end;
+    std::istringstream values(row);
+    if (!(values >> begin >> steady_begin >> sequence >> end >> steady_end))
+      continue;
+    bool invalid = end < begin || steady_end < steady_begin;
+    if (!invalid) {
+      const uint64_t wall_duration = end - begin;
+      const uint64_t steady_duration = steady_end - steady_begin;
+      invalid |= wall_duration > steady_duration + 1000000 ||
+                 steady_duration > wall_duration + 1000000;
+    }
+    if (!first) {
+      invalid |= sequence < prior_sequence || begin < prior_wall ||
+                 steady_begin < prior_steady;
+      if (!invalid) {
+        uint64_t wall_delta = begin - prior_wall;
+        uint64_t steady_delta = steady_begin - prior_steady;
+        // A wall clock step larger than one sampling period cannot support
+        // an honest seconds-scale estimate. Queueing merely widens bounds.
+        invalid |= wall_delta > steady_delta + 1000000 ||
+                   steady_delta > wall_delta + 1000000;
+      }
+    }
+    if (invalid) {
+      report->has_time_lower_bound = report->has_time_upper_bound = false;
+      return;
+    }
+    first = false;
+    prior_sequence = sequence;
+    prior_wall = end;
+    prior_steady = steady_end;
+    if (sequence <= report->recovered_sequence) {
+      report->has_time_lower_bound = true;
+      report->time_lower_bound_micros = begin;
+    } else if (!report->has_time_upper_bound) {
+      report->has_time_upper_bound = true;
+      report->time_upper_bound_micros = end;
+    }
+  }
+}
 void Backup::ValidateLoop() {
   std::unique_lock<std::mutex> lock(mutex_);
   while (!stopping_ && stats_.error.ok()) {
-    if (!active_ || blob_gc_busy_) {
+    if (!active_) {
       validator_cv_.wait(lock);
       continue;
     }
-    if (completed_writes_ > published_writes_ ||
-        native_changes_ > published_native_changes_ || NeedsBlobCheckpoint())
+    if (completed_writes_.load(std::memory_order_relaxed) > published_writes_ ||
+        native_changes_ > published_native_changes_)
       MarkDirty();
     const bool requested = requested_point_ > published_request_;
+    const uint64_t dirty_since =
+        dirty_since_micros_.load(std::memory_order_relaxed);
     if (!requested) {
-      if (!dirty_since_micros_) {
+      if (!dirty_since) {
         TEST_SYNC_POINT("MetaBypass::CheckpointIdle");
         validator_cv_.wait(lock);
         continue;
       }
-      uint64_t deadline =
-          dirty_since_micros_ + options_.checkpoint_interval_ms * 1000;
+      uint64_t deadline = dirty_since + options_.checkpoint_interval_ms * 1000;
       uint64_t now = Now();
       TEST_SYNC_POINT_CALLBACK("MetaBypass::CheckpointNow", &now);
       if (now < deadline) {
@@ -1005,10 +1498,9 @@ void Backup::ValidateLoop() {
     candidate_busy_ = true;
     auto candidate = std::make_unique<Candidate>();
     candidate->started = Now();
-    candidate->oldest =
-        dirty_since_micros_ ? dirty_since_micros_ : candidate->started;
-    dirty_since_micros_ = 0;
-    candidate->writes = completed_writes_;
+    candidate->oldest = dirty_since ? dirty_since : candidate->started;
+    dirty_since_micros_.store(0, std::memory_order_relaxed);
+    candidate->writes = completed_writes_.load(std::memory_order_relaxed);
     candidate->request = requested_point_;
     candidate->native_changes = native_changes_;
     DB* db = db_;
@@ -1016,42 +1508,65 @@ void Backup::ValidateLoop() {
     HddPurposeScope purpose(requested ? HddPurpose::kBarrier
                                       : HddPurpose::kBulk);
     TEST_SYNC_POINT("MetaBypass::CheckpointBoundary");
-    Status s = db->DisableFileDeletions();
-    const bool pinned = s.ok();
-    if (s.ok()) {
-      TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
+    Status s;
+    bool pinned;
+    {
       LiveFilesStorageInfoOptions options;
-      const bool direct = db_options_.enable_blob_direct_write;
-      options.wal_size_for_flush =
-          direct ? 0 : std::numeric_limits<uint64_t>::max();
-      options.include_wal_files = !direct;
-      const uint64_t capture_started = Now();
-      s = db->GetLiveFilesStorageInfo(options, &candidate->files);
-      TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+      options.wal_size_for_flush = std::numeric_limits<uint64_t>::max();
+      uint64_t elapsed = 0;
+      VectorLogPtr logs;
+      MB_WAL_BG_SPAN(closed_gate, checkpoint_gate_hold);
       {
-        std::lock_guard<std::mutex> stats_lock(mutex_);
-        const uint64_t elapsed = Now() - capture_started;
-        ++stats_.checkpoint_captures;
-        stats_.checkpoint_capture_micros += elapsed;
-        if (direct) stats_.checkpoint_flush_micros += elapsed;
+        // Keep obsolete WAL pruning enabled while admitted writes drain.
+        WriteGate::Closure admission(write_gate_);
+        s = db->DisableFileDeletions();
+        pinned = s.ok();
+        if (pinned) {
+          TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
+          const uint64_t capture_started = Now();
+          s = db->GetLiveFilesStorageInfo(options, &candidate->files);
+          TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
+          elapsed = Now() - capture_started;
+          if (s.ok()) {
+            candidate->native_sequence = db->GetLatestSequenceNumber();
+            s = db->GetSortedWalFiles(logs);
+          }
+          // Freeze the mirror boundary with the native snapshot. Writes
+          // admitted after reopening belong to the next checkpoint.
+          std::lock_guard<std::mutex> boundary_lock(mutex_);
+          candidate->seq = Accepted();
+          candidate->writes = completed_writes_.load(std::memory_order_relaxed);
+          // Drained writes may have set a deadline after this candidate began.
+          // This snapshot covers them, but native changes can need another
+          // point.
+          if (s.ok() && native_changes_ == candidate->native_changes)
+            dirty_since_micros_.store(0, std::memory_order_relaxed);
+        }
       }
-      if (s.ok()) {
-        // Native checkpoints do not preserve IDENTITY. Metabypass binds the
-        // independently routed directories to this immutable database owner.
-        LiveFileStorageInfo owner;
-        owner.relative_filename = "IDENTITY";
-        owner.file_type = kIdentityFile;
-        owner.replacement_contents = identity_;
-        owner.size = identity_.size();
-        candidate->files.push_back(std::move(owner));
+      MB_WAL_END(closed_gate);
+      if (pinned) {
+        {
+          std::lock_guard<std::mutex> stats_lock(mutex_);
+          ++stats_.checkpoint_captures;
+          stats_.checkpoint_capture_micros += elapsed;
+        }
+        if (s.ok()) {
+          // Native checkpoints omit IDENTITY. Include it to bind each point to
+          // its database owner.
+          LiveFileStorageInfo owner;
+          owner.relative_filename = "IDENTITY";
+          owner.file_type = kIdentityFile;
+          owner.replacement_contents = identity_;
+          owner.size = identity_.size();
+          candidate->files.push_back(std::move(owner));
+          if (!logs.empty()) candidate->wal_floor = logs.front()->LogNumber();
+        }
       }
-      TEST_SYNC_POINT("MetaBypass::NativeFilesCaptured");
     }
+    TEST_SYNC_POINT("MetaBypass::NativeFilesCaptured");
     lock.lock();
     if (s.ok() && stats_.error.ok() && !stopping_) {
-      candidate->seq = accepted_;
-      captured_ = accepted_;
-      requested_ = std::max(requested_, accepted_);
+      requested_ = std::max(requested_, candidate->seq);
       capture_done_ = false;
       candidate_ = std::move(candidate);
       WakeMirror();
@@ -1063,7 +1578,8 @@ void Backup::ValidateLoop() {
       s = stats_.error.ok() ? Status::ShutdownInProgress() : stats_.error;
     }
     lock.unlock();
-    // Candidate files now own their bytes and candidate_busy_ protects blobs.
+    if (s.ok()) s = CaptureTables(candidate.get());
+    // Candidate files now own their bytes.
     if (pinned) {
       s.UpdateIfOk(db->EnableFileDeletions());
       TEST_SYNC_POINT("MetaBypass::NativeFilesReleased");
@@ -1077,10 +1593,6 @@ void Backup::ValidateLoop() {
     if (!s.ok()) Fail(s);
     lock.lock();
     candidate_busy_ = false;
-    // Retained roots can require one more point after the current publication.
-    // New writes and listener events already own their first-event deadline.
-    if (s.ok() && NeedsBlobCheckpoint()) MarkDirty();
-    gc_cv_.notify_all();
     sync_cv_.notify_all();
   }
   candidate_busy_ = false;
@@ -1088,107 +1600,49 @@ void Backup::ValidateLoop() {
   gc_cv_.notify_all();
   sync_cv_.notify_all();
 }
-bool Backup::BlobEligible(uint64_t number, uint64_t seq) const {
-  if (candidate_busy_ || points_.empty() || published_ < seq) return false;
-  for (const auto& point : points_)
-    if (point.blobs.count(number)) return false;
-  if (retired_pending_ && retired_.blobs.count(number)) return false;
-  return true;
-}
-bool Backup::NeedsBlobCheckpoint() const {
-  if (points_.empty() || pending_blobs_.empty()) return false;
-  for (const auto& blob : pending_blobs_) {
-    if (published_ < blob.second.seq) return applied_ > captured_;
-    if (!points_.front().blobs.count(blob.first) && points_.size() == 2 &&
-        points_.back().blobs.count(blob.first))
-      return true;
-  }
-  return false;
-}
 void Backup::GarbageCollectLoop() {
   HddPurposeScope background(HddPurpose::kBulk);
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
     gc_cv_.wait(lock, [&] {
-      if (retired_pending_ || validator_done_ || !stats_.error.ok())
-        return true;
-      if (!stopping_)
-        for (const auto& blob : pending_blobs_)
-          if (BlobEligible(blob.first, blob.second.seq)) return true;
-      return false;
+      return retired_point_ || validator_done_ || !stats_.error.ok();
     });
-    if (!stats_.error.ok()) break;
-    // Retirement cleanup must run even during candidate validation: Publish
-    // waits for this slot. Never couple it to the blob capture/delete gate.
-    if (retired_pending_) {
-      const Point retired = retired_;
-      lock.unlock();
-      const uint64_t started = Now();
-      TEST_SYNC_POINT("MetaBypass::GCStarted");
-      Status s;
-      TEST_SYNC_POINT_CALLBACK("MetaBypass::GCStatus", &s);
-      if (s.ok())
-        s = RemoveRetiredPoint(disk_,
-                               options_.backup_dir + "/" + retired.Name());
-      if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
-      if (!s.ok()) {
-        Fail(s);
-        TEST_SYNC_POINT("MetaBypass::GCFailureRecorded");
-      }
-      lock.lock();
-      stats_.gc_micros += Now() - started;
-      if (!s.ok()) break;
-      retired_ = Point();
-      retired_pending_ = false;
-      stats_.pending_gc_points = 0;
-      stats_.pending_gc_bytes = 0;
-      gc_cv_.notify_all();
-      continue;
-    }
-    if (validator_done_) break;
-    std::vector<uint64_t> batch;
-    for (const auto& blob : pending_blobs_) {
-      if (batch.size() == 16) break;
-      if (BlobEligible(blob.first, blob.second.seq))
-        batch.push_back(blob.first);
-    }
-    if (batch.empty()) continue;
-    blob_gc_busy_ = true;
+    if (!stats_.error.ok() || !retired_point_) break;
+    const std::string path = options_.backup_dir + "/" + retired_point_->name;
     lock.unlock();
-    TEST_SYNC_POINT("MetaBypass::BlobGCClaimed");
     const uint64_t started = Now();
+    TEST_SYNC_POINT("MetaBypass::GCStarted");
     Status s;
-    for (uint64_t number : batch) {
-      uint64_t bytes = 0;
-      s = storage_->ReclaimBlob(number, &bytes);
-      if (!s.ok()) break;
-      // The capture gate also excludes the validator cache owner.
-      blob_cache_.erase(number);
-      lock.lock();
-      stats_.pending_blob_gc_bytes -= pending_blobs_.at(number).bytes;
-      --stats_.pending_blob_gc_files;
-      pending_blobs_.erase(number);
-      retiring_blobs_.erase(number);
-      ++stats_.reclaimed_blob_files;
-      stats_.reclaimed_blob_bytes += bytes;
-      lock.unlock();
-      TEST_SYNC_POINT("MetaBypass::BlobReclaimed");
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::GCStatus", &s);
+    if (s.ok()) s = RemoveRetiredPoint(disk_, path);
+    if (s.ok()) s = SyncDir(disk_, options_.backup_dir);
+    if (!s.ok()) {
+      Fail(s);
+      TEST_SYNC_POINT("MetaBypass::GCFailureRecorded");
     }
-    if (!s.ok()) Fail(s);
     lock.lock();
-    stats_.blob_gc_micros += Now() - started;
-    blob_gc_busy_ = false;
-    validator_cv_.notify_one();
-    WakeMirror();
-    gc_cv_.notify_all();
+    stats_.gc_micros += Now() - started;
     if (!s.ok()) break;
+    retired_point_.reset();
+    prune_wal_ = true;
+    WakeMirror();
+    stats_.pending_gc_points = 0;
+    stats_.pending_gc_bytes = 0;
+    gc_cv_.notify_all();
   }
   gc_cv_.notify_all();
 }
 void Backup::WriteCompleted() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  ++completed_writes_;
-  MarkDirty();
+  // If capture clears the observed deadline concurrently, it still drains
+  // this writer before taking a snapshot. Admission after reopening observes
+  // the cleared deadline or one already installed for the next checkpoint.
+  MB_WAL_SPAN(wait, completed_wait, true);
+  std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+  if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) lock.lock();
+  MB_WAL_END(wait);
+  MB_WAL_SPAN(bookkeeping, completed_bookkeeping, true);
+  completed_writes_.fetch_add(1, std::memory_order_relaxed);
+  if (lock.owns_lock()) MarkDirty();
 }
 void Backup::NativeFilesChanged() {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -1196,8 +1650,8 @@ void Backup::NativeFilesChanged() {
   MarkDirty();
 }
 void Backup::MarkDirty() {
-  if (!dirty_since_micros_) {
-    dirty_since_micros_ = Now();
+  if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) {
+    dirty_since_micros_.store(Now(), std::memory_order_relaxed);
     validator_cv_.notify_one();
   }
 }
@@ -1206,9 +1660,9 @@ Status Backup::Sync() {
   if (!stats_.error.ok()) return stats_.error;
   if (!active_ || stopping_) return Status::ShutdownInProgress();
   const uint64_t goal = ++requested_point_;
-  const uint64_t writes = completed_writes_;
+  const uint64_t writes = completed_writes_.load(std::memory_order_relaxed);
   const uint64_t start = Now();
-  requested_ = std::max(requested_, accepted_);
+  requested_ = std::max(requested_, Accepted());
   validator_cv_.notify_one();
   WakeMirror();
   TEST_SYNC_POINT("MetaBypass::SyncWaiting");
@@ -1223,6 +1677,7 @@ Status Backup::Sync() {
 void Backup::DetachDB() {
   std::unique_lock<std::mutex> lock(mutex_);
   active_ = false;
+  TEST_SYNC_POINT("MetaBypass::BeforeDetachDB");
   sync_cv_.wait(lock, [&] { return !candidate_busy_; });
   db_ = nullptr;
 }
@@ -1230,12 +1685,14 @@ Status Backup::Stop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     stopping_ = true;
+    CloseWalQueue();
     validator_cv_.notify_all();
     gc_cv_.notify_all();
     WakeMirror();
-    WakeCapacity();
+    WakeMetadataCapacity();
     sync_cv_.notify_all();
   }
+  if (sampler_.joinable()) sampler_.join();
   if (thread_.joinable()) thread_.join();
   if (validator_.joinable()) validator_.join();
   TEST_SYNC_POINT("MetaBypass::BeforeGCJoin");
@@ -1243,147 +1700,69 @@ Status Backup::Stop() {
   return Error();
 }
 Status Backup::Error() const {
+  // Fail publishes the complete first Status before exposing the sticky flag.
+  if (!failed_.load(std::memory_order_acquire)) return Status::OK();
   std::lock_guard<std::mutex> lock(mutex_);
   return stats_.error;
 }
 MetaBypassStats Backup::Stats() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return stats_;
+  MetaBypassStats result = stats_;
+  result.queued_bytes = QueuedBytes();
+  result.mirrored_wal_bytes =
+      wal_queue_.mirrored_bytes.load(std::memory_order_relaxed);
+  result.mirrored_bytes += result.mirrored_wal_bytes;
+  result.peak_queued_bytes += wal_queue_.peak.load(std::memory_order_relaxed);
+  result.backpressure_micros +=
+      wal_queue_.backpressure_micros.load(std::memory_order_relaxed);
+  return result;
 }
-Status Backup::CheckRestoreFormat(FileSystem* fs, const std::string& backup) {
-  std::string point, inventory;
-  return ReadPublishedInventory(fs, backup, &point, &inventory);
+Status Backup::ReadRecoveryPoint(FileSystem* fs, const std::string& backup,
+                                 RecoveryPoint* recovery) {
+  std::string pointer;
+  Status s = Read(fs, backup + "/LATEST", &pointer);
+  return s.ok() ? ReadPublishedPoint(fs, backup, pointer, recovery) : s;
 }
-Status Backup::RestoreFiles(FileSystem* fs, const std::string& backup,
-                            const std::string& destination,
-                            const SeparatedStorage& storage, bool preflight) {
-  if (!preflight)
-    return RestoreFilesImpl(fs, backup, destination, storage, false);
-  for (unsigned attempt = 0; attempt < 3; ++attempt) {
-    std::string before, after;
-    Status first = Read(fs, backup + "/LATEST", &before);
-    const bool missing = first.IsNotFound() || first.IsPathNotFound();
-    if (!first.ok() && !missing) return first;
-    Status validated =
-        first.ok() ? RestoreFilesImpl(fs, backup, destination, storage, true)
-                   : first;
-    TEST_SYNC_POINT_CALLBACK("MetaBypass::RestorePreflightValidated",
-                             &validated);
-    Status last = Read(fs, backup + "/LATEST", &after);
-    const bool now_missing = last.IsNotFound() || last.IsPathNotFound();
-    if (!last.ok() && !now_missing) {
-      validated.PermitUncheckedError();
-      return last;
-    }
-    if ((missing && now_missing) ||
-        (first.ok() && last.ok() && before == after))
-      return validated;
-    validated.PermitUncheckedError();
-  }
-  return Status::TryAgain("checkpoint changed during restore preflight");
-}
-Status Backup::RestoreFilesImpl(FileSystem* fs, const std::string& backup,
-                                const std::string& destination,
-                                const SeparatedStorage& storage,
-                                bool preflight) {
-  std::map<uint64_t, TieredStorage::Version> parsed;
-  std::string point, inventory;
-  Status s = ReadPublishedInventory(fs, backup, &point, &inventory);
-  if (!s.ok()) return s;
-  if (storage.tier()) {
-    std::istringstream maps(inventory.substr(5));
-    std::string kind, file;
-    uint64_t size;
-    uint32_t crc;
-    bool found = false;
-    while (maps >> kind >> file >> size >> crc) {
-      if (kind != "D") continue;
-      if (found || file != "BLOB-MAP")
-        return Status::Corruption("invalid blob map entry");
-      std::string bytes;
-      s = Read(fs, point + "/BLOB-MAP", &bytes);
-      if (!s.ok()) return s;
-      if (bytes.size() != size ||
-          crc32c::Value(bytes.data(), bytes.size()) != crc)
-        return Status::Corruption("blob map checksum");
-      s = preflight
-              ? storage.tier()->ParseCheckpoint(point + "/BLOB-MAP", &parsed)
-              : storage.tier()->LoadCheckpoint(point + "/BLOB-MAP");
-      if (!s.ok()) return s;
-      found = true;
-    }
-    if (!found) return Status::Corruption("missing tiered blob map");
-  }
-  std::istringstream in(inventory.substr(5));
-  std::string kind, file;
-  uint64_t length;
-  uint32_t expected;
-  struct Entry {
-    std::string file;
-    uint64_t length;
-  };
-  std::vector<Entry> entries;
-  while (in >> kind >> file >> length >> expected) {
-    if (!SafeName(file) ||
-        (kind != "I" && kind != "B" &&
-         !(storage.tier() && kind == "D" && file == "BLOB-MAP")))
-      return Status::Corruption("invalid inventory");
-    std::string path;
-    if (kind == "B") {
-      uint64_t number;
-      std::istringstream n(file);
-      if (!(n >> number) || !n.eof())
-        return Status::Corruption("invalid blob number");
-      path = storage.BlobPath(number);
-    } else {
-      path = point + "/" + file;
-      uint64_t size;
-      s = fs->GetFileSize(path, IOOptions(), &size, nullptr);
-      if (!s.ok()) return s;
-      if (size != length)
-        return Status::Corruption("published file size", path);
-      entries.push_back({file, length});
-    }
-    uint32_t crc = 0;
-    if (preflight && storage.tier() && kind == "B") {
-      uint64_t n;
-      std::istringstream number(file);
-      if (!(number >> n)) return Status::Corruption("blob number");
-      auto found = parsed.find(n);
-      if (found == parsed.end() || found->second.size != length)
-        return Status::Corruption("checkpoint logical length");
-      for (const auto& extent : found->second.extents) {
-        s = ExtendDigest(storage.tier()->target(), storage.tier()->Path(extent),
-                         0, extent.length, &crc);
-        if (!s.ok()) return s;
-      }
-    } else {
-      s = Digest(fs, path, length, &crc);
-    }
-    if (!s.ok()) return s;
-    if (crc != expected) return Status::Corruption("published checksum", path);
-  }
-  if (!in.eof() || entries.empty())
-    return Status::Corruption("invalid inventory");
-  if (preflight) return Status::OK();
+Status Backup::PrepareRecovery(FileSystem* fs, const std::string& backup,
+                               const RecoveryPoint& recovery,
+                               const std::string& destination,
+                               MetaBypassRecoveryReport* report,
+                               SstStorage* sst) {
+  const std::string point = backup + "/" + recovery.name;
+  report->checkpoint_sequence = recovery.sequence;
+  report->recovered_sequence = recovery.sequence;
+  Status s;
   std::vector<SstStorage::RestoreFile> ssts;
-  for (const auto& e : entries) {
+  for (const auto& [file, length] : recovery.files) {
     uint64_t number;
     FileType type;
-    if (storage.sst() && ParseFileName(e.file, &number, &type) &&
-        type == kTableFile) {
-      ssts.push_back({point + "/" + e.file, number, e.length});
-    } else {
-      s = Copy(fs, point + "/" + e.file, destination + "/" + e.file, e.length);
-      if (!s.ok()) return s;
+    if (sst && ParseFileName(file, &number, &type) && type == kTableFile) {
+      ssts.push_back({point + "/" + file, number, length});
+      continue;
     }
-  }
-  if (storage.sst()) {
-    s = storage.sst()->RestoreTables(ssts);
+    s = Copy(fs, point + "/" + file, destination + "/" + file, length);
     if (!s.ok()) return s;
   }
-  s = SyncDir(fs, destination);
-  return s;
+  if (sst) {
+    s = sst->RestoreTables(ssts);
+    if (!s.ok()) return s;
+  }
+  std::vector<std::string> files;
+  s = fs->GetChildren(backup + "/work", IOOptions(), &files, nullptr);
+  if (s.IsNotFound() || s.IsPathNotFound()) return SyncDir(fs, destination);
+  if (!s.ok()) return s;
+  for (const auto& wal_name : files) {
+    uint64_t number;
+    FileType type;
+    if (!ParseFileName(wal_name, &number, &type) || type != kWalFile) continue;
+    const std::string source = backup + "/work/" + wal_name;
+    const std::string target = destination + "/" + wal_name;
+    uint64_t size;
+    s = fs->GetFileSize(source, IOOptions(), &size, nullptr);
+    if (s.ok()) s = ExtendWal(fs, source, target, size);
+    if (!s.ok()) return s;
+  }
+  return SyncDir(fs, destination);
 }
 }  // namespace metabypass
 }  // namespace ROCKSDB_NAMESPACE

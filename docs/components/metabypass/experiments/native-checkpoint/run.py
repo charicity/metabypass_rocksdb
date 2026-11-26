@@ -22,12 +22,17 @@ import sys
 import time
 import uuid
 
-PROTOCOL = "metabypass-native-perf-v1"
+PROTOCOL = "metabypass-native-perf-v2"
 PREFIX = "MB_NATIVE_JSON "
 OWNER = ".native-owner.json"
 GIB = 1024 ** 3
 MIB = 1024 ** 2
-GROUPS = ("U", "B", "D", "S")
+GROUPS = ("U", "D")
+AVAILABILITY_GATES = {
+    "U": ("concurrent-mixed", "concurrent-sync"),
+    "D": ("wal-only", "checkpoint-sst", "concurrent-mixed", "concurrent-sync"),
+}
+CRASH_STAGES = ("write", "publish")
 STAGES = {"preflight": 1800, "calibration": 5400, "core": 9000,
           "specials": 5400, "recovery": 3600, "reserve": 3600}
 CGROUP = Path("/sys/fs/cgroup/memory/mbgc-smallmem")
@@ -233,7 +238,6 @@ def sample_residency(roots):
     libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
     page = os.sysconf("SC_PAGE_SIZE")
     output = {"sst": {"bytes": 0, "resident_bytes": 0, "files": 0},
-              "blob_extent": {"bytes": 0, "resident_bytes": 0, "files": 0},
               "errors": []}
     seen = set()
     for root in roots:
@@ -241,9 +245,7 @@ def sample_residency(roots):
             continue
         for base, _, names in os.walk(root, followlinks=False):
             for name in names:
-                category = "sst" if name.endswith(".sst") else \
-                    "blob_extent" if name.endswith(".blob") or name.startswith("segment-") else None
-                if category is None:
+                if not name.endswith(".sst"):
                     continue
                 path = Path(base) / name
                 fd, address = None, None
@@ -264,7 +266,7 @@ def sample_residency(roots):
                     vector = (ctypes.c_ubyte * pages)()
                     if libc.mincore(address, info.st_size, vector):
                         raise OSError(ctypes.get_errno(), "mincore")
-                    entry = output[category]
+                    entry = output["sst"]
                     entry["bytes"] += info.st_size
                     entry["resident_bytes"] += sum(
                         min(page, info.st_size - index * page)
@@ -374,8 +376,8 @@ def disk_counters(text):
 def device_delta(before, after, paths):
     first, last = disk_counters(before), disk_counters(after)
     output = {}
-    for label in ("index", "data", "backup", "staging"):
-        device = Path(paths[label]).stat().st_dev
+    for label, path in database_paths(paths).items():
+        device = Path(path).stat().st_dev
         key = str(os.major(device)) + ":" + str(os.minor(device))
         if key in output:
             output[key]["paths"].append(label)
@@ -476,9 +478,8 @@ def validate_events(events, action, variant, workload, spec=None):
                     raise RunFailure("invalid sample metric " + key)
             if event["ops"] <= 0 or event["elapsed_us"] <= 0:
                 raise RunFailure("empty sample")
-    expected = 3 if workload == "gc" else 1
     if action == "run" and len([e for e in events if e.get("event") == "sample" and
-                                 e.get("name", "foreground") == "foreground"]) != expected:
+                                 e.get("name", "foreground") == "foreground"]) != 1:
         raise RunFailure("run has an unexpected number of measured samples")
     return done[0]
 
@@ -502,14 +503,11 @@ def driver_command(binary, paths, spec, action, fresh=False):
                "threads": spec.get("threads", 1), "warmup-seconds": spec.get("warmup", 0),
                "measure-seconds": spec.get("seconds", 0), "sync": spec["workload"] == "sync",
                "flush": spec.get("flush", True), "fresh": fresh,
-               "staging-capacity": spec.get("staging_capacity", 256 * MIB),
                "sst-mode": spec.get("sst_mode", "disabled"),
-               "sst-budget": spec.get("sst_budget", 0), "gc": spec.get("gc", True),
+               "sst-budget": spec.get("sst_budget", 0),
                "cache-bytes": spec.get("cache_bytes", 256 * MIB),
-               "flush-every": spec.get("flush_every", 0), "seed": spec.get("seed", 1729),
-               "gc-wait-seconds": spec.get("gc_wait_seconds", 0)}
-    # Omitted fields preserve the historical executable command protocol.
-    for name in ("direct_write", "mirror_interval_ms", "checkpoint_interval_ms", "verify_samples"):
+               "flush-every": spec.get("flush_every", 0), "seed": spec.get("seed", 1729)}
+    for name in ("mirror_interval_ms", "checkpoint_interval_ms", "verify_samples"):
         if name in spec:
             options[name.replace("_", "-")] = spec[name]
     if spec.get("disable_auto_compactions"):
@@ -539,30 +537,19 @@ def mechanism_coverage(spec, events):
     stats = last_stats(events)
     missing = []
     mandatory = ["flushes", "compactions", "wal_bytes", "flush_data_bytes", "compaction_output_bytes"]
-    if spec["group"] in ("D", "S"):
+    if spec["group"] == "D":
         mandatory += ["mirrored_wal_bytes", "recovery_points", "peak_queued_bytes",
-                      "backpressure_micros", "candidate_copied_bytes", "hdd_extents"]
-    if spec["group"] == "S":
-        mandatory += ["peak_staging_bytes", "staging_spill_bytes", "staging_backpressure_micros"]
-        capacity = spec.get("staging_capacity", 256 * MIB)
-        if stats.get("peak_staging_bytes", 0) > capacity:
-            raise DriverFailure("staging logical capacity exceeded")
+                      "backpressure_micros", "candidate_copied_bytes",
+                      "io_index_write_bytes", "io_backup_write_bytes"]
     for key in mandatory:
-        if key not in stats or not isinstance(stats[key], (int, float)) or \
-                not math.isfinite(stats[key]) or stats[key] < 0:
+        if type(stats.get(key)) is not int or stats[key] < 0:
             missing.append("missing/invalid counter " + key)
-    if spec.get("stage") == "specials":
-        if spec["workload"] == "gc":
-            if stats.get("flushes", 0) < 3:
-                missing.append("three GC generation flushes not observed")
-            if spec.get("gc", True) and stats.get("reclaimed_blob_files", 0) <= 0:
-                missing.append("no reclaimable whole Blob file was reclaimed")
-        if spec["workload"] == "sst" and spec.get("sst_mode") != "disabled":
-            if stats.get("sst_sampled_reads", 0) <= 0:
-                missing.append("SST read sampling not observed")
-            key = "sst_observed_demotions" if spec["sst_mode"] == "observe" else "sst_demotions"
-            if stats.get(key, 0) <= 0:
-                missing.append("SST policy/demotion mechanism not observed")
+    if spec.get("stage") == "specials" and spec["sst_mode"] != "disabled":
+        if stats.get("sst_sampled_reads", 0) <= 0:
+            missing.append("SST read sampling not observed")
+        key = "sst_observed_demotions" if spec["sst_mode"] == "observe" else "sst_demotions"
+        if stats.get(key, 0) <= 0:
+            missing.append("SST policy/demotion mechanism not observed")
     return {"complete": not missing, "missing": missing,
             "native_flushes": stats.get("flushes"), "native_compactions": stats.get("compactions"),
             "note": "zero native counts mean that mechanism was not exercised in this sample"}
@@ -578,7 +565,8 @@ def run_driver(binary, paths, spec, action, output, deadline, cpus, cgroup=None,
     command = driver_command(binary, paths, spec, action, fresh)
     wrapper = [sys.executable, str(HERE / "run.py"), "_exec", str(cgroup or "none"),
                ",".join(map(str, cpus)), *command]
-    record = {"command": command, "wrapper": wrapper, "events": [], "status": "running",
+    record = {"protocol": PROTOCOL, "command": command, "wrapper": wrapper,
+              "events": [], "status": "running",
               "binary_sha256_start": digest(binary), "telemetry": [], "valid": False}
     record["timeout_policy"] = {"mode": "inactivity" if progress_timeout else "elapsed",
                                 "seconds": timeout,
@@ -756,7 +744,7 @@ def matrix(profile="formal", write_keys=512 * MIB // 1024, sync_ops=128):
                    ("randomread", "randomread", 1024, 1, GROUPS),
                    ("hotspot", "hotspot", 1024, 1, GROUPS),
                    ("scan100", "scan", 1024, 1, GROUPS),
-                   ("randomread-4t", "randomread", 1024, 4, ("U", "B", "S")),
+                   ("randomread-4t", "randomread", 1024, 4, GROUPS),
                    ("mixed", "mixed", 1024, 4, GROUPS),
                    ("sync", "sync", 1024, 1, GROUPS),
                    ("upstream-hdd", "insert", 1024, 1, ("U",))]
@@ -785,20 +773,9 @@ def special_matrix(profile="formal"):
     keys = 2048 if smoke else GIB // 1024
     rows = []
     for number in range(1, 4):
-        for capacity in (256 * MIB, 65536):
-            rows.append({"stage": "specials", "scenario": "staging-" + str(capacity),
-                         "round": number, "group": "S", "workload": "insert",
-                         "keys": keys, "ops": keys, "value_size": 1024, "threads": 4,
-                         "staging_capacity": capacity})
-        for enabled in (True, False):
-            rows.append({"stage": "specials", "scenario": "gc-" + str(enabled).lower(),
-                         "round": number, "group": "S", "workload": "gc",
-                         "keys": keys, "ops": keys, "value_size": 1024, "threads": 4,
-                         "gc": enabled, "flush_every": max(1, keys // 4),
-                         "gc_wait_seconds": 0 if smoke else 60})
         for mode in ("disabled", "observe", "adaptive"):
             rows.append({"stage": "specials", "scenario": "sst-" + mode,
-                         "round": number, "group": "S", "workload": "sst",
+                         "round": number, "group": "D", "workload": "sst",
                          "keys": keys, "ops": keys, "value_size": 1024, "threads": 1,
                          "cache_bytes": 65536, "sst_mode": mode,
                          "disable_auto_compactions": True,
@@ -828,7 +805,7 @@ def preflight(args):
             failures.append(label + " parent missing or foreign-owned")
             continue
         usage = shutil.disk_usage(path)
-        peak = (40 if label == "ssd" else 100) * GIB if args.profile == "formal" else 128 * MIB
+        peak = 40 * GIB if args.profile == "formal" else 128 * MIB
         output["paths"][label] = {"path": str(path), "device": path.stat().st_dev,
                                   "total": usage.total, "free": usage.free,
                                   "projected_peak": peak, "reserved_fraction": .2,
@@ -879,6 +856,19 @@ def preflight(args):
     return output
 
 
+def expected_gates():
+    return {(group, scenario) for group, scenarios in AVAILABILITY_GATES.items()
+            for scenario in scenarios} | {("D", "sigkill-" + stage) for stage in CRASH_STAGES}
+
+
+def database_roles(group):
+    return ("index", "backup") if group == "D" else ("index",)
+
+
+def database_paths(paths):
+    return {label: paths[label] for label in ("index", "backup") if label in paths}
+
+
 class Experiment:
     def __init__(self, args):
         self.args = args
@@ -908,10 +898,10 @@ class Experiment:
         self.manifest = strict_json(Path(args.build_manifest).read_text())
         if self.manifest.get("protocol") != PROTOCOL:
             raise RunFailure("build manifest protocol mismatch")
-        if "U" in getattr(args, "groups", GROUPS) and self.manifest.get("upstream_commit") != "abeebd9630f11bd08c28b7bd43c7bdfc62050654":
+        if self.manifest.get("upstream_commit") != "abeebd9630f11bd08c28b7bd43c7bdfc62050654":
             raise RunFailure("upstream build is not pinned RocksDB v11.8.1")
         self.binaries = {}
-        for group in getattr(args, "groups", GROUPS):
+        for group in GROUPS:
             name = "upstream" if group == "U" else "current"
             entry = self.manifest["binaries"][name]
             binary = Path(entry["path"]).resolve()
@@ -937,7 +927,7 @@ class Experiment:
         self.report["remaining_seconds"] = remaining if math.isfinite(remaining) else None
         write_json(self.output / "results.json", self.report)
 
-    def paths(self, name, diagnostic=False):
+    def paths(self, name, group, diagnostic=False):
         index_root = self.hdd if diagnostic else self.ssd
         def database_dir(parent, suffix):
             container = create_owned(parent, name + suffix, self.run_id)
@@ -945,12 +935,11 @@ class Experiment:
             database.mkdir()
             return database
         # Ownership markers belong to containers, never engine-managed roots.
-        index = database_dir(index_root, "-index")
-        data = database_dir(self.hdd, "-data")
-        backup = database_dir(self.hdd, "-backup")
-        staging = database_dir(self.ssd, "-staging")
-        return {"index": index, "data": data, "backup": backup, "staging": staging,
-                "state": self.output / (name + ".state")}
+        paths = {"index": database_dir(index_root, "-index"),
+                 "state": self.output / (name + ".state")}
+        if group == "D":
+            paths["backup"] = database_dir(self.hdd, "-backup")
+        return paths
 
     def check_space(self):
         for name, parent in (("ssd", self.args.ssd_parent), ("hdd", self.args.hdd_parent)):
@@ -966,15 +955,14 @@ class Experiment:
         self.deadline.require()
 
     def remove_data(self, paths):
-        for key in ("index", "data", "backup", "staging"):
-            target = Path(paths[key]).parent
+        for path in database_paths(paths).values():
+            target = Path(path).parent
             parent = self.ssd if target.parent == self.ssd else self.hdd
             cleanup_owned(target, parent, self.run_id)
 
     def physical_space(self, paths):
         roots = {"ssd": [], "hdd": []}
-        for key in ("index", "data", "backup", "staging"):
-            path = paths[key]
+        for path in database_paths(paths).values():
             roots["ssd" if path.parent.parent == self.ssd else "hdd"].append(path)
         return {name: space_snapshot(items) for name, items in roots.items()}
 
@@ -1006,7 +994,7 @@ class Experiment:
                 paths = self.static[spec["group"]]
             else:
                 name = f"sample-{len(self.rows):04d}-{spec['group']}"
-                paths = self.paths(name, spec.get("diagnostic", False))
+                paths = self.paths(name, spec["group"], spec.get("diagnostic", False))
                 if spec["workload"] != "insert" and spec["workload"] != "sync":
                     prepare_spec = {**spec, "warmup": 0, "seconds": 0, "ops": spec["keys"]}
                     prepared, path = self.invoke(prepare_spec, paths, "prepare", fresh=True)
@@ -1015,8 +1003,7 @@ class Experiment:
                     self.static[spec["group"]] = paths
             row["paths"] = {key: str(value) for key, value in paths.items()}
             row["space_before"] = self.physical_space(paths)
-            row["residency_before"] = sample_residency([paths["index"], paths["data"],
-                                                        paths["backup"], paths["staging"]])
+            row["residency_before"] = sample_residency(database_paths(paths).values())
             run, path = self.invoke(spec, paths, "run", fresh=spec["workload"] in ("insert", "sync"))
             row["result"] = str(path / "result.json")
             row["driver"] = run
@@ -1030,8 +1017,7 @@ class Experiment:
                     self.static_verified.add(spec["group"])
             else:
                 row["verification"] = {"method": "per-operation validation; static full verification already passed"}
-            row["residency_after"] = sample_residency([paths["index"], paths["data"],
-                                                       paths["backup"], paths["staging"]])
+            row["residency_after"] = sample_residency(database_paths(paths).values())
             row["space_after"] = self.physical_space(paths)
             for field in ("residency_before", "residency_after"):
                 if row[field]["errors"]:
@@ -1047,7 +1033,7 @@ class Experiment:
             if not row["effective_options"]:
                 raise RunFailure("effective RocksDB OPTIONS missing")
             isolated = []
-            if spec.get("stage") == "specials" and spec["group"] in ("D", "S"):
+            if spec.get("stage") == "specials" and spec["group"] == "D":
                 isolated = self.restore_gate(spec, paths, row)
             row["coverage"] = mechanism_coverage(spec, run["events"])
             if not row["coverage"]["complete"]:
@@ -1089,19 +1075,16 @@ class Experiment:
         return row
 
     def restore_gate(self, spec, paths, gate, verify_acks=None):
-        """Preserve SSD originals by rename; restore using only HDD retained data."""
-        isolated = []
-        for key in ("index", "staging"):
-            original = paths[key].parent
-            check_owned(original, self.ssd, self.run_id)
-            destination = original.with_name(original.name + ".isolated")
-            if destination.exists() or destination.is_symlink():
-                raise RunFailure("isolation destination already exists")
-            original.rename(destination)
-            isolated.append(destination)
-            container = create_owned(self.ssd, original.name + ".restored", self.run_id)
-            paths[key] = container / "db"
-            paths[key].mkdir()
+        """Isolate the original SSD index before restoring from HDD backup."""
+        original = paths["index"].parent
+        check_owned(original, self.ssd, self.run_id)
+        destination = original.with_name(original.name + ".isolated")
+        if destination.exists() or destination.is_symlink():
+            raise RunFailure("isolation destination already exists")
+        original.rename(destination)
+        container = create_owned(self.ssd, original.name + ".restored", self.run_id)
+        paths["index"] = container / "db"
+        paths["index"].mkdir()
         restore_spec = dict(spec)
         if verify_acks:
             restore_spec["verify_acks"] = str(verify_acks)
@@ -1110,83 +1093,63 @@ class Experiment:
         # Restore adopted any newer unacknowledged valid writes into its sidecar.
         appended, directory = self.invoke(spec, paths, "append-reopen")
         gate["append_reopen"] = {"result": str(directory / "result.json"), "events": appended["events"]}
-        gate["isolated_originals"] = list(map(str, isolated))
-        gate["restore_source"] = "HDD backup/data only; original SSD index/staging renamed"
-        return isolated
+        gate["isolated_originals"] = [str(destination)]
+        gate["restore_source"] = "HDD backup only; original SSD index renamed"
+        return [destination]
 
     def availability(self):
         self.stage("preflight")
-        smoke = self.args.profile == "smoke"
-        definitions = [("wal-only", 2048, 1024, False, 256 * MIB, 1),
-                       ("checkpoint-blob", 8192, 1024, True, 256 * MIB, 4),
-                       ("staging-prefix-2m", 8192, 1024, True, 2 * MIB, 4),
-                       ("staging-direct-64k", 8192, 1024, True, 65536, 4),
-                       ("staging-large-value", 1, 4 * MIB, True, 2 * MIB, 1)]
-        for group in ("D", "S"):
-            for scenario, keys, value_size, flush, capacity, threads in definitions:
-                if group in self.report["blocked_groups"]:
-                    continue
-                if group == "D" and scenario.startswith("staging"):
-                    continue
-                spec = {"stage": "preflight", "scenario": scenario, "group": group,
-                        "workload": "insert", "keys": keys, "ops": keys,
-                        "value_size": value_size, "threads": threads,
-                        "flush": flush, "staging_capacity": capacity}
-                gate = {"scenario": scenario, "group": group, "status": "running"}
-                self.report["gates"].append(gate)
-                paths = self.paths("gate-" + str(len(self.report["gates"])) + "-" + group)
-                try:
-                    result, directory = self.invoke(spec, paths, "run", fresh=True, timeout=300)
-                    gate["write"] = {"result": str(directory / "result.json"), "events": result["events"]}
-                    stats = last_stats(result["events"])
-                    if scenario == "wal-only" and stats.get("flushes") != 0:
-                        raise RunFailure("WAL-only checkpoint caused flush or lacks flush counter")
-                    if group == "S" and flush:
-                        if capacity > 65536 and scenario != "staging-large-value" and \
-                                stats.get("peak_staging_bytes", 0) <= 0:
-                            raise RunFailure("staging residency was not observed")
-                        if scenario in ("staging-prefix-2m", "staging-direct-64k", "staging-large-value") and \
-                                stats.get("staging_spill_bytes", 0) <= 0:
-                            raise RunFailure("staging spill was not observed")
-                    isolated = self.restore_gate(spec, paths, gate)
-                    gate["status"] = "pass"
-                    self.remove_data(paths)
-                    for old in isolated:
-                        cleanup_owned(old, self.ssd, self.run_id)
-                except BaseException as error:
-                    gate["status"] = "failed" if isinstance(error, DriverFailure) else "incomplete"
-                    gate["error"] = str(error)
-                    if isinstance(error, DriverFailure):
-                        self.report["blocked_groups"][group] = str(error)
-                        self.save()
-                        continue
-                    self.save()
+        group = "D"
+        for scenario, keys, flush, threads in (("wal-only", 2048, False, 1),
+                                               ("checkpoint-sst", 8192, True, 4)):
+            if group in self.report["blocked_groups"]:
+                continue
+            spec = {"stage": "preflight", "scenario": scenario, "group": group,
+                    "workload": "insert", "keys": keys, "ops": keys,
+                    "value_size": 1024, "threads": threads, "flush": flush}
+            gate = {"scenario": scenario, "group": group, "status": "running"}
+            self.report["gates"].append(gate)
+            paths = self.paths("gate-" + scenario, group)
+            try:
+                result, directory = self.invoke(spec, paths, "run", fresh=True, timeout=300)
+                gate["write"] = {"result": str(directory / "result.json"), "events": result["events"]}
+                stats = last_stats(result["events"])
+                if not flush and stats.get("flushes") != 0:
+                    raise RunFailure("WAL-only checkpoint caused flush or lacks flush counter")
+                if flush and stats.get("flushes", 0) <= 0:
+                    raise RunFailure("SST checkpoint did not flush")
+                isolated = self.restore_gate(spec, paths, gate)
+                gate["status"] = "pass"
+                self.remove_data(paths)
+                for old in isolated:
+                    cleanup_owned(old, self.ssd, self.run_id)
+            except BaseException as error:
+                gate["status"] = "failed" if isinstance(error, DriverFailure) else "incomplete"
+                gate["error"] = str(error)
+                if not isinstance(error, DriverFailure):
                     raise
+                self.report["blocked_groups"][group] = str(error)
+            finally:
                 self.save()
-        # Native routes must survive updates, tombstones, compaction, Close and
-        # reopen before either baseline can be used in performance comparisons.
+        # Both groups must validate concurrent writes and reopen before measurement.
         for group in GROUPS:
             if group in self.report["blocked_groups"]:
                 continue
-            for workload in (("mixed", "sync", "gc") if group == "B" else ("mixed", "sync")):
+            for workload in ("mixed", "sync"):
                 gate = {"scenario": "concurrent-" + workload, "group": group, "status": "running"}
                 self.report["gates"].append(gate)
                 spec = {"stage": "preflight", "scenario": gate["scenario"], "group": group,
                         "workload": workload, "keys": 128 if workload == "sync" else 2048,
-                        "ops": 128 if workload == "sync" else 2048 if workload == "gc" else 8192,
+                        "ops": 128 if workload == "sync" else 8192,
                         "value_size": 1024, "threads": 4, "flush": workload != "sync"}
-                if workload == "gc":
-                    spec["flush_every"] = 512
-                paths = self.paths("native-gate-" + group + "-" + workload)
+                paths = self.paths("native-gate-" + group + "-" + workload, group)
                 try:
                     if workload != "sync":
                         self.invoke(spec, paths, "prepare", fresh=True)
                     run, directory = self.invoke(spec, paths, "run", fresh=workload == "sync")
                     gate["write"] = {"result": str(directory / "result.json"), "events": run["events"]}
-                    if group == "B" and workload == "gc" and last_stats(run["events"]).get("native_blob_deletes", 0) <= 0:
-                        raise CoverageFailure("B route adapter native obsolete Blob Delete was not observed")
                     isolated = []
-                    if group in ("D", "S"):
+                    if group == "D":
                         isolated = self.restore_gate(spec, paths, gate)
                     else:
                         result, directory = self.invoke(spec, paths, "verify")
@@ -1206,18 +1169,17 @@ class Experiment:
 
     def fault_recovery(self):
         self.stage("recovery")
-        targets = [(group, stage) for group in ("D", "S") for stage in ("write", "publish")]
-        targets += [("S", "migration")]
-        for group, crash_stage in targets:
+        group = "D"
+        for crash_stage in CRASH_STAGES:
             if group in self.report["blocked_groups"]:
                 continue
             spec = {"stage": "recovery", "scenario": "sigkill-" + crash_stage, "group": group,
                     "workload": "overwrite", "keys": 128, "ops": 128,
                     "value_size": 65536, "threads": 1, "seconds": 300,
-                    "staging_capacity": 2 * MIB, "flush_every": 64}
+                    "flush_every": 64}
             gate = {"scenario": "sigkill-" + crash_stage, "group": group, "status": "running"}
             self.report["gates"].append(gate)
-            paths = self.paths("fault-" + group + "-" + crash_stage)
+            paths = self.paths("fault-" + group + "-" + crash_stage, group)
             try:
                 self.invoke(spec, paths, "prepare", fresh=True)
                 before = paths["state"].with_suffix(".precrash.state")
@@ -1248,7 +1210,7 @@ class Experiment:
                 raise
             self.save()
         self.report["limitations"].append(
-            "SIGKILL gates prove the first successful write ACK, immediately before backup/LATEST rename, and before the first HDD segment creation after staging prefix. They are not physical power-loss certification.")
+            "SIGKILL gates exercise recovery after a successful write ACK and immediately before backup/LATEST rename.")
 
     def calibrate(self):
         smoke = self.args.profile == "smoke"
@@ -1291,7 +1253,7 @@ class Experiment:
             if group in self.report["blocked_groups"]:
                 continue
             spec = next(row for row in core if row.get("static") and row["group"] == group)
-            paths = self.paths("static-" + group)
+            paths = self.paths("static-" + group, group)
             prepare_spec = {**spec, "stage": "calibration", "warmup": 0, "seconds": 0,
                             "ops": spec["keys"]}
             prepared, directory = self.invoke(prepare_spec, paths, "prepare", fresh=True, timeout=3600)
@@ -1305,6 +1267,17 @@ class Experiment:
                 "elapsed_s": prepared["elapsed_s"] + verified["elapsed_s"],
                 "repeated_windows_are_independent_builds": False}
             self.save()
+
+    def sample_sst(self, spec, phase="measured"):
+        if spec["sst_mode"] == "disabled" or spec["group"] in self.report["blocked_groups"]:
+            return self.sample(spec, phase)
+        if self.sst_budget is None:
+            row = {"spec": dict(spec), "phase": phase, "valid": False,
+                   "status": "incomplete", "error": "disabled live SST budget not established"}
+            self.rows.append(row)
+            self.save()
+            return row
+        return self.sample({**spec, "sst_budget": self.sst_budget}, phase)
 
     def execute(self, calibration_only=False):
         try:
@@ -1344,18 +1317,8 @@ class Experiment:
                     continue
             self.fault_recovery()
             for spec in specials:
-                if spec["group"] in self.report["blocked_groups"]:
-                    self.sample(spec)
-                    continue
-                if spec["workload"] == "sst" and spec["sst_mode"] != "disabled":
-                    if self.sst_budget is None:
-                        self.rows.append({"spec": dict(spec), "phase": "measured", "valid": False,
-                                          "status": "incomplete", "error": "disabled live SST budget not established"})
-                        self.save()
-                        continue
-                    spec["sst_budget"] = self.sst_budget
                 try:
-                    self.sample(spec)
+                    self.sample_sst(spec)
                 except (CoverageFailure, DriverFailure):
                     # Retain uncovered data and the explicit incomplete row;
                     # continue independent mechanism evidence if space permits.
@@ -1385,17 +1348,16 @@ class Experiment:
     def audit_regression(self):
         if not self.args.regression_audit:
             if self.args.profile == "formal":
-                raise RunFailure("formal completion requires strict six-binary regression audit")
-            self.report["limitations"].append("smoke omits external six-binary strict regression audit")
+                raise RunFailure("formal completion requires strict three-binary regression audit")
+            self.report["limitations"].append("smoke omits external three-binary strict regression audit")
             return
         audit = strict_json(Path(self.args.regression_audit).read_text())
         if audit.get("status") != "pass" or audit.get("assert_status_checked") is not True or \
                 audit.get("timeout_per_test_seconds") != 60 or audit.get("retry_workers") != [8, 2, 1, 1]:
             raise RunFailure("strict regression audit does not match approved policy")
-        required = {"metabypass_test", "sst_tiering_test", "checkpoint_test", "db_blob_basic_test",
-                    "db_blob_compaction_test", "db_blob_corruption_test"}
+        required = {"metabypass_test", "sst_tiering_test", "checkpoint_test"}
         if set(audit.get("binaries", [])) != required or audit.get("persistent_failures") or audit.get("incomplete_cases"):
-            raise RunFailure("strict regression audit lacks complete six-binary passing case set")
+            raise RunFailure("strict regression audit lacks complete three-binary passing case set")
         self.report["regression_audit"] = {"path": str(self.args.regression_audit),
                                             "sha256": digest(self.args.regression_audit), "audit": audit}
 
@@ -1480,11 +1442,9 @@ def forecast_matrix(core, specials, calibration, stage_budgets=None):
             cost = write + 1.5 * write + verify
         elif row["workload"] in ("mixed", "sst"):
             cost = write + row.get("warmup", 0) + row.get("seconds", 0) + verify + 5
-        elif row["workload"] == "gc":
-            cost = write + 3 * 1.5 * write + verify + row.get("gc_wait_seconds", 0)
         else:
             raise RunFailure("unknown workload forecast")
-        if row["stage"] == "specials" and row["group"] in ("D", "S"):
+        if row["stage"] == "specials" and row["group"] == "D":
             cost += 2 * verify + 5  # Restore/full verify, append/reopen/full verify.
         stages[row["stage"]] += cost
     # Include process launch/state serialization and uncertainty in per-stage cost.
@@ -1493,7 +1453,7 @@ def forecast_matrix(core, specials, calibration, stage_budgets=None):
     return {**stages, "remaining_total_seconds": sum(stages.values()),
             "calibration_rates": rates, "sync_seconds_per_operation": sync,
             "uncertainty_margin": .2,
-            "method": "per-group complete insert and full verification per byte; sync separately per op; overwrite/GC 1.5x mutation estimate; static seed once per group; each D/S special adds 2*verify+5s for HDD Restore and append/reopen; 20% margin and fixed recovery/reserve"}
+            "method": "per-group complete insert and full verification per byte; sync separately per op; overwrite 1.5x mutation estimate; static seed once per group; each D special adds 2*verify+5s for HDD Restore and append/reopen; 20% margin and fixed recovery/reserve"}
 
 
 def lifecycle_seconds(row):

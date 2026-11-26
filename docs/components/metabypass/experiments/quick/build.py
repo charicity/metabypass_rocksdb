@@ -3,20 +3,17 @@
 # This source code is licensed under both the GPLv2 (found in the
 # COPYING file in the root directory) and Apache 2.0 License
 # (found in the LICENSE.Apache file in the root directory).
-"""Build two release drivers in an external, reusable CMake build directory."""
+"""Build one release binary for the inline Metabypass comparison."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
-import tarfile
-import tempfile
 import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
-UPSTREAM = "abeebd9630f11bd08c28b7bd43c7bdfc62050654"
 
 
 def sha256(path):
@@ -46,31 +43,6 @@ def identity():
             "files": hashes}
 
 
-def verify_upstream(source):
-    """Check the reusable source export against Git objects, not its name."""
-    verified = {}
-    for entry in git("ls-tree", "-r", "-z", UPSTREAM).split(b"\0"):
-        if not entry:
-            continue
-        metadata, name = entry.split(b"\t", 1)
-        mode, kind, oid = metadata.decode().split()
-        if kind != "blob":
-            continue
-        path = source / name.decode()
-        if not path.exists() and not path.is_symlink():
-            raise RuntimeError("upstream export missing: " + str(path))
-        content = (os.readlink(path).encode() if mode == "120000" else path.read_bytes())
-        digest = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
-        if digest != oid:
-            raise RuntimeError("upstream export modified: " + str(path))
-        verified[name.decode()] = oid
-    extra = {str(path.relative_to(source)) for path in source.rglob("*")
-             if path.is_file() or path.is_symlink()} - set(verified)
-    if extra:
-        raise RuntimeError("unexpected upstream source files: " + str(sorted(extra)))
-    return hashlib.sha256(json.dumps(verified, sort_keys=True).encode()).hexdigest()
-
-
 def default_jobs():
     cpus = len(os.sched_getaffinity(0))
     available = next(int(line.split()[1]) * 1024
@@ -94,55 +66,40 @@ def main():
     marker = out / ".mb-quick-build"
     if not marker.exists() and any(out.iterdir()):
         p.error("build directory must be empty or owned by this builder")
-    marker.write_text("metabypass-quick-v1\n")
+    if marker.exists() and marker.read_text().strip() != "metabypass-quick-v2":
+        p.error("use a new build directory for this protocol")
+    marker.write_text("metabypass-quick-v2\n")
     # An interrupted rebuild must never leave an apparently valid manifest.
     (out / "build.json").unlink(missing_ok=True)
-    upstream = out / "upstream-source"
-    if not upstream.exists():
-        with tempfile.TemporaryDirectory(dir=out, prefix="extract-") as temp:
-            archive = Path(temp) / "upstream.tar"
-            with archive.open("wb") as stream:
-                subprocess.run(["git", "-C", str(ROOT), "archive", UPSTREAM],
-                               stdout=stream, check=True)
-            source = Path(temp) / "source"
-            source.mkdir()
-            # The archive is from the pinned local, trusted upstream commit.
-            with tarfile.open(archive) as tar:
-                tar.extractall(source)
-            source.rename(upstream)
-    upstream_digest = verify_upstream(upstream)
     before = identity()
-    metadata = {"protocol": "metabypass-quick-v1", "build_type": "Release",
+    metadata = {"protocol": "metabypass-quick-v2", "build_type": "Release",
                 "created_unix": time.time(), "source": before,
-                "upstream_commit": UPSTREAM, "jobs": a.jobs,
-                "upstream_tree_sha256": upstream_digest,
+                "jobs": a.jobs,
                 "git_status": git("status", "--short").decode(),
                 "driver_sha256": sha256(HERE / "driver.cc"),
                 "compiler": subprocess.check_output(
                     [os.environ.get("CXX", "c++"), "--version"], text=True),
                 "commands": [], "binaries": {}}
-    for name, source in (("current", ROOT), ("upstream", upstream)):
-        directory = out / name
-        commands = [
-            ["cmake", "-S", str(HERE), "-B", str(directory),
-             "-DCMAKE_BUILD_TYPE=Release", "-DPORTABLE=ON", "-DUSE_RTTI=OFF",
-             "-DROCKSDB_SOURCE=" + str(source),
-             "-DMB_UPSTREAM=" + ("ON" if name == "upstream" else "OFF")],
-            ["cmake", "--build", str(directory), "--target", "mb_quick",
-             "--parallel", str(a.jobs)],
-        ]
-        log = out / (name + "-build.log")
-        with log.open("w") as stream:
-            for command in commands:
-                print("Running:", " ".join(command), "log:", log, flush=True)
-                metadata["commands"].append(command)
-                subprocess.run(command, check=True, stdout=stream,
-                               stderr=subprocess.STDOUT)
-        binary = directory / "mb_quick"
-        metadata["binaries"][name] = {
-            "path": str(binary), "sha256": sha256(binary),
-            "cmake_cache_sha256": sha256(directory / "CMakeCache.txt"),
-            "compile_commands_sha256": sha256(directory / "compile_commands.json")}
+    directory = out / "current"
+    commands = [
+        ["cmake", "-S", str(HERE), "-B", str(directory),
+         "-DCMAKE_BUILD_TYPE=Release", "-DPORTABLE=ON", "-DUSE_RTTI=OFF",
+         "-DROCKSDB_SOURCE=" + str(ROOT)],
+        ["cmake", "--build", str(directory), "--target", "mb_quick",
+         "--parallel", str(a.jobs)],
+    ]
+    log = out / "current-build.log"
+    with log.open("w") as stream:
+        for command in commands:
+            print("Running:", " ".join(command), "log:", log, flush=True)
+            metadata["commands"].append(command)
+            subprocess.run(command, check=True, stdout=stream,
+                           stderr=subprocess.STDOUT)
+    binary = directory / "mb_quick"
+    metadata["binaries"]["current"] = {
+        "path": str(binary), "sha256": sha256(binary),
+        "cmake_cache_sha256": sha256(directory / "CMakeCache.txt"),
+        "compile_commands_sha256": sha256(directory / "compile_commands.json")}
     if identity() != before:
         raise RuntimeError("source changed during build; rerun before measuring")
     (out / "build.json").write_text(json.dumps(metadata, indent=2) + "\n")

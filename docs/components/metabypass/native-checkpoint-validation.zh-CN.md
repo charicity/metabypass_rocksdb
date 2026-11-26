@@ -2,7 +2,7 @@
 > `allow_concurrent_memtable_write=false`，检查点调用原生 flush 并排除 WAL，默认独立检查点间隔
 > 为 5000 ms；恢复以已发布点 Restore 为边界，不保证 active Blob WAL 本地 crash 重开。
 > 新路径当前测试和性能验收须单独记录，不能由下列历史通过项推导。
-> 参见[三臂、三轮162样本协议](experiments/direct-write/README.zh-CN.md)。
+> 参见`三臂、三轮162样本协议` (at Git revision `3954f74cb`)。
 
 # Native checkpoint 改造验收记录
 

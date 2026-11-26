@@ -25,7 +25,7 @@ import node_summary
 import node_tradeoff as trade
 
 
-PROTOCOL = "metabypass-sst-normal-v1"
+PROTOCOL = "metabypass-sst-normal-v2"
 POLICY_VERSION = "metabypass-sst-normal-policies-v1"
 TARGET_RATE = 80
 DURATIONS = {"warmup": 60, "measured": 180, "saturated": 0}

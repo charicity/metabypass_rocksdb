@@ -1,3 +1,5 @@
+> Historical design or experiment record. See the [current Metabypass design](index.md).
+
 > Historical experiment/review record for the earlier DirectWrite architecture.
 > This document does not specify current behavior or format compatibility. See
 > [native checkpoint design](index.md) for the current implementation.
@@ -149,7 +151,7 @@ flowchart TD
 | [metabypass_db.cc](../../../utilities/metabypass/metabypass_db.cc) | `Put`、`Write`、`SyncBackup`、`Close`、`Restore`：薄入口、范围检查和生命周期。 |
 | [backup.h](../../../utilities/metabypass/backup.h) | `Channel`、`wal_channel_`、`metadata_channel_`、候选点及校验缓存：状态与锁的归属。 |
 | [backup.cc](../../../utilities/metabypass/backup.cc) | `MirrorWriter`、`Reserve`、`Finish`、`NextChannel`、`Run`、`Capture`、`Publish`、`WakeMirror`、`WakeCapacity`：生产、调度、镜像及发布。 |
-| [separated_storage.cc](../../../utilities/metabypass/separated_storage.cc) | blob 路径与生命周期、`Dependencies`、`PersistIncremental`、`PrepareRecovery`：依赖验证和恢复准备。 |
+| `separated_storage.cc` (at Git revision `3954f74cb`) | blob 路径与生命周期、`Dependencies`、`PersistIncremental`、`PrepareRecovery`：依赖验证和恢复准备。 |
 | [native_files.cc](../../../utilities/metabypass/native_files.cc) | `Inspect` 等原生索引解析、文件复制及校验辅助。 |
 | [metabypass_test.cc](../../../utilities/metabypass/metabypass_test.cc) | 34 个组件测试，包括双通道隔离、顺序、容量、失败、退出和恢复验证。 |
 | [db_bench_tool.cc](../../../tools/db_bench_tool.cc) | `RunMetaBypassBenchmark`：无备份、写入、恢复、核验模式及阶段指标。 |
@@ -179,7 +181,7 @@ flowchart TD
 | WAL/SST 锁与优先级取舍 | [调度实验报告](scheduling-ab.md) | [实验说明与脚本](experiments/scheduling-ab/README.md) | 比较分锁、容量预留、优先级方案；正式版本采用双通道，未采用 WAL 优先级或额度保留。 |
 | 正式双通道正确性及全量检查 | [双通道验证报告](channel-validation.md) | [测试命令、日志摘要及源码哈希](experiments/channel-checks.json) | 普通/Status 各 34/34，强制切换 3400/3400；全量 3322/3303 分片中有 8/6 个历史失败或超时。 |
 | 正式三版本性能与小队列复测 | [三版本及复测报告](channel-validation.md#performance-results) | [首轮结果](experiments/channel-results.json)、[小队列复测](experiments/channel-pressure-followup.json) | 两轮 78/78 次删除主索引后的恢复验证通过，含六次 SIGKILL；额外 db_bench 接入验证通过。 |
-| 最新无备份四版本补测 | [无备份基线对照报告](channel-baseline-comparison.md) | [四版本原始结果](experiments/channel-no-backup-results.json)、[补测脚本](experiments/scheduling-ab/no_backup.py) | 60 组正式测量；备份恢复 57/57、无备份主库核验 18/18 通过。无备份核验保留主索引，不能计作丢失主索引后的恢复。 |
+| 最新无备份四版本补测 | [无备份基线对照报告](channel-baseline-comparison.md) | [四版本原始结果](experiments/channel-no-backup-results.json)、`补测脚本` (at Git revision `3954f74cb`) | 60 组正式测量；备份恢复 57/57、无备份主库核验 18/18 通过。无备份核验保留主索引，不能计作丢失主索引后的恢复。 |
 
 全量检查仍有已记录的 BloomFilter/Prefetch 断言失败及超时；七个历史易超时用例在独立 tmpfs 目录重跑，普通/Status 各 7/7 通过，但不将全量结果改写为通过。工作流 YAML 检查缺少 Ruby，C API 相对 `main` 的历史兼容性差异仍存在。详细错误签名和限制见[双通道验证报告](channel-validation.md#test-results)。
 

@@ -1,0 +1,1 @@
+MetaBypass now follows `Options::enable_blob_files` (default false), supporting full-value SST storage, backup, restore and SST tiering; BlobDB, Direct Write and Blob staging callers must explicitly enable Blob files.

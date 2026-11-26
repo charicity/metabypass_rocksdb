@@ -61,7 +61,7 @@ defined by the workload's current hot key range; they are not per-request
 SSD/HDD location measurements. The runner captures wall time, sampled process
 CPU and peak RSS; it stores exact commands, binary hash, source identity, all
 raw stdout/stderr, exit codes, timeouts and parse errors.
-Its space scan distinguishes SSD SST, HDD SST, blob, temporary and metadata
+Its space scan distinguishes SSD SST, HDD SST, temporary and metadata
 paths. Physical allocated blocks use `(device, inode)` globally across all
 hardlinked work, point and store paths; category physical totals may overlap
 only when one inode spans categories, and the global total never double counts.
@@ -134,7 +134,7 @@ paths and no injected read delay; it measures mechanism and path occupancy,
 not physical HDD behavior or SSD-device capacity savings. The fixed offered
 operation rate is not a maximum-throughput test.
 
-## node-ssd physical-device protocol (`node_v1`)
+## node-ssd physical-device protocol (`node_v2`)
 
 `node_run.py` is a separate protocol; it does not change the fixed-operation
 `run.py` or its old reports. Deploy the release `db_bench`, this script directory
@@ -195,18 +195,19 @@ retain per-file path/route, covered/resident bytes, coverage, timestamp and CPU
 cost. The supplemental capacity ratio also requires SST logical bytes at least
 1.5 times `96 MiB - minimum calibrated saturated RssAnon - block cache`; this
 anonymous-RSS proxy is not substituted for actual SST residency evidence. Total
-cgroup cache and device I/O include blob pages and cannot prove SST residency.
+cgroup cache and device I/O cannot prove SST residency.
 Missing actual physical reads on either device, failed calibration or missing
 adaptive read samples and migration/cold-placement evidence also block formal
 work. An OOM requires investigation of benchmark RSS; the runner never changes the
 cgroup limit. `memory.failcnt` is recorded as pressure evidence, not an OOM
-count. Both modes explicitly use an 8 MiB queue, a 256 KiB batch, a one-second
-background interval and a 64 KiB block cache.
+count. Both modes explicitly use 7 MiB of WAL queue capacity, 1 MiB of metadata
+queue capacity, a 256 KiB mirror batch trigger, a one-second mirror interval,
+a five-second checkpoint interval and a 64 KiB block cache.
 
 The seed is read-only. Each fresh dataset uses ordinary `copy2` for its first
 inode and recreates only that trial's internal hardlinks on the same destination
 device. It never shares writable inodes with the seed or another trial. The
-three DB/data/backup directories retain identity and relative publication
+index and backup directories retain identity and relative publication
 metadata; no absolute-path text rewriting is performed. A new-path Open and
 published-point restore smoke must pass before the physical experiment.
 Calibration runs disabled/adaptive/observe at the same frozen 50% SST budget,
@@ -246,15 +247,15 @@ alongside the 5-10 second space scans. Missing or unreadable kernel-memory and
 process-resource evidence is explicitly unknown rather than zero. Per-thread
 processor values are the last scheduled CPU, so polling is not a complete trace
 of migrations. Each trial's SSD and HDD are one primary `(st_dev, st_ino)` deduplicated
-scope using `st_blocks * 512`; SST/blob/temp/metadata category counts can overlap
+scope using `st_blocks * 512`; SST/temp/metadata category counts can overlap
 when one inode has paths in several categories. `run_scope` separately includes
 the seed, active trial and retained failures on both devices and is used for
 experiment capacity monitoring, not per-trial cost comparisons. Racing unlinks
 make a sample explicitly incomplete and cannot become zero saved bytes. The
 summary reports measured steady SSD SST occupancy, sampled maximum, exit and
 all-SSD occupancy plus paired HDD/total-physical differences. Polling peaks are
-sampled, not exact. Device I/O mixes blob and SST traffic; heat and placement
-counters do not identify the device serving each request.
+sampled, not exact. Device I/O includes WAL, metadata, and SST traffic. Heat and
+placement counters do not identify the device serving each request.
 
 Six additional independent samples cover disabled/adaptive at 60/75/90 seconds
 after the writer's `ready.steady_time_us` on the shared Linux monotonic clock,
@@ -274,7 +275,7 @@ without loss it is zero. A marker beyond the last ACK maps to the last actually
 received ACK. With no recovered ACK, RPO is unknown and a lower bound is stated.
 All six samples and their ranges are listed; they do not establish RPO P99.
 
-New events carry `protocol=node_v1`. `histogram_schema.upper_bounds_us` defines
+New events carry `protocol=node_v2`. `histogram_schema.upper_bounds_us` defines
 193 latency bins with four subdivisions per doubling. Every `window` and
 `phase_end` carries separate Get/Put/Delete service and response histograms;
 `phase_end` is cumulative for the entire phase. Summary percentiles use those
@@ -326,8 +327,9 @@ python3 /path/on/ssd/scripts/node_run.py --profile small \
 ```
 
 The fixed dataset has 1,000,000 16-byte keys and 1 KiB values. There is no automatic
-larger seed or lower memory fallback. Queue capacity is 2 MiB; the 256 KiB batch,
-one-second backup interval, 64 KiB block cache, 1 MiB memtable/SST target, and
+larger seed or lower memory fallback. WAL and metadata queue capacities are
+1792 KiB and 256 KiB. The 256 KiB batch, one-second mirror interval, five-second
+checkpoint interval, 64 KiB block cache, 1 MiB memtable/SST target, and
 strategy timings remain the same. The strategy evaluates every second with a
 10-second heat half-life, a 10-second minimum residency, two promotion rounds,
 three demotion rounds and one-in-64 read sampling. The three workload types,

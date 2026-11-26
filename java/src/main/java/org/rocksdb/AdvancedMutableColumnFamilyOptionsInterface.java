@@ -15,9 +15,9 @@ public interface AdvancedMutableColumnFamilyOptionsInterface<
     T extends AdvancedMutableColumnFamilyOptionsInterface<T>> {
   /**
    * The maximum number of write buffers that are built up in memory.
-   * The default is 2, so that when 1 write buffer is being flushed to
+   * The minimum is 2, so that when one write buffer is being flushed to
    * storage, new writes can continue to the other write buffer.
-   * Default: 2
+   * Default: 3
    *
    * @param maxWriteBufferNumber maximum number of write buffers.
    * @return the instance of the current options.

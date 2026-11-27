@@ -11,8 +11,10 @@
 #include <limits>
 #include <sstream>
 
+#include "db/db_impl/db_impl.h"
 #include "file/filename.h"
 #include "test_util/sync_point.h"
+#include "util/cast_util.h"
 #include "util/string_util.h"
 #include "utilities/metabypass/sst_storage.h"
 #include "utilities/metabypass/wal_breakdown.h"
@@ -27,6 +29,10 @@ thread_local bool mirror_append = false;
 #endif
 namespace {
 constexpr size_t kMaxWalBatchEvents = 256;
+constexpr size_t kSstCopyQuantum = 1024 * 1024;
+constexpr size_t kSstCopyBufferSize = 64 * 1024;
+constexpr size_t kMaxStagedSsts = 1024;
+constexpr uint64_t kMaxStagedSstBytes = uint64_t{2} * 1024 * 1024 * 1024;
 
 uint64_t Now() {
   return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -172,6 +178,58 @@ Status RemoveRetiredPoint(FileSystem* fs, const std::string& path) {
   return fs->DeleteDir(path, IOOptions(), nullptr);
 }
 }  // namespace
+
+struct Backup::StagedSst {
+  StagedSst(uint64_t file_number, uint64_t file_size, std::string file_source,
+            std::string temp_path, bool ordinary_task, uint64_t not_before)
+      : number(file_number),
+        size(file_size),
+        source(std::move(file_source)),
+        path(std::move(temp_path)),
+        eligible_at(not_before),
+        ordinary(ordinary_task) {}
+  ~StagedSst() { status.PermitUncheckedError(); }
+
+  const uint64_t number, size;
+  const std::string source;
+  std::string path;
+  const uint64_t eligible_at;
+  const bool ordinary;
+  // Only the worker uses these handles. It may pause one ordinary file while
+  // a candidate requests another file.
+  std::unique_ptr<FSSequentialFile> reader;
+  std::unique_ptr<FSWritableFile> writer;
+  uint64_t copied = 0, ordinary_bytes = 0, candidate_bytes = 0;
+  bool linked = false, temp_created = false;
+  // Completion is transferred to a candidate under Backup::mutex_.
+  bool done = false;
+  uint64_t ready_epoch = 0;
+  Status status;
+};
+
+struct Backup::SstStaging {
+  // Scheduler state is protected by Backup::mutex_. Database and filesystem
+  // calls are made with the mutex released.
+  std::condition_variable cv;
+  std::thread worker;
+  std::map<uint64_t, std::unique_ptr<StagedSst>> jobs;
+  std::map<uint64_t, uint64_t> output_hints;  // First observed eligible time.
+  std::unordered_map<uint64_t, int> published_tables;
+  uint64_t revision = 0, reconciled_revision = 0;
+  uint64_t capture_epoch = 0;
+  uint64_t next_temp_id = 0;
+  StagedSst* ordinary_in_progress = nullptr;
+  StagedSst* urgent = nullptr;
+  bool urgent_barrier = false;
+  bool ordinary_paused = false;
+  bool rescan_requested = false;
+  bool mirror_busy = false, borrowing_db = false, detaching = false;
+
+  std::string NewTempPath(const std::string& work, uint64_t number) {
+    return work + "/sst-async-" + std::to_string(number) + "-" +
+           std::to_string(++next_temp_id) + ".tmp";
+  }
+};
 
 void WriteGate::Admit() {
   uint64_t state = state_.load(std::memory_order_relaxed);
@@ -403,6 +461,9 @@ Backup::Backup(std::shared_ptr<FileSystem> fs, std::string index,
       index_(std::move(index)),
       options_(std::move(options)),
       work_(options_.backup_dir + "/work"),
+      sst_staging_(options_.sst_async_min_level == -1
+                       ? nullptr
+                       : std::make_unique<SstStaging>()),
       wal_wake_charge_(options_.batch_bytes) {}
 Backup::~Backup() {
   Stop().PermitUncheckedError();
@@ -516,6 +577,8 @@ Status Backup::Start(bool existing) {
   garbage_collector_ = std::thread(&Backup::GarbageCollectLoop, this);
   validator_ = std::thread(&Backup::ValidateLoop, this);
   thread_ = std::thread(&Backup::Run, this);
+  if (sst_staging_)
+    sst_staging_->worker = std::thread(&Backup::StageSstLoop, this);
   if (options_.enable_recovery_time_sampling)
     sampler_ = std::thread(&Backup::SampleLoop, this);
   TEST_SYNC_POINT_CALLBACK("MetaBypass::SamplerStarted", &sampler_);
@@ -538,6 +601,7 @@ Status Backup::Activate(const std::string& identity, DB* db,
   clock_ = std::move(clock);
   identity_ = identity;
   active_ = true;
+  if (sst_staging_) sst_staging_->cv.notify_all();
   validator_cv_.notify_one();
   WakeMirror();
   return Status::OK();
@@ -668,6 +732,7 @@ void Backup::Fail(const Status& status) {
   WakeMirror();
   validator_cv_.notify_one();
   gc_cv_.notify_all();
+  if (sst_staging_) sst_staging_->cv.notify_all();
   WakeMetadataCapacity();
   sync_cv_.notify_all();
 }
@@ -909,6 +974,339 @@ Status Backup::Capture(Candidate* candidate) {
   TEST_SYNC_POINT("MetaBypass::MutableFilesCaptured");
   return Status::OK();
 }
+std::unique_ptr<Backup::StagedSst> Backup::TakeStagedSst(uint64_t number) {
+  auto& staging = *sst_staging_;
+  auto node = staging.jobs.extract(number);
+  auto table = std::move(node.mapped());
+  if (staging.ordinary_in_progress == table.get())
+    staging.ordinary_in_progress = nullptr;
+  if (staging.urgent == table.get()) staging.urgent = nullptr;
+  if (table->ordinary) stats_.sst_async_staged_bytes -= table->size;
+  return table;
+}
+
+void Backup::DeleteStagedSst(StagedSst& table) {
+  table.reader.reset();
+  if (table.writer) {
+    table.writer->Close(IOOptions(), nullptr).PermitUncheckedError();
+    table.writer.reset();
+  }
+  if (table.temp_created) {
+    Status s = disk_->DeleteFile(table.path, IOOptions(), nullptr);
+    if (!s.ok() && !s.IsNotFound() && !s.IsPathNotFound()) {
+      // The next Open removes orphaned work files. Bound optional staging for
+      // this session while a filesystem failure prevents freeing its space.
+      std::lock_guard<std::mutex> lock(mutex_);
+      sst_staging_->ordinary_paused = true;
+    }
+    table.temp_created = false;
+  }
+  table.linked = false;
+}
+
+void Backup::ReconcileStagedSsts(std::unique_lock<std::mutex>& lock) {
+  auto& staging = *sst_staging_;
+  const uint64_t revision = staging.revision;
+  auto* db = static_cast_with_check<DBImpl>(db_);
+  staging.borrowing_db = true;
+  lock.unlock();
+  std::unordered_map<uint64_t, uint64_t> live;
+  db->GetLiveTableFileSizes(options_.sst_async_min_level, &live);
+  lock.lock();
+  staging.borrowing_db = false;
+  sync_cv_.notify_all();
+  // A later native change needs a new snapshot. Leave staged files in place
+  // while the validator owns a separately pinned Version.
+  if (!active_ || candidate_busy_ || staging.revision != revision ||
+      stopping_ || !stats_.error.ok()) {
+    return;
+  }
+  staging.reconciled_revision = revision;
+  std::vector<std::unique_ptr<StagedSst>> obsolete;
+  for (auto it = staging.jobs.begin(); it != staging.jobs.end();) {
+    const uint64_t number = (it++)->first;
+    const bool still_eligible = live.count(number) != 0;
+    if (still_eligible && !staging.published_tables.count(number)) continue;
+    auto table = TakeStagedSst(number);
+    stats_.sst_async_discarded_bytes += table->ordinary_bytes;
+    if (!still_eligible && !table->temp_created)
+      stats_.sst_async_cancelled_bytes += table->size;
+    obsolete.push_back(std::move(table));
+  }
+  auto enqueue = [&](uint64_t number, uint64_t size, uint64_t observed) {
+    if (staging.ordinary_paused || staging.jobs.size() >= kMaxStagedSsts ||
+        size > kMaxStagedSstBytes - stats_.sst_async_staged_bytes ||
+        staging.jobs.count(number) || staging.published_tables.count(number)) {
+      return;
+    }
+    staging.jobs.emplace(
+        number, std::make_unique<StagedSst>(
+                    number, size, index_ + "/" + MakeTableFileName(number),
+                    staging.NewTempPath(work_, number),
+                    true, observed + options_.sst_async_delay_ms * 1000));
+    stats_.sst_async_staged_bytes += size;
+  };
+  for (const auto& [number, observed] : staging.output_hints) {
+    auto it = live.find(number);
+    if (it != live.end()) enqueue(number, it->second, observed);
+  }
+  staging.output_hints.clear();
+  if (staging.rescan_requested) {
+    // An explicit refit reports no per-file install time. Start the delay
+    // from the first live observation of its newly eligible files.
+    const uint64_t observed = Now();
+    for (const auto& [number, size] : live) {
+      if (staging.jobs.size() >= kMaxStagedSsts) break;
+      enqueue(number, size, observed);
+    }
+    staging.rescan_requested = false;
+  }
+  lock.unlock();
+  for (const auto& table : obsolete) {
+    DeleteStagedSst(*table);
+#ifndef NDEBUG
+    uint64_t number = table->number;
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncObsolete", &number);
+#endif
+  }
+  lock.lock();
+}
+
+Status Backup::CopySstQuantum(StagedSst& table, std::string* scratch,
+                              uint64_t* appended, bool* ready) {
+  const IOOptions io;
+  Status s;
+  if (!table.reader && !table.linked) {
+#ifndef NDEBUG
+    uint64_t number = table.number;
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncBeforeCopy", &number);
+#endif
+    uint64_t size;
+    s = target()->GetFileSize(table.source, io, &size, nullptr);
+    if (s.ok() && size != table.size)
+      s = Status::Corruption("native checkpoint size mismatch", table.source);
+    if (!s.ok()) return s;
+    s = target()->LinkFile(table.source, table.path, io, nullptr);
+    if (s.ok()) {
+      table.temp_created = table.linked = true;
+      return s;
+    }
+    if (!s.IsNotSupported()) return s;
+    s = target()->NewSequentialFile(table.source, FileOptions(), &table.reader,
+                                    nullptr);
+    if (s.ok()) {
+      table.temp_created = true;
+      s = disk_->NewWritableFile(table.path, FileOptions(), &table.writer,
+                                 nullptr);
+    }
+    if (!s.ok()) return s;
+  }
+  if (table.linked || table.copied == table.size) {
+    s = table.linked
+            ? disk_->SyncFile(table.path, FileOptions(), io, true, nullptr)
+            : table.writer->Fsync(io, nullptr);
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncSyncStatus", &s);
+    if (table.writer) {
+      s.UpdateIfOk(table.writer->Close(io, nullptr));
+      table.writer.reset();
+    }
+    table.reader.reset();
+    uint64_t size;
+    if (s.ok()) s = disk_->GetFileSize(table.path, io, &size, nullptr);
+    if (s.ok() && size != table.size)
+      s = Status::Corruption("staged checkpoint size mismatch", table.path);
+    *ready = s.ok();
+    return s;
+  }
+  if (scratch->empty()) scratch->resize(kSstCopyBufferSize);
+  const uint64_t end =
+      table.copied +
+      std::min<uint64_t>(table.size - table.copied, kSstCopyQuantum);
+  while (s.ok() && table.copied < end) {
+    const size_t length =
+        std::min<uint64_t>(end - table.copied, scratch->size());
+    Slice data;
+    s = table.reader->Read(length, io, &data, scratch->data(), nullptr);
+    if (!s.ok()) return s;
+    if (data.empty() || data.size() > length)
+      return Status::Corruption("invalid staged SST read length", table.source);
+    s = table.writer->Append(data, io, nullptr);
+    if (s.ok()) {
+      table.copied += data.size();
+      *appended += data.size();
+    }
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncAppendStatus", &s);
+  }
+  return s;
+}
+
+void Backup::StageSstLoop() {
+  auto& staging = *sst_staging_;
+  std::string scratch;
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!stopping_ && stats_.error.ok() &&
+         !(staging.detaching && !candidate_busy_)) {
+    StagedSst* table = staging.urgent;
+    const bool urgent = table != nullptr;
+    if (!urgent) {
+      if (!active_ || candidate_busy_ || staging.mirror_busy || MirrorReady()) {
+        staging.cv.wait(lock);
+        continue;
+      }
+      if (staging.reconciled_revision != staging.revision) {
+        ReconcileStagedSsts(lock);
+        continue;
+      }
+      if (staging.ordinary_paused) {
+        staging.cv.wait(lock);
+        continue;
+      }
+      table = staging.ordinary_in_progress;
+      if (!table) {
+        for (const auto& [number, job] : staging.jobs) {
+          if (!job->done && (!table || job->eligible_at < table->eligible_at))
+            table = job.get();
+        }
+        if (!table) {
+          staging.cv.wait(lock);
+          continue;
+        }
+        uint64_t now = Now();
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncNow", &now);
+        if (now < table->eligible_at) {
+          staging.cv.wait_for(
+              lock, std::chrono::microseconds(table->eligible_at - now));
+          continue;
+        }
+        staging.ordinary_in_progress = table;
+      }
+    } else if (table->done) {
+      staging.cv.wait(lock);
+      continue;
+    }
+
+    const bool barrier = urgent && staging.urgent_barrier;
+    lock.unlock();
+    HddPurposeScope purpose(barrier ? HddPurpose::kBarrier : HddPurpose::kBulk);
+    uint64_t appended = 0;
+    bool ready = false;
+    Status s = CopySstQuantum(*table, &scratch, &appended, &ready);
+    lock.lock();
+    if (urgent) {
+      table->candidate_bytes += appended;
+    } else {
+      table->ordinary_bytes += appended;
+      stats_.sst_async_copy_bytes += appended;
+    }
+    if (!s.ok() && !urgent) {
+      stats_.sst_async_discarded_bytes += table->ordinary_bytes;
+      if (staging.urgent == table) {
+        // The optional quantum was already in flight when a candidate
+        // requested this file. Retry its pinned source as required work.
+        table->copied = table->ordinary_bytes = 0;
+        lock.unlock();
+        DeleteStagedSst(*table);
+        lock.lock();
+        table->path = staging.NewTempPath(work_, table->number);
+      } else {
+        auto discarded = TakeStagedSst(table->number);
+        lock.unlock();
+        DeleteStagedSst(*discarded);
+        lock.lock();
+      }
+      continue;
+    }
+    if (ready || !s.ok()) {
+      table->done = true;
+      table->status = s;
+      table->ready_epoch = staging.capture_epoch;
+      if (staging.ordinary_in_progress == table)
+        staging.ordinary_in_progress = nullptr;
+      staging.cv.notify_all();
+#ifndef NDEBUG
+      if (ready) {
+        uint64_t number = table->number;
+        lock.unlock();
+        TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncReady", &number);
+        lock.lock();
+      }
+#endif
+    }
+  }
+  staging.cv.notify_all();
+  while (!staging.jobs.empty()) {
+    auto table = TakeStagedSst(staging.jobs.begin()->first);
+    stats_.sst_async_discarded_bytes += table->ordinary_bytes;
+    lock.unlock();
+    DeleteStagedSst(*table);
+    lock.lock();
+  }
+}
+
+Status Backup::CaptureStagedSst(const LiveFileStorageInfo& info,
+                                const std::string& destination,
+                                Candidate* candidate) {
+  auto& staging = *sst_staging_;
+  uint64_t number = info.file_number;
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (!stats_.error.ok()) return stats_.error;
+  if (stopping_) return Status::ShutdownInProgress();
+  auto [it, inserted] = staging.jobs.try_emplace(number);
+  if (inserted) {
+    it->second = std::make_unique<StagedSst>(
+        number, info.size, info.directory + "/" + info.relative_filename,
+        staging.NewTempPath(work_, number), false, 0);
+  }
+  StagedSst* pending = it->second.get();
+  if (pending->size != info.size)
+    return Status::Corruption("staged SST metadata mismatch",
+                              info.relative_filename);
+  if (!pending->done) {
+    const uint64_t wait_start = Now();
+    staging.urgent = pending;
+    staging.urgent_barrier = HddPurposeScope::Current() == HddPurpose::kBarrier;
+    staging.cv.notify_all();
+    lock.unlock();
+    TEST_SYNC_POINT_CALLBACK("MetaBypass::SstAsyncCandidateWait", &number);
+    lock.lock();
+    staging.cv.wait(
+        lock, [&] { return !stats_.error.ok() || stopping_ || pending->done; });
+    candidate->sst_wait_micros += Now() - wait_start;
+    if (!stats_.error.ok()) return stats_.error;
+    if (stopping_) return Status::ShutdownInProgress();
+  }
+  auto table = TakeStagedSst(number);
+  staging.cv.notify_all();
+  lock.unlock();
+
+  Status s = table->status;
+  if (s.ok()) {
+    s = disk_->RenameFile(table->path, destination, IOOptions(), nullptr);
+    if (s.ok()) {
+      table->temp_created = false;
+      candidate->durable_tables.insert(number);
+    } else if (s.IsNotSupported()) {
+      s = StageCopy(disk_, table->path, destination, table->size);
+      if (s.ok()) candidate->sst_copy_bytes += table->size;
+    }
+  }
+  DeleteStagedSst(*table);
+  if (s.ok()) {
+    candidate->sst_copy_bytes += table->candidate_bytes;
+    candidate->sst_adopted_ordinary_bytes += table->ordinary_bytes;
+    if (table->ready_epoch < candidate->sst_epoch)
+      candidate->sst_ready_bytes += table->size;
+    std::lock_guard<std::mutex> stats_lock(mutex_);
+    stats_.candidate_copied_bytes += table->candidate_bytes;
+    if (!candidate->durable_tables.count(number))
+      stats_.candidate_copied_bytes += table->size;
+  } else {
+    std::lock_guard<std::mutex> stats_lock(mutex_);
+    stats_.sst_async_discarded_bytes += table->ordinary_bytes;
+  }
+  return s;
+}
+
 Status Backup::CaptureTables(Candidate* candidate) {
   std::string published_point;
   {
@@ -938,6 +1336,16 @@ Status Backup::CaptureTables(Candidate* candidate) {
         return s;
       }
     }
+    if (sst_staging_) {
+      const auto level = candidate->table_levels.find(info.file_number);
+      if (level == candidate->table_levels.end())
+        return Status::Corruption("missing SST level", file);
+      if (level->second >= options_.sst_async_min_level) {
+        Status s = CaptureStagedSst(info, destination, candidate);
+        if (!s.ok()) return s;
+        continue;
+      }
+    }
     // Resolve through the logical filesystem, including cold SST routing.
     // Native deletions remain pinned until every table has been captured.
     const std::string source = info.directory + "/" + file;
@@ -950,6 +1358,7 @@ Status Backup::CaptureTables(Candidate* candidate) {
     if (s.IsNotSupported()) {
       s = StageCopy(target(), source, destination, info.size);
       if (!s.ok()) return s;
+      candidate->sst_copy_bytes += info.size;
       std::lock_guard<std::mutex> lock(mutex_);
       stats_.candidate_copied_bytes += info.size;
     }
@@ -983,7 +1392,7 @@ Status Backup::PruneWal(uint64_t floor) {
   TEST_SYNC_POINT("MetaBypass::WalPruned");
   return Status::OK();
 }
-Status Backup::Publish(const Candidate& candidate) {
+Status Backup::Publish(Candidate& candidate) {
   TEST_SYNC_POINT("MetaBypass::ValidateCandidate");
   const std::string& point = candidate.path;
   const std::string& name = candidate.name;
@@ -1018,8 +1427,10 @@ Status Backup::Publish(const Candidate& candidate) {
       }
       s.UpdateIfOk(writer->Close(IOOptions(), nullptr));
     } else if (!candidate.durable_tables.count(number)) {
+      const uint64_t sync_started = Now();
       s = disk_->SyncFile(point + "/" + f.first, FileOptions(), IOOptions(),
                           true, nullptr);
+      candidate.sst_micros += Now() - sync_started;
     }
     TEST_SYNC_POINT_CALLBACK("MetaBypass::CandidateFileSyncStatus", &s);
     if (!s.ok()) return s;
@@ -1076,7 +1487,16 @@ Status Backup::Publish(const Candidate& candidate) {
       published_writes_ = candidate.writes;
       published_request_ = candidate.request;
       published_native_changes_ = candidate.native_changes;
+      if (sst_staging_) {
+        sst_staging_->published_tables.swap(candidate.table_levels);
+        if (!sst_staging_->jobs.empty()) ++sst_staging_->revision;
+        candidate.sst_adopted_ordinary_bytes = 0;
+      }
       ++stats_.recovery_points;
+      stats_.last_checkpoint_sst_copy_bytes = candidate.sst_copy_bytes;
+      stats_.last_checkpoint_sst_ready_bytes = candidate.sst_ready_bytes;
+      stats_.last_checkpoint_sst_wait_micros = candidate.sst_wait_micros;
+      stats_.last_checkpoint_sst_micros = candidate.sst_micros;
       stats_.last_build_micros = Now() - candidate.started;
       stats_.last_publish_micros = Now();
       stats_.last_point_lag_micros = Now() - candidate.oldest;
@@ -1263,11 +1683,16 @@ void Backup::Run() {
     lock.lock();
   };
   while (stats_.error.ok()) {
+    if (sst_staging_ && sst_staging_->mirror_busy) {
+      sst_staging_->mirror_busy = false;
+      sst_staging_->cv.notify_all();
+    }
     mirror_waiting_ = true;
     TEST_SYNC_POINT("MetaBypass::BeforeMirrorWait");
     WaitForMirror(lock);
     mirror_waiting_ = false;
     if (!stats_.error.ok()) break;
+    if (sst_staging_) sst_staging_->mirror_busy = true;
     if (prune_wal_) {
       prune_wal_ = false;
       lock.unlock();
@@ -1497,6 +1922,7 @@ void Backup::ValidateLoop() {
     }
     candidate_busy_ = true;
     auto candidate = std::make_unique<Candidate>();
+    if (sst_staging_) candidate->sst_epoch = ++sst_staging_->capture_epoch;
     candidate->started = Now();
     candidate->oldest = dirty_since ? dirty_since : candidate->started;
     dirty_since_micros_.store(0, std::memory_order_relaxed);
@@ -1524,7 +1950,10 @@ void Backup::ValidateLoop() {
         if (pinned) {
           TEST_SYNC_POINT("MetaBypass::NativeFilesPinned");
           const uint64_t capture_started = Now();
-          s = db->GetLiveFilesStorageInfo(options, &candidate->files);
+          s = sst_staging_
+                  ? static_cast_with_check<DBImpl>(db)->GetLiveFilesStorageInfo(
+                        options, &candidate->files, &candidate->table_levels)
+                  : db->GetLiveFilesStorageInfo(options, &candidate->files);
           TEST_SYNC_POINT_CALLBACK("MetaBypass::NativeCaptureStatus", &s);
           elapsed = Now() - capture_started;
           if (s.ok()) {
@@ -1578,7 +2007,11 @@ void Backup::ValidateLoop() {
       s = stats_.error.ok() ? Status::ShutdownInProgress() : stats_.error;
     }
     lock.unlock();
-    if (s.ok()) s = CaptureTables(candidate.get());
+    if (s.ok()) {
+      const uint64_t sst_started = Now();
+      s = CaptureTables(candidate.get());
+      candidate->sst_micros = Now() - sst_started;
+    }
     // Candidate files now own their bytes.
     if (pinned) {
       s.UpdateIfOk(db->EnableFileDeletions());
@@ -1590,12 +2023,21 @@ void Backup::ValidateLoop() {
       std::lock_guard<std::mutex> stats_lock(mutex_);
       stats_.checkpoint_publish_micros += Now() - publish_started;
     }
-    if (!s.ok()) Fail(s);
+    if (!s.ok()) {
+      if (candidate->sst_adopted_ordinary_bytes != 0) {
+        std::lock_guard<std::mutex> stats_lock(mutex_);
+        stats_.sst_async_discarded_bytes +=
+            candidate->sst_adopted_ordinary_bytes;
+      }
+      Fail(s);
+    }
     lock.lock();
     candidate_busy_ = false;
+    if (sst_staging_) sst_staging_->cv.notify_all();
     sync_cv_.notify_all();
   }
   candidate_busy_ = false;
+  if (sst_staging_) sst_staging_->cv.notify_all();
   validator_done_ = true;
   gc_cv_.notify_all();
   sync_cv_.notify_all();
@@ -1644,10 +2086,36 @@ void Backup::WriteCompleted() {
   completed_writes_.fetch_add(1, std::memory_order_relaxed);
   if (lock.owns_lock()) MarkDirty();
 }
-void Backup::NativeFilesChanged() {
+void Backup::NativeFilesChanged(const CompactionJobInfo* compaction) {
   std::lock_guard<std::mutex> lock(mutex_);
   ++native_changes_;
   MarkDirty();
+  if (!sst_staging_ || !compaction || stopping_ || !stats_.error.ok()) return;
+  auto& staging = *sst_staging_;
+  const uint64_t now = Now();
+  for (const auto& output : compaction->output_file_infos) {
+    if (staging.output_hints.size() >= kMaxStagedSsts) break;
+    if (output.level >= options_.sst_async_min_level)
+      staging.output_hints.try_emplace(output.file_number, now);
+  }
+  // A file can be both input and output of a trivial move. The worker
+  // reconciles inputs and outputs against one current native Version.
+  if (staging.output_hints.empty() && staging.jobs.empty() &&
+      !staging.rescan_requested)
+    return;
+  ++staging.revision;
+  staging.cv.notify_all();
+}
+void Backup::NativeSstLevelsChanged() {
+  if (!sst_staging_) return;
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (stopping_ || !stats_.error.ok()) return;
+  ++native_changes_;
+  MarkDirty();
+  auto& staging = *sst_staging_;
+  staging.rescan_requested = true;
+  ++staging.revision;
+  staging.cv.notify_all();
 }
 void Backup::MarkDirty() {
   if (dirty_since_micros_.load(std::memory_order_relaxed) == 0) {
@@ -1677,9 +2145,18 @@ Status Backup::Sync() {
 void Backup::DetachDB() {
   std::unique_lock<std::mutex> lock(mutex_);
   active_ = false;
+  if (sst_staging_) {
+    sst_staging_->detaching = true;
+    sst_staging_->cv.notify_all();
+  }
   TEST_SYNC_POINT("MetaBypass::BeforeDetachDB");
-  sync_cv_.wait(lock, [&] { return !candidate_busy_; });
+  sync_cv_.wait(lock, [&] {
+    return !candidate_busy_ && (!sst_staging_ || !sst_staging_->borrowing_db);
+  });
   db_ = nullptr;
+  lock.unlock();
+  if (sst_staging_ && sst_staging_->worker.joinable())
+    sst_staging_->worker.join();
 }
 Status Backup::Stop() {
   {
@@ -1688,6 +2165,7 @@ Status Backup::Stop() {
     CloseWalQueue();
     validator_cv_.notify_all();
     gc_cv_.notify_all();
+    if (sst_staging_) sst_staging_->cv.notify_all();
     WakeMirror();
     WakeMetadataCapacity();
     sync_cv_.notify_all();
@@ -1695,6 +2173,8 @@ Status Backup::Stop() {
   if (sampler_.joinable()) sampler_.join();
   if (thread_.joinable()) thread_.join();
   if (validator_.joinable()) validator_.join();
+  if (sst_staging_ && sst_staging_->worker.joinable())
+    sst_staging_->worker.join();
   TEST_SYNC_POINT("MetaBypass::BeforeGCJoin");
   if (garbage_collector_.joinable()) garbage_collector_.join();
   return Error();
@@ -1708,13 +2188,15 @@ Status Backup::Error() const {
 MetaBypassStats Backup::Stats() const {
   std::lock_guard<std::mutex> lock(mutex_);
   MetaBypassStats result = stats_;
-  result.queued_bytes = QueuedBytes();
+  result.wal_queued_bytes = wal_queue_.ChargedBytes();
+  result.queued_bytes += result.wal_queued_bytes;
   result.mirrored_wal_bytes =
       wal_queue_.mirrored_bytes.load(std::memory_order_relaxed);
   result.mirrored_bytes += result.mirrored_wal_bytes;
   result.peak_queued_bytes += wal_queue_.peak.load(std::memory_order_relaxed);
-  result.backpressure_micros +=
+  result.wal_backpressure_micros =
       wal_queue_.backpressure_micros.load(std::memory_order_relaxed);
+  result.backpressure_micros += result.wal_backpressure_micros;
   return result;
 }
 Status Backup::ReadRecoveryPoint(FileSystem* fs, const std::string& backup,

@@ -20,6 +20,11 @@ import time
 
 PROTOCOL = "metabypass-ycsb-cpp-v1"
 GIB = 1 << 30
+SST_ASYNC_DEFAULTS = {"sst_async_min_level": -1, "sst_async_delay_ms": 1000}
+SST_ASYNC_ENV = {
+    "sst_async_min_level": "MB_YCSB_SST_ASYNC_MIN_LEVEL",
+    "sst_async_delay_ms": "MB_YCSB_SST_ASYNC_DELAY_MS",
+}
 SHARED_OPTIONS = (
     "threads", "warmup_seconds", "measure_seconds", "value_bytes", "cache_bytes",
     "write_buffer_bytes", "max_write_buffer_number", "max_background_jobs",
@@ -125,9 +130,13 @@ class Resources:
                     memory_failcnt=number("memory.failcnt"))
 
 
-def run_stage(command, logs, timeout, resources, crash=False):
+def run_stage(command, logs, timeout, resources, crash=False, settings=None):
     logs.mkdir()
     save(logs / "command.json", command)
+    overrides = {SST_ASYNC_ENV[key]: str(value) for key, value in (settings or {}).items()}
+    if overrides:
+        save(logs / "environment.json", overrides)
+    environment = {**os.environ, **overrides}
     initial_resources = resources.observe()
     events, samples, pending = [], [], b""
     fault = None
@@ -137,7 +146,7 @@ def run_stage(command, logs, timeout, resources, crash=False):
     with (logs / "stdout.jsonl").open("wb") as out, (logs / "stderr.log").open("wb") as err:
         child = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=err, start_new_session=True,
-            preexec_fn=resources.enter if resources.group else None,
+            env=environment, preexec_fn=resources.enter if resources.group else None,
         )
         with child.stdout, selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
@@ -236,6 +245,9 @@ def sample(args):
         raise ValueError("sample must name one new directory")
     if args.recover and args.engine == "native":
         raise ValueError("native samples have no surviving backup")
+    settings = {key: getattr(args, key) for key in SST_ASYNC_DEFAULTS}
+    if args.engine != "mb" and settings != SST_ASYNC_DEFAULTS:
+        raise ValueError("nondefault SST async settings require --engine mb")
     front, back = ssd / args.sample, hdd / args.sample
     if front.exists() or back.exists():
         raise ValueError("sample already exists")
@@ -261,7 +273,8 @@ def sample(args):
         command = [driver, "run", dataset, workload, args.engine, str(db), backup,
                    str(args.threads), str(args.warmup_seconds), str(args.measure_seconds),
                    str(args.checkpoint_ms if args.engine != "native" else 0)]
-        events, fault = run_stage(command, back / "writer", args.timeout, resources, crash=True)
+        events, fault = run_stage(command, back / "writer", args.timeout, resources,
+                                  crash=True, settings=settings)
         initial = one(events, "ready")
         result.update(initial=initial, fault=fault)
         if not valid_initial(initial):
@@ -271,6 +284,10 @@ def sample(args):
                         checkpoint_ms=args.checkpoint_ms if args.engine != "native" else 0)
         if any(initial.get(key) != value for key, value in expected.items()):
             raise ValueError("writer configuration differs from the requested sample")
+        if args.engine == "mb" and any(
+            initial.get(key, SST_ASYNC_DEFAULTS[key]) != value for key, value in settings.items()
+        ):
+            raise ValueError("writer SST async settings differ from the requested sample")
         start = one(events, "measurement_start")
         end = one(events, "measurement_end")
         if (end["elapsed_ns"] != args.measure_seconds * 10**9
@@ -280,6 +297,8 @@ def sample(args):
                 or any(event["event"] == "error" for event in events)):
             raise ValueError("workload window failed or has no successful operations")
         result["measurement"] = end
+        if "stats_sample_monotonic_ns" in start:
+            result["measurement_start"] = start
         result["ops_per_second"] = end["succeeded"] * 1e9 / end["elapsed_ns"]
         result["comparison"] = dict(
             **{key: result["identity"][key] for key in DRIVER_ID},
@@ -294,7 +313,8 @@ def sample(args):
         if args.recover:
             command = [driver, "recover", dataset, workload, args.engine, str(target),
                        backup, str(initial["initial_sequence"]), str(args.sample_count)]
-            recovered, _ = run_stage(command, back / "recovery", args.timeout, resources)
+            recovered, _ = run_stage(command, back / "recovery", args.timeout, resources,
+                                     settings=SST_ASYNC_DEFAULTS)
             rec = one(recovered, "recovery")
             result["recovery"] = rec
             if (rec["recovered_sequence"] < initial["initial_sequence"]
@@ -328,6 +348,29 @@ def positive(value):
     return parsed
 
 
+def sst_async_min_level(value):
+    number = int(value)
+    if number != -1 and not 1 <= number < 2**31:
+        raise argparse.ArgumentTypeError("expected -1 or a positive int32 level")
+    return number
+
+
+def sst_async_delay_ms(value):
+    number = int(value)
+    if not 0 <= number < 2**64:
+        raise argparse.ArgumentTypeError("expected a nonnegative uint64 delay")
+    return number
+
+
+def add_sst_async_arguments(parser):
+    parser.add_argument("--sst-async-min-level", type=sst_async_min_level,
+                        default=SST_ASYNC_DEFAULTS["sst_async_min_level"],
+                        help="minimum compaction output level to stage; -1 disables staging")
+    parser.add_argument("--sst-async-delay-ms", type=sst_async_delay_ms,
+                        default=SST_ASYNC_DEFAULTS["sst_async_delay_ms"],
+                        help="ordinary staging delay in milliseconds")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -340,6 +383,7 @@ def main():
     run.add_argument("--warmup-seconds", type=positive, default=65)
     run.add_argument("--measure-seconds", type=positive, default=180)
     run.add_argument("--checkpoint-ms", type=positive, default=40000)
+    add_sst_async_arguments(run)
     run.add_argument("--sample-count", type=positive, default=4096)
     run.add_argument("--timeout", type=positive, default=1800)
     run.add_argument("--cgroup", type=Path)

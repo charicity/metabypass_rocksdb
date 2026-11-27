@@ -68,6 +68,12 @@ struct MetaBypassOptions {
   // recovery time estimation, including bounds in a resumed restore marker.
   // Sequence recovery is unchanged; Restore still clears old samples once.
   bool enable_recovery_time_sampling = true;
+  // Stage newly compacted SSTs at this level or higher. Use -1 to disable
+  // staging, or a level in [1, Options::num_levels).
+  int sst_async_min_level = -1;
+  // Ordinary staging begins after an SST has remained eligible this long.
+  // A checkpoint may request the file immediately.
+  uint64_t sst_async_delay_ms = 1000;
 };
 struct MetaBypassStats {
   Status error;
@@ -114,6 +120,23 @@ struct MetaBypassStats {
   // Cumulative successful candidate file copies; hardlinks do not count.
   uint64_t candidate_copied_bytes = 0;
   SstTieringStats sst_tiering;
+  // SST Append bytes and previously synchronized staged bytes used by the
+  // most recent candidate. SST time includes table capture and file syncs
+  // performed by that candidate, including time waiting for required staging.
+  uint64_t last_checkpoint_sst_copy_bytes = 0;
+  uint64_t last_checkpoint_sst_ready_bytes = 0;
+  uint64_t last_checkpoint_sst_wait_micros = 0;
+  uint64_t last_checkpoint_sst_micros = 0;
+  // Ordinary staging's successful Append bytes, including bytes discarded
+  // later. Cancelled bytes are logical SST sizes for tasks evicted before I/O.
+  uint64_t sst_async_copy_bytes = 0;
+  uint64_t sst_async_discarded_bytes = 0;
+  uint64_t sst_async_cancelled_bytes = 0;
+  // Logical bytes reserved in the ordinary staging queue and temporary files.
+  uint64_t sst_async_staged_bytes = 0;
+  // WAL queue usage and cumulative WAL reservation wait time.
+  uint64_t wal_backpressure_micros = 0;
+  uint64_t wal_queued_bytes = 0;
 };
 // An observation of native write visibility, not backup durability or an ACK
 // frontier. Identity is stable for this DB; session changes on every Open.

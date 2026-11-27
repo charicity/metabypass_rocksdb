@@ -91,7 +91,8 @@ void Emit(std::string_view event, const std::string& fields = {}) {
   std::cout << "{\"event\":" << Quote(event) << fields << '}' << std::endl;
 }
 
-std::string Number(std::string_view field, uint64_t value) {
+template <typename Integer>
+std::string Number(std::string_view field, Integer value) {
   return "," + Quote(field) + ":" + std::to_string(value);
 }
 
@@ -177,10 +178,74 @@ void SetDataDirectory(Options& bypass) {
   }
 }
 
+struct SstAsyncConfig {
+  int min_level = -1;
+  uint64_t delay_ms = 1000;
+};
+
+SstAsyncConfig SstAsyncFromEnvironment() {
+  SstAsyncConfig config;
+  if (const char* level = std::getenv("MB_YCSB_SST_ASYNC_MIN_LEVEL")) {
+    if (std::string_view(level) != "-1") {
+      config.min_level =
+          static_cast<int>(Parse(level, "SST async minimum level", 1,
+                                 std::numeric_limits<int>::max()));
+    }
+  }
+  if (const char* delay = std::getenv("MB_YCSB_SST_ASYNC_DELAY_MS")) {
+    config.delay_ms = Parse(delay, "SST async delay milliseconds", 0,
+                            std::numeric_limits<uint64_t>::max());
+  }
+  return config;
+}
+
+template <typename Options>
+void SetSstAsyncConfig(Options& bypass, const SstAsyncConfig& config) {
+  if constexpr (requires {
+                  bypass.sst_async_min_level;
+                  bypass.sst_async_delay_ms;
+                }) {
+    bypass.sst_async_min_level = config.min_level;
+    bypass.sst_async_delay_ms = config.delay_ms;
+  } else {
+    Require(config.min_level == -1 && config.delay_ms == 1000,
+            "this RocksDB core does not support SST async staging options");
+  }
+}
+
+template <typename Stats>
+std::string BackupStatsFields(const Stats& stats) {
+  auto fields = Number("recovery_points", stats.recovery_points) +
+                Number("last_publish_micros", stats.last_publish_micros) +
+                Number("last_build_micros", stats.last_build_micros) +
+                Number("peak_queued_bytes", stats.peak_queued_bytes);
+  if constexpr (requires { stats.io_backup_write_bytes; }) {
+    fields += Number("io_backup_write_bytes", stats.io_backup_write_bytes);
+  }
+  if constexpr (requires { stats.last_checkpoint_sst_copy_bytes; }) {
+    fields +=
+        Number("last_checkpoint_sst_copy_bytes",
+               stats.last_checkpoint_sst_copy_bytes) +
+        Number("last_checkpoint_sst_ready_bytes",
+               stats.last_checkpoint_sst_ready_bytes) +
+        Number("last_checkpoint_sst_wait_micros",
+               stats.last_checkpoint_sst_wait_micros) +
+        Number("last_checkpoint_sst_micros", stats.last_checkpoint_sst_micros) +
+        Number("sst_async_copy_bytes", stats.sst_async_copy_bytes) +
+        Number("sst_async_discarded_bytes", stats.sst_async_discarded_bytes) +
+        Number("sst_async_cancelled_bytes", stats.sst_async_cancelled_bytes) +
+        Number("sst_async_staged_bytes", stats.sst_async_staged_bytes) +
+        Number("wal_backpressure_micros", stats.wal_backpressure_micros) +
+        Number("wal_queued_bytes", stats.wal_queued_bytes);
+  }
+  return fields;
+}
+
 class Database {
  public:
-  Database(Engine engine, std::string backup, uint64_t checkpoint_ms)
-      : engine_(engine) {
+  Database(Engine engine, std::string backup, uint64_t checkpoint_ms,
+           SstAsyncConfig sst_async = {})
+      : engine_(engine), sst_async_(sst_async) {
     bypass_.backup_dir = std::move(backup);
     bypass_.interval_ms = kMirrorMs;
     bypass_.batch_bytes = kMirrorBatchBytes;
@@ -188,6 +253,7 @@ class Database {
     bypass_.metadata_queue_capacity = kMetadataQueueBytes;
     if (engine == Engine::kMetaBypass) {
       SetDataDirectory(bypass_);
+      SetSstAsyncConfig(bypass_, sst_async_);
     }
     if (checkpoint_ms != 0) {
       bypass_.checkpoint_interval_ms = checkpoint_ms;
@@ -285,13 +351,18 @@ class Database {
                   Number("query_begin_wall_us", wall_begin) +
                   Number("query_end_wall_us", wall_end) +
                   Number("sequence", sequence);
-    if (mb_) {
-      const auto stats = mb_->GetBackupStats();
-      Check(stats.error, "MB background backup");
-      fields += Number("recovery_points", stats.recovery_points) +
-                Number("last_publish_micros", stats.last_publish_micros);
+    Emit("progress", fields + ReportBackupStats());
+  }
+
+  std::string ReportBackupStats() const {
+    if (!mb_) {
+      return {};
     }
-    Emit("progress", fields);
+    const auto stats = mb_->GetBackupStats();
+    const auto sample_time = Clock::now();
+    Check(stats.error, "MB background backup");
+    return Number("stats_sample_monotonic_ns", Nanos(sample_time)) +
+           BackupStatsFields(stats);
   }
 
   void Backup(bool initial) {
@@ -300,12 +371,10 @@ class Database {
     }
     const auto start = Clock::now();
     rdb::BackupID id = 0;
-    uint64_t recovery_points = 0;
+    std::string stats;
     if (mb_) {
       Check(mb_->SyncBackup(), "MB initial backup");
-      const auto stats = mb_->GetBackupStats();
-      Check(stats.error, "MB initial backup");
-      recovery_points = stats.recovery_points;
+      stats = ReportBackupStats();
     } else {
       rdb::CreateBackupOptions options;
       options.flush_before_backup = false;
@@ -313,13 +382,12 @@ class Database {
       Check(be_->PurgeOldBackups(1), "BE purge");
     }
     const auto end = Clock::now();
-    Emit(
-        "backup",
-        std::string(",\"initial\":") + (initial ? "true" : "false") +
-            ",\"completed\":true" +
-            OptionalNumber("backup_id", id, be_ != nullptr) +
-            OptionalNumber("recovery_points", recovery_points, mb_ != nullptr) +
-            Number("begin_ns", Nanos(start)) + Number("end_ns", Nanos(end)));
+    Emit("backup", std::string(",\"initial\":") + (initial ? "true" : "false") +
+                       ",\"completed\":true" +
+                       OptionalNumber("backup_id", id, be_ != nullptr) +
+                       Number("begin_ns", Nanos(start)) +
+                       Number("end_ns", Nanos(end)) +
+                       (mb_ ? stats : ",\"recovery_points\":null"));
   }
 
   std::string ReportOptions() const {
@@ -334,7 +402,9 @@ class Database {
           Number("mirror_ms", bypass_.interval_ms) +
           Number("wal_queue_bytes", bypass_.wal_queue_capacity) +
           Number("metadata_queue_bytes", bypass_.metadata_queue_capacity) +
-          Number("mirror_batch_bytes", bypass_.batch_bytes);
+          Number("mirror_batch_bytes", bypass_.batch_bytes) +
+          Number("sst_async_min_level", sst_async_.min_level) +
+          Number("sst_async_delay_ms", sst_async_.delay_ms);
     } else {
       fields += ",\"mirror_ms\":null";
     }
@@ -343,6 +413,7 @@ class Database {
 
  private:
   Engine engine_;
+  SstAsyncConfig sst_async_;
   rdb::MetaBypassOptions bypass_;
   std::unique_ptr<rdb::MetaBypassDB> mb_;
   std::unique_ptr<rdb::DB> native_;
@@ -547,7 +618,10 @@ void Run(char** argv) {
   const auto interval = std::chrono::milliseconds(
       Parse(argv[10], "checkpoint milliseconds",
             engine == Engine::kNative ? 0 : 1, 86400000));
-  Database db(engine, backup, interval.count());
+  const auto sst_async = engine == Engine::kMetaBypass
+                             ? SstAsyncFromEnvironment()
+                             : SstAsyncConfig{};
+  Database db(engine, backup, interval.count(), sst_async);
   db.Open(Absolute(argv[5]), true);
 
   const auto load_start = Clock::now();
@@ -638,11 +712,13 @@ void Run(char** argv) {
     });
   }
   std::this_thread::sleep_until(begin);
-  Emit("measurement_start", Number("monotonic_ns", Nanos(begin)));
+  Emit("measurement_start",
+       Number("monotonic_ns", Nanos(begin)) + db.ReportBackupStats());
   std::this_thread::sleep_until(end);
+  const auto end_stats = db.ReportBackupStats();
   Emit("measurement_end", Number("monotonic_ns", Nanos(end)) +
                               Number("elapsed_ns", Nanos(end) - Nanos(begin)) +
-                              Summarize(results));
+                              Summarize(results) + end_stats);
   // The controller kills this process to model an abrupt SSD failure.
   // Continue the workload until the signal rather than closing either store.
   reporter.join();

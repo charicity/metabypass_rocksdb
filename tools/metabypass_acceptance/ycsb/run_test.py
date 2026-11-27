@@ -3,10 +3,11 @@
 # COPYING file in the root directory) and Apache 2.0 License
 # (found in the LICENSE.Apache file in the root directory).
 
+import argparse
 import copy
 import unittest
 
-from run import COMPARISON_KEYS, PROTOCOL, compare, sequence_age
+from run import COMPARISON_KEYS, PROTOCOL, add_sst_async_arguments, compare, sequence_age
 
 
 class ReportTest(unittest.TestCase):
@@ -59,6 +60,14 @@ class ReportTest(unittest.TestCase):
         self.assertIsNone(compare(self.left, self.right)["throughput_ratio"])
         self.right["protocol"] = "legacy"
         self.assertIsNone(compare(self.left, self.right)["throughput_ratio"])
+
+    def test_sst_async_options(self):
+        parser = argparse.ArgumentParser()
+        add_sst_async_arguments(parser)
+        self.assertEqual(vars(parser.parse_args([])),
+                         dict(sst_async_min_level=-1, sst_async_delay_ms=1000))
+        args = parser.parse_args(["--sst-async-min-level", "5", "--sst-async-delay-ms", "25000"])
+        self.assertEqual(vars(args), dict(sst_async_min_level=5, sst_async_delay_ms=25000))
 
     def test_sequence_bounds(self):
         events = [

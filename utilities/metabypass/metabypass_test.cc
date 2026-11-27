@@ -356,6 +356,31 @@ class CandidateNoLinkFileSystem : public FileSystemWrapper {
     return target()->NewSequentialFile(path, options, result, dbg);
   }
 };
+// Model a separate backup volume while retaining hard links within each volume.
+class SplitDeviceFileSystem : public FileSystemWrapper {
+ public:
+  SplitDeviceFileSystem(const std::shared_ptr<FileSystem>& fs,
+                        const std::string& backup)
+      : FileSystemWrapper(fs), backup_prefix_(backup + "/") {}
+  const char* Name() const override { return "SplitDeviceFileSystem"; }
+  std::atomic<bool> reject_point_links{false};
+  IOStatus LinkFile(const std::string& from, const std::string& to,
+                    const IOOptions& options, IODebugContext* dbg) override {
+    const bool from_backup =
+        from.compare(0, backup_prefix_.size(), backup_prefix_) == 0;
+    const bool to_backup =
+        to.compare(0, backup_prefix_.size(), backup_prefix_) == 0;
+    if (from_backup != to_backup)
+      return IOStatus::NotSupported("cross-device link");
+    if (reject_point_links && from.find("/point-") != std::string::npos &&
+        to.find("/point-") != std::string::npos)
+      return IOStatus::NotSupported("injected point link failure");
+    return target()->LinkFile(from, to, options, dbg);
+  }
+
+ private:
+  const std::string backup_prefix_;
+};
 // Observe real replacement-file operations, distinguishing capture creation
 // from publication reopening. The hook runs outside the counting mutex.
 class ReplacementFileSystem : public FileSystemWrapper {
@@ -4112,6 +4137,375 @@ TEST_F(MetaBypassTest, SstCapturedOnlyAtCheckpoint) {
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("key", "2");
 }
+class MetaBypassAsyncSstTest : public MetaBypassTest {
+ protected:
+  MetaBypassAsyncSstTest()
+      : split_fs_(std::make_shared<SplitDeviceFileSystem>(fs_, m_.backup_dir)),
+        split_env_(NewCompositeEnv(split_fs_)) {
+    o_.env = split_env_.get();
+    o_.num_levels = 2;
+    o_.disable_auto_compactions = true;
+    o_.level_compaction_dynamic_level_bytes = false;
+    o_.compression = o_.bottommost_compression = kNoCompression;
+    m_.checkpoint_interval_ms = 600000;
+    m_.batch_bytes = 1;
+    m_.sst_async_min_level = 1;
+    m_.sst_async_delay_ms = 600000;
+  }
+  // The database borrows split_env_ until destruction.
+  ~MetaBypassAsyncSstTest() override { db_.reset(); }
+  Status FlushKey(const std::string& key, const std::string& value) {
+    Status s = db_->Put(WriteOptions(), key, value);
+    return s.ok() ? db_->Flush(FlushOptions()) : s;
+  }
+  Status MoveToL1() {
+    return db_->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+  }
+  static void ClearHooks() {
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+  }
+  std::shared_ptr<SplitDeviceFileSystem> split_fs_;
+  std::unique_ptr<Env> split_env_;
+};
+
+TEST_F(MetaBypassAsyncSstTest, TrivialMoveStagesHighSstAndCheckpointCopiesL0) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("high", "moved"));
+  const auto original = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(original.size(), 1U);
+  uint64_t high_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(index_ + "/" + original.front(), IOOptions(),
+                             &high_bytes, nullptr));
+  TestGate ready;
+  uint64_t number = 0;
+  Defer cleanup([&] {
+    ready.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncReady", [&](void* arg) {
+    number = *static_cast<uint64_t*>(arg);
+    ready.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(ready.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_EQ(MakeTableFileName(number), original.front());
+  ready.Release();
+  ASSERT_OK(FlushKey("low", "flushed"));
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  EXPECT_EQ(before.sst_async_copy_bytes, high_bytes);
+  EXPECT_EQ(before.sst_async_staged_bytes, high_bytes);
+  ASSERT_OK(db_->SyncBackup());
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  const auto point = PublishedPoint();
+  const auto files = FilesOfType(point, kTableFile);
+  ASSERT_EQ(files.size(), 2U);
+  const auto low = std::find_if(files.begin(), files.end(), [&](const auto& f) {
+    return f != original.front();
+  });
+  ASSERT_NE(low, files.end());
+  uint64_t low_bytes = 0;
+  ASSERT_OK(
+      fs_->GetFileSize(point + "/" + *low, IOOptions(), &low_bytes, nullptr));
+  EXPECT_EQ(after.last_checkpoint_sst_copy_bytes, low_bytes);
+  EXPECT_EQ(after.last_checkpoint_sst_ready_bytes, high_bytes);
+  EXPECT_EQ(after.sst_async_staged_bytes, 0U);
+  ASSERT_OK(db_->SyncBackup());
+  const auto reused = db_->GetBackupStats();
+  ASSERT_OK(reused.error);
+  EXPECT_EQ(reused.sst_async_copy_bytes, high_bytes);
+  EXPECT_EQ(reused.last_checkpoint_sst_copy_bytes, 0U);
+  EXPECT_EQ(reused.last_checkpoint_sst_ready_bytes, 0U);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"high", "moved"}, {"low", "flushed"}});
+}
+
+TEST_F(MetaBypassAsyncSstTest,
+       ObsoleteBeforeDelaySkipsCopyAndSyncPromotesSurvivor) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "value"));
+  const auto first = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(first.size(), 1U);
+  uint64_t first_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(index_ + "/" + first.front(), IOOptions(),
+                             &first_bytes, nullptr));
+  std::promise<void> queued;
+  auto queued_signal = queued.get_future();
+  std::atomic<bool> first_observation{true};
+  TestGate obsolete;
+  Defer cleanup([&] {
+    obsolete.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncNow", [&](void*) {
+    if (first_observation.exchange(false)) queued.set_value();
+  });
+  sync->SetCallBack("MetaBypass::SstAsyncObsolete", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == first.front())
+      obsolete.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_EQ(queued_signal.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_OK(CompactTables());
+  ASSERT_TRUE(obsolete.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  obsolete.Release();
+  const auto skipped = db_->GetBackupStats();
+  ASSERT_OK(skipped.error);
+  EXPECT_EQ(skipped.sst_async_cancelled_bytes, first_bytes);
+  EXPECT_EQ(skipped.sst_async_copy_bytes, 0U);
+  EXPECT_EQ(skipped.sst_async_discarded_bytes, 0U);
+  ASSERT_OK(db_->SyncBackup());
+  const auto current = PublishedPoint();
+  const auto files = FilesOfType(current, kTableFile);
+  ASSERT_EQ(files.size(), 1U);
+  EXPECT_NE(first.front(), files.front());
+  uint64_t survivor_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(current + "/" + files.front(), IOOptions(),
+                             &survivor_bytes, nullptr));
+  const auto promoted = db_->GetBackupStats();
+  ASSERT_OK(promoted.error);
+  EXPECT_EQ(promoted.sst_async_copy_bytes, 0U);
+  EXPECT_EQ(promoted.last_checkpoint_sst_copy_bytes, survivor_bytes);
+  EXPECT_EQ(promoted.last_checkpoint_sst_ready_bytes, 0U);
+  EXPECT_EQ(promoted.sst_async_staged_bytes, 0U);
+  ASSERT_OK(db_->Close());
+}
+
+TEST_F(MetaBypassAsyncSstTest, ObsoleteReadyHardLinkDoesNotCountAsCancelled) {
+  o_.env = Env::Default();
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "linked"));
+  const auto files = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(files.size(), 1U);
+  const std::string source = index_ + "/" + files.front();
+  uint64_t initial_links = 0;
+  ASSERT_OK(fs_->NumFileLinks(source, IOOptions(), &initial_links, nullptr));
+  TestGate ready, obsolete;
+  Defer cleanup([&] {
+    ready.Release();
+    obsolete.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncReady", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == files.front())
+      ready.Block();
+  });
+  sync->SetCallBack("MetaBypass::SstAsyncObsolete", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == files.front())
+      obsolete.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(ready.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  uint64_t linked = 0;
+  ASSERT_OK(fs_->NumFileLinks(source, IOOptions(), &linked, nullptr));
+  EXPECT_EQ(linked, initial_links + 1);
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  EXPECT_GT(before.sst_async_staged_bytes, 0U);
+  EXPECT_EQ(before.sst_async_copy_bytes, 0U);
+  ready.Release();
+  ASSERT_OK(CompactTables());
+  ASSERT_TRUE(obsolete.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_EQ(after.sst_async_cancelled_bytes, 0U);
+  EXPECT_EQ(after.sst_async_discarded_bytes, 0U);
+  obsolete.Release();
+  ASSERT_OK(db_->Close());
+}
+
+TEST_F(MetaBypassAsyncSstTest, InFlightHighSstPinsNativeSourceWhileWalDrains) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "snapshot"));
+  const auto source = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(source.size(), 1U);
+  TestGate copying, requested, wal, drained;
+  std::future<Status> checkpoint;
+  Defer cleanup([&] {
+    copying.Release();
+    requested.Release();
+    wal.Release();
+    drained.Release();
+    ClearHooks();
+    if (checkpoint.valid()) checkpoint.get().PermitUncheckedError();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncAppendStatus",
+                    [&](void*) { copying.Block(); });
+  sync->SetCallBack("MetaBypass::SstAsyncCandidateWait", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == source.front())
+      requested.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(copying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  ASSERT_TRUE(requested.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  requested.Release();
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  BlockFirstApply(&wal);
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "after snapshot"));
+  ASSERT_TRUE(wal.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  sync->SetCallBack("MetaBypass::BeforeMirrorWait",
+                    [&](void*) { drained.Block(); });
+  wal.Release();
+  ASSERT_TRUE(drained.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  drained.Release();
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_GT(after.mirrored_wal_bytes, before.mirrored_wal_bytes);
+  ASSERT_OK(CompactTables());
+  EXPECT_OK(
+      fs_->FileExists(index_ + "/" + source.front(), IOOptions(), nullptr));
+  EXPECT_EQ(checkpoint.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  copying.Release();
+  ASSERT_OK(checkpoint.get());
+  const std::string value = "snapshot";
+  CheckPointValue(PublishedPoint(), "key", &value);
+  CheckPointValue(PublishedPoint(), "tail", nullptr);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"key", "snapshot"}, {"tail", "after snapshot"}});
+}
+
+TEST_F(MetaBypassAsyncSstTest, CloseJoinsOrdinaryCopyAfterSstMovesBackToL0) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "value"));
+  TestGate copying, detaching;
+  std::atomic<bool> copy_returned{false}, native_closed{false};
+  std::future<Status> close;
+  Defer cleanup([&] {
+    copying.Release();
+    detaching.Release();
+    if (close.valid()) close.get().PermitUncheckedError();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncAppendStatus", [&](void*) {
+    copying.Block();
+    copy_returned = true;
+  });
+  sync->SetCallBack("MetaBypass::BeforeDetachDB",
+                    [&](void*) { detaching.Block(); });
+  sync->SetCallBack("DBImpl::CloseHelper:PendingPurgeFinished", [&](void*) {
+    EXPECT_TRUE(copy_returned.load());
+    native_closed = true;
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(copying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  CompactRangeOptions refit;
+  refit.change_level = true;
+  refit.target_level = 0;
+  ASSERT_OK(db_->CompactRange(refit, nullptr, nullptr));
+  // The final checkpoint can copy the L0 table while the staging worker is
+  // still handling its speculative L1 append.
+  close = std::async(std::launch::async, [&] { return db_->Close(); });
+  ASSERT_TRUE(detaching.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  detaching.Release();
+  EXPECT_FALSE(native_closed.load());
+  EXPECT_EQ(close.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  copying.Release();
+  ASSERT_OK(close.get());
+  EXPECT_TRUE(native_closed.load());
+  ClearHooks();
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 1));
+  CheckContents({{"key", "value"}});
+}
+
+class MetaBypassAsyncSstFailureTest
+    : public MetaBypassAsyncSstTest,
+      public testing::WithParamInterface<const char*> {};
+
+TEST_P(MetaBypassAsyncSstFailureTest, RequiredCopyFailurePreservesPointAndWal) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+  ASSERT_OK(db_->SyncBackup());
+  const auto previous = PublishedPoint();
+  ASSERT_OK(FlushKey("key", "new"));
+  ASSERT_OK(MoveToL1());
+  std::atomic<unsigned> failures{0}, released{0};
+  Defer cleanup([] { ClearHooks(); });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack(GetParam(), [&](void* arg) {
+    ++failures;
+    *static_cast<Status*>(arg) = Status::IOError("required SST staging fault");
+  });
+  sync->SetCallBack("MetaBypass::NativeFilesReleased",
+                    [&](void*) { ++released; });
+  sync->EnableProcessing();
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  EXPECT_EQ(released.load(), 1U);
+  EXPECT_EQ(failures.load(), 1U);
+  EXPECT_EQ(PublishedPoint(), previous);
+  EXPECT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  ClearHooks();
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 2));
+  CheckContents({{"key", "new"}});
+}
+
+INSTANTIATE_TEST_CASE_P(AppendAndFsync, MetaBypassAsyncSstFailureTest,
+                        testing::Values("MetaBypass::SstAsyncAppendStatus",
+                                        "MetaBypass::SstAsyncSyncStatus"));
+
+TEST_F(MetaBypassAsyncSstTest, ReadsColdHighSstWhenPreviousPointCannotLink) {
+  EnableSst();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("cold", "protected"));
+  ASSERT_OK(db_->SyncBackup());
+  const auto cold = FilesOfType(PublishedPoint(), kTableFile);
+  ASSERT_EQ(cold.size(), 1U);
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.ssd_bytes == 0;
+  });
+  ASSERT_TRUE(FilesOfType(index_, kTableFile).empty());
+  ASSERT_OK(MoveToL1());
+  ASSERT_OK(FlushKey("hot", "new"));
+  ASSERT_OK(MoveToL1());
+  split_fs_->reject_point_links = true;
+  std::atomic<bool> read_cold{false};
+  Defer cleanup([] { ClearHooks(); });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncBeforeCopy", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == cold.front())
+      read_cold = true;
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_TRUE(read_cold.load());
+  EXPECT_EQ(FilesOfType(PublishedPoint(), kTableFile).size(), 2U);
+  const auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  EXPECT_GT(stats.last_checkpoint_sst_copy_bytes, 0U);
+  split_fs_->reject_point_links = false;
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"cold", "protected"}, {"hot", "new"}});
+}
+
 TEST_F(MetaBypassTest, SstCopyAllowsWalDrainAndPinsCompactionInputs) {
   auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
   auto env = NewCompositeEnv(observed);
@@ -5551,6 +5945,16 @@ TEST_F(MetaBypassTest, SigkillDuringSstCopyRestoresAfterSsdLoss) {
   ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 5));
   CheckContents({{"a", "last"}, {"b", "batch"}});
 }
+TEST_F(MetaBypassAsyncSstTest, SigkillDuringRequiredCopyRestoresAfterSsdLoss) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("async-sst-copy"));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 5));
+  CheckContents({{"a", "last"}, {"b", "batch"}});
+}
+TEST_F(MetaBypassAsyncSstTest, SigkillAfterStagedSstPublishRestoresAfterSsdLoss) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("async-sst-published"));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(5, 5));
+  CheckContents({{"a", "last"}, {"b", "batch"}});
+}
 TEST_F(MetaBypassTest, SigkillDuringRetiredPointCleanup) {
   ASSERT_NO_FATAL_FAILURE(RunCrashWriter("MetaBypass::GCFileDeleted"));
   std::vector<std::string> files;
@@ -5767,14 +6171,31 @@ int main(int argc, char** argv) {
     MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.backup_dir = argv[3];
     const bool sst_copy_crash = argc == 5 && std::string(argv[4]) == "sst-copy";
-    auto no_links =
-        std::make_shared<ROCKSDB_NAMESPACE::CandidateNoLinkFileSystem>(
-            options.env->GetFileSystem());
+    const bool async_sst_copy_crash =
+        argc == 5 && std::string(argv[4]) == "async-sst-copy";
+    const bool async_sst_published_crash =
+        argc == 5 && std::string(argv[4]) == "async-sst-published";
+    const bool async_sst_crash =
+        async_sst_copy_crash || async_sst_published_crash;
+    const bool table_crash = sst_copy_crash || async_sst_crash;
+    std::shared_ptr<ROCKSDB_NAMESPACE::FileSystem> no_links;
+    if (async_sst_crash) {
+      no_links = std::make_shared<ROCKSDB_NAMESPACE::SplitDeviceFileSystem>(
+          options.env->GetFileSystem(), bypass.backup_dir);
+      options.num_levels = 2;
+      options.disable_auto_compactions = true;
+      options.level_compaction_dynamic_level_bytes = false;
+      bypass.sst_async_min_level = 1;
+      bypass.sst_async_delay_ms = 600000;
+    } else {
+      no_links = std::make_shared<ROCKSDB_NAMESPACE::CandidateNoLinkFileSystem>(
+          options.env->GetFileSystem());
+    }
     auto env = ROCKSDB_NAMESPACE::NewCompositeEnv(no_links);
-    if (sst_copy_crash) options.env = env.get();
+    if (table_crash) options.env = env.get();
     const bool gc_crash =
         argc == 5 && std::string(argv[4]) == "MetaBypass::GCFileDeleted";
-    if (gc_crash || sst_copy_crash) {
+    if (gc_crash || table_crash) {
       bypass.batch_bytes = bypass.wal_queue_capacity;
       bypass.interval_ms = 60000;
       bypass.checkpoint_interval_ms = bypass.interval_ms;
@@ -5796,9 +6217,19 @@ int main(int argc, char** argv) {
                                                 kill(getpid(), SIGKILL);
                                             });
       SyncPoint::GetInstance()->EnableProcessing();
-    } else if (argc == 5) {
+    } else if (async_sst_published_crash) {
+      // This hook runs after LATEST is durable and before SyncBackup can
+      // return. PointerSynced runs after the validator has woken its waiter.
       SyncPoint::GetInstance()->SetCallBack(
-          argv[4], [](void*) { kill(getpid(), SIGKILL); });
+          "MetaBypass::PointerDirectorySyncStatus", [](void* arg) {
+            if (static_cast<Status*>(arg)->ok()) kill(getpid(), SIGKILL);
+          });
+      SyncPoint::GetInstance()->EnableProcessing();
+    } else if (argc == 5) {
+      const char* hook = argv[4];
+      if (async_sst_copy_crash) hook = "MetaBypass::SstAsyncAppendStatus";
+      SyncPoint::GetInstance()->SetCallBack(
+          hook, [](void*) { kill(getpid(), SIGKILL); });
       SyncPoint::GetInstance()->EnableProcessing();
     }
     if (s.ok()) s = db->Put(WriteOptions(), "deleted", "old");
@@ -5807,13 +6238,16 @@ int main(int argc, char** argv) {
     if (s.ok()) s = batch.Put("b", "batch");
     if (s.ok()) s = batch.Delete("deleted");
     WriteOptions sync;
-    sync.sync = !sst_copy_crash;
+    sync.sync = !table_crash;
     if (s.ok()) s = db->Write(sync, &batch);
-    if (sst_copy_crash) {
+    if (table_crash) {
       if (s.ok()) s = db->Flush(ROCKSDB_NAMESPACE::FlushOptions());
+      if (s.ok() && async_sst_crash)
+        s = db->CompactRange(ROCKSDB_NAMESPACE::CompactRangeOptions(), nullptr,
+                             nullptr);
       if (s.ok()) s = db->SyncBackup();
       if (s.ok()) {
-        fprintf(stderr, "SST copy crash hook did not run\n");
+        fprintf(stderr, "SST crash hook did not run\n");
         _exit(3);
       }
     }

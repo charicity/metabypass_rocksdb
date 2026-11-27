@@ -105,6 +105,10 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
     return Status::InvalidArgument("invalid Metabypass queue configuration");
   if (!m.checkpoint_interval_ms || m.checkpoint_interval_ms > max_interval)
     return Status::InvalidArgument("invalid Metabypass checkpoint interval");
+  if ((m.sst_async_min_level != -1 &&
+       (m.sst_async_min_level < 1 || m.sst_async_min_level >= o.num_levels)) ||
+      m.sst_async_delay_ms > max_interval)
+    return Status::InvalidArgument("invalid asynchronous SST staging options");
   const auto& tier = m.sst_tiering;
   if (tier.mode != SstTieringMode::kDisabled &&
       (tier.mode != SstTieringMode::kObserveOnly &&
@@ -292,7 +296,9 @@ class BackupListener : public EventListener {
   const char* Name() const override { return "MetaBypassBackupListener"; }
   void OnFlushCompleted(DB*, const FlushJobInfo&) override { Notify(); }
   void OnCompactionCompleted(DB*, const CompactionJobInfo& info) override {
-    if (info.status.ok()) Notify();
+    if (info.status.ok()) {
+      if (auto backup = backup_.lock()) backup->NativeFilesChanged(&info);
+    }
   }
 
  private:
@@ -633,6 +639,7 @@ Status MetaBypassDB::CompactRange(const CompactRangeOptions& o, const Slice* a,
   if (s.ok())
     s = impl_->db ? impl_->db->CompactRange(o, a, b)
                   : Status::ShutdownInProgress();
+  if (s.ok() && o.change_level) impl_->backup->NativeSstLevelsChanged();
   return s;
 }
 Status MetaBypassDB::SyncBackup() { return impl_->backup->Sync(); }

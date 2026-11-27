@@ -588,6 +588,14 @@ class DBImpl : public DB {
   Status GetLiveFilesStorageInfo(
       const LiveFilesStorageInfoOptions& opts,
       std::vector<LiveFileStorageInfo>* files) override;
+  // Optional SST levels are from the same Versions as the file inventory.
+  Status GetLiveFilesStorageInfo(
+      const LiveFilesStorageInfoOptions& opts,
+      std::vector<LiveFileStorageInfo>* files,
+      std::unordered_map<uint64_t, int>* table_levels);
+  // Snapshot current live SST sizes in the specified level range.
+  void GetLiveTableFileSizes(int min_level,
+                             std::unordered_map<uint64_t, uint64_t>* files);
 
   Status GetPreparedFileInfoForExternalSstIngestion(
       const std::string& file_path,

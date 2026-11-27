@@ -15,6 +15,7 @@
 #include <optional>
 #include <set>
 #include <thread>
+#include <unordered_map>
 #include <version>
 
 #include "rocksdb/metadata.h"
@@ -95,7 +96,8 @@ class Backup : public FileSystemWrapper {
   void WriteCompleted();
   WriteGate::Writer EnterWrite() { return WriteGate::Writer(write_gate_); }
   // Listener notification only; never performs I/O or waits for a checkpoint.
-  void NativeFilesChanged();
+  void NativeFilesChanged(const CompactionJobInfo* compaction = nullptr);
+  void NativeSstLevelsChanged();
   void DetachDB();
   Status Sync();
   Status Stop();
@@ -245,13 +247,28 @@ class Backup : public FileSystemWrapper {
     uint64_t native_sequence = 0, wal_floor = 0;
     std::vector<LiveFileStorageInfo> files;
     std::string name, path;
-    // Hard links to immutable tables already synced by the published point.
+    // Tables whose immutable contents have already been synchronized.
     std::set<uint64_t> durable_tables;
+    std::unordered_map<uint64_t, int> table_levels;
+    uint64_t sst_epoch = 0;
+    uint64_t sst_copy_bytes = 0, sst_ready_bytes = 0;
+    uint64_t sst_wait_micros = 0, sst_micros = 0;
+    uint64_t sst_adopted_ordinary_bytes = 0;
   };
+  struct StagedSst;
+  struct SstStaging;
+  void StageSstLoop();
+  void ReconcileStagedSsts(std::unique_lock<std::mutex>& lock);
+  Status CopySstQuantum(StagedSst& table, std::string* scratch,
+                        uint64_t* appended, bool* ready);
+  void DeleteStagedSst(StagedSst& table);
+  std::unique_ptr<StagedSst> TakeStagedSst(uint64_t number);
+  Status CaptureStagedSst(const LiveFileStorageInfo& info,
+                          const std::string& destination, Candidate* candidate);
   Status Capture(Candidate* candidate);
   Status CaptureTables(Candidate* candidate);
   Status PruneWal(uint64_t floor);
-  Status Publish(const Candidate& candidate);
+  Status Publish(Candidate& candidate);
   // Called with mutex_ held. Each wait channel has a distinct predicate.
   bool MirrorReady() const;
   uint64_t Accepted() const;
@@ -283,6 +300,7 @@ class Backup : public FileSystemWrapper {
   const std::string index_;
   const MetaBypassOptions options_;
   const std::string work_;
+  const std::unique_ptr<SstStaging> sst_staging_;
   // Only WAL producers access the current block and cursor, under operations.
   std::shared_ptr<WalBlock> wal_block_;
   size_t wal_block_used_ = 0;

@@ -30,6 +30,42 @@ DBImplReadOnly::DBImplReadOnly(const DBOptions& db_options,
 
 DBImplReadOnly::~DBImplReadOnly() = default;
 
+Status DBImplReadOnly::ProbeWalRecovery(
+    const DBOptions& db_options, const std::string& dbname,
+    const std::vector<ColumnFamilyDescriptor>& column_families,
+    WalRecoveryProbe* probe, SequenceNumber* sequence) {
+  if (probe == nullptr || sequence == nullptr) {
+    return Status::InvalidArgument("WAL probe requires output parameters");
+  }
+  if (db_options.allow_2pc || db_options.best_efforts_recovery) {
+    return Status::NotSupported("Unsupported WAL probe configuration");
+  }
+
+  DBOptions probe_options(db_options);
+  probe_options.paranoid_checks = true;
+  probe_options.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
+  probe_options.wal_filter = nullptr;
+  Status s;
+  bool can_retry = false;
+  do {
+    const bool is_retry = can_retry;
+    can_retry = false;
+    probe->complete_wal_ends.clear();
+    DBImplReadOnly impl(probe_options, dbname);
+    RecoveryContext recovery_ctx;
+    recovery_ctx.wal_probe = probe;
+    InstrumentedMutexLock lock(&impl.mutex_);
+    s = impl.Recover(column_families, /*read_only=*/true,
+                     /*error_if_wal_file_exists=*/false,
+                     /*error_if_data_exists_in_wals=*/false, is_retry,
+                     /*recovered_seq=*/nullptr, &recovery_ctx, &can_retry);
+    if (s.ok()) {
+      *sequence = impl.GetLatestSequenceNumber();
+    }
+  } while (!s.ok() && can_retry);
+  return s;
+}
+
 Iterator* DBImplReadOnly::NewIterator(const ReadOptions& _read_options,
                                       ColumnFamilyHandle* column_family) {
   if (_read_options.io_activity != Env::IOActivity::kUnknown &&

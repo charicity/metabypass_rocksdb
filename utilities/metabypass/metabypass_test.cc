@@ -18,16 +18,19 @@
 #include <sstream>
 #include <thread>
 
+#include "db/log_format.h"
 #include "db/write_batch_internal.h"
 #include "env/composite_env_wrapper.h"
 #include "file/filename.h"
 #include "rocksdb/sst_file_reader.h"
 #include "rocksdb/wal_filter.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb/write_buffer_manager.h"
 #include "test_util/mock_time_env.h"
 #include "test_util/sync_point.h"
 #include "test_util/testharness.h"
 #include "util/cast_util.h"
+#include "util/coding.h"
 #include "util/crc32c.h"
 #include "util/defer.h"
 #include "util/random.h"
@@ -193,10 +196,7 @@ class BackupTestAccess {
     bool ready, capture, capacity, size, empty, stopping, error;
   };
   static void CheckDirtyWriteCompletions(Backup* backup) {
-    auto finish_write = [backup] {
-      auto writer = backup->EnterWrite();
-      backup->WriteCompleted();
-    };
+    auto finish_write = [backup] { backup->WriteCompleted(); };
     finish_write();
     std::unique_lock<std::mutex> queue(backup->mutex_);
     const auto first_deadline = backup->dirty_since_micros_.load();
@@ -212,7 +212,6 @@ class BackupTestAccess {
     queue.unlock();
     a.get();
     b.get();
-    WriteGate::Closure closure(backup->write_gate_);
     EXPECT_EQ(backup->completed_writes_.load(), 3U);
     EXPECT_EQ(backup->dirty_since_micros_.load(), first_deadline);
   }
@@ -355,6 +354,31 @@ class CandidateNoLinkFileSystem : public FileSystemWrapper {
       ++copied_tables;
     return target()->NewSequentialFile(path, options, result, dbg);
   }
+};
+// Model a separate backup volume while retaining hard links within each volume.
+class SplitDeviceFileSystem : public FileSystemWrapper {
+ public:
+  SplitDeviceFileSystem(const std::shared_ptr<FileSystem>& fs,
+                        const std::string& backup)
+      : FileSystemWrapper(fs), backup_prefix_(backup + "/") {}
+  const char* Name() const override { return "SplitDeviceFileSystem"; }
+  std::atomic<bool> reject_point_links{false};
+  IOStatus LinkFile(const std::string& from, const std::string& to,
+                    const IOOptions& options, IODebugContext* dbg) override {
+    const bool from_backup =
+        from.compare(0, backup_prefix_.size(), backup_prefix_) == 0;
+    const bool to_backup =
+        to.compare(0, backup_prefix_.size(), backup_prefix_) == 0;
+    if (from_backup != to_backup)
+      return IOStatus::NotSupported("cross-device link");
+    if (reject_point_links && from.find("/point-") != std::string::npos &&
+        to.find("/point-") != std::string::npos)
+      return IOStatus::NotSupported("injected point link failure");
+    return target()->LinkFile(from, to, options, dbg);
+  }
+
+ private:
+  const std::string backup_prefix_;
 };
 // Observe real replacement-file operations, distinguishing capture creation
 // from publication reopening. The hook runs outside the counting mutex.
@@ -711,12 +735,13 @@ class MetaBypassTest : public testing::Test {
     ASSERT_OK(db_->Get(ReadOptions(), key, &value));
     ASSERT_EQ(value, expected);
   }
-  void CheckPointValue(const std::string& point, const std::string& key,
-                       const std::string* expected) {
+  void WithPoint(const std::string& point, const std::function<void(DB*)>& fn) {
     auto env = NewCompositeEnv(fs_);
     Options options = o_;
     options.env = env.get();
     options.create_if_missing = false;
+    options.paranoid_checks = true;
+    options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
     std::unique_ptr<DB> snapshot;
     std::vector<ColumnFamilyHandle*> handles;
     ASSERT_OK(DB::OpenForReadOnly(
@@ -728,18 +753,56 @@ class MetaBypassTest : public testing::Test {
     for (const auto& file : files) {
       EXPECT_GE(snapshot->GetLatestSequenceNumber(), file.largest_seqno);
     }
-    std::string value;
-    Status s = snapshot->Get(ReadOptions(), key, &value);
+    fn(snapshot.get());
     for (auto* handle : handles) {
       ASSERT_OK(snapshot->DestroyColumnFamilyHandle(handle));
     }
-    if (expected) {
-      ASSERT_OK(s);
-      ASSERT_EQ(value, *expected);
-    } else {
-      ASSERT_TRUE(s.IsNotFound());
-    }
     ASSERT_OK(snapshot->Close());
+  }
+  void CheckPointValue(const std::string& point, const std::string& key,
+                       const std::string* expected) {
+    WithPoint(point, [&](DB* snapshot) {
+      std::string value;
+      Status s = snapshot->Get(ReadOptions(), key, &value);
+      if (expected) {
+        ASSERT_OK(s);
+        ASSERT_EQ(value, *expected);
+      } else {
+        ASSERT_TRUE(s.IsNotFound());
+      }
+    });
+  }
+  void CheckpointWithConcurrentWrite(const char* capture_point,
+                                     const std::function<Status()>& write) {
+    TestGate capture;
+    auto* sync = SyncPoint::GetInstance();
+    sync->SetCallBack(capture_point, [&](void*) { capture.Block(); });
+    sync->EnableProcessing();
+    auto checkpoint =
+        std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+    EXPECT_TRUE(capture.WaitUntilBlockedFor(std::chrono::seconds(10)));
+    auto writer = std::async(std::launch::async, write);
+    const auto completed = writer.wait_for(std::chrono::seconds(10));
+    capture.Release();
+    EXPECT_EQ(completed, std::future_status::ready);
+    EXPECT_OK(writer.get());
+    EXPECT_OK(checkpoint.get());
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+  }
+  void ClosePreservingPoint(const std::string& point) {
+    auto* sync = SyncPoint::GetInstance();
+    sync->SetCallBack("MetaBypass::BeforePointerReplace", [](void* arg) {
+      *static_cast<Status*>(arg) = Status::IOError("preserve previous point");
+    });
+    sync->EnableProcessing();
+    const Status closed = db_->Close();
+    db_.reset();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+    ASSERT_EQ(closed.ToString(),
+              Status::IOError("preserve previous point").ToString());
+    ASSERT_EQ(PublishedPoint(), point);
   }
   void Restore(MetaBypassRecoveryReport* report = nullptr) {
     Clean(index_);
@@ -1722,7 +1785,7 @@ TEST_F(MetaBypassIncrementalTest, WalReseedNeverTruncatesSurvivingPrefix) {
   ASSERT_NO_FATAL_FAILURE(Verify(9));
 }
 #endif
-TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
+TEST_F(MetaBypassTest, SyncBackupCanPublishBeforeSyncWriteBarrier) {
   m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   std::mutex mutex;
@@ -1740,7 +1803,7 @@ TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
   std::thread writer([&] {
     WriteOptions sync;
     sync.sync = true;
-    write_status = db_->Put(sync, "fenced", "value");
+    write_status = db_->Put(sync, "sync-write", "value");
   });
   {
     std::unique_lock<std::mutex> lock(mutex);
@@ -1772,144 +1835,104 @@ TEST_F(MetaBypassTest, SyncWriteReleasesCheckpointCaptureFence) {
   ASSERT_OK(MetaBypassDB::Restore(o_, m_, index_, &report));
   ASSERT_EQ(report.checkpoint_sequence, 1U);
   ASSERT_NO_FATAL_FAILURE(Open());
-  Check("fenced", "value");
+  Check("sync-write", "value");
 }
 
 #ifndef NDEBUG
-TEST_F(MetaBypassTest,
-       WriteGateCoversPreCloseWriteAndClearsCheckpointDeadline) {
+TEST_F(MetaBypassTest, CoveredWriteDoesNotScheduleAnotherCheckpoint) {
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+
+  TestGate counted;
+  std::atomic<bool> marked_dirty{false};
+  std::promise<void> idle;
+  auto idle_after_write = idle.get_future();
+  std::future<Status> writer, checkpoint;
+  auto* sync = SyncPoint::GetInstance();
+  Defer cleanup([&] {
+    counted.Release();
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+    if (writer.valid()) writer.get().PermitUncheckedError();
+    if (checkpoint.valid()) checkpoint.get().PermitUncheckedError();
+  });
+  sync->SetCallBack("MetaBypass::WriteCompletionCounted",
+                    [&](void*) { counted.Block(); });
+  sync->SetCallBack("MetaBypass::WriteCompletionMarkedDirty",
+                    [&](void*) { marked_dirty = true; });
+  sync->SetCallBack("MetaBypass::CheckpointIdle", [&](void*) {
+    if (marked_dirty.exchange(false)) idle.set_value();
+  });
+  sync->EnableProcessing();
+
+  writer = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "covered", "value");
+  });
+  ASSERT_TRUE(counted.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  ASSERT_EQ(checkpoint.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_OK(checkpoint.get());
+  const auto published = db_->GetBackupStats();
+  ASSERT_OK(published.error);
+  const std::string value = "value";
+  CheckPointValue(PublishedPoint(), "covered", &value);
+
+  // Make any stale deadline expire immediately after the covered writer
+  // resumes, so a duplicate capture would finish before the next idle event.
+  sync->SetCallBack("MetaBypass::CheckpointNow", [](void* arg) {
+    *static_cast<uint64_t*>(arg) = std::numeric_limits<uint64_t>::max();
+  });
+  counted.Release();
+  ASSERT_OK(writer.get());
+  ASSERT_EQ(idle_after_write.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_EQ(after.recovery_points, published.recovery_points);
+}
+
+TEST_F(MetaBypassTest, ConcurrentWriteKeepsCheckpointDeadline) {
   m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   const auto before = db_->GetBackupStats();
   ASSERT_OK(before.error);
-  TestGate boundary;
-  std::atomic<bool> observing{false}, reported{false};
-  std::promise<bool> idle;
-  auto scheduling = idle.get_future();
+  TestGate enumerating;
+  std::atomic<bool> reported{false};
+  std::promise<void> deadline;
+  auto scheduled = deadline.get_future();
   auto* sync = SyncPoint::GetInstance();
-  auto report = [&](bool is_idle) {
-    if (observing.load() && !reported.exchange(true)) idle.set_value(is_idle);
-  };
-  Defer cleanup([&] {
-    boundary.Release();
-    sync->DisableProcessing();
-    sync->ClearAllCallBacks();
+  sync->SetCallBack("MetaBypass::CheckpointDeadline", [&](void*) {
+    if (!reported.exchange(true)) deadline.set_value();
   });
-  sync->SetCallBack("MetaBypass::CheckpointIdle", [&](void*) { report(true); });
-  sync->SetCallBack("MetaBypass::CheckpointDeadline",
-                    [&](void*) { report(false); });
-  sync->SetCallBack("MetaBypass::CheckpointBoundary",
-                    [&](void*) { boundary.Block(); });
+  sync->SetCallBack("DBImpl::GetLiveFilesStorageInfo:WALCapture",
+                    [&](void*) { enumerating.Block(); });
   sync->EnableProcessing();
   auto checkpoint =
       std::async(std::launch::async, [&] { return db_->SyncBackup(); });
-  EXPECT_TRUE(boundary.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_TRUE(enumerating.WaitUntilBlockedFor(std::chrono::seconds(10)));
   auto writer = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "before-close", "value");
+    return db_->Put(WriteOptions(), "during-enumeration", "value");
   });
   const auto completed = writer.wait_for(std::chrono::seconds(10));
-  observing = true;
-  boundary.Release();
+  enumerating.Release();
   EXPECT_EQ(completed, std::future_status::ready);
-  ASSERT_OK(writer.get());
-  ASSERT_OK(checkpoint.get());
-  ASSERT_EQ(scheduling.wait_for(std::chrono::seconds(10)),
+  EXPECT_OK(writer.get());
+  EXPECT_OK(checkpoint.get());
+  EXPECT_EQ(scheduled.wait_for(std::chrono::seconds(10)),
             std::future_status::ready);
-  EXPECT_TRUE(scheduling.get()) << "covered write left a checkpoint deadline";
+  sync->DisableProcessing();
+  sync->ClearAllCallBacks();
+
   const auto after = db_->GetBackupStats();
   ASSERT_OK(after.error);
   EXPECT_EQ(after.checkpoint_captures, before.checkpoint_captures + 1);
-  std::string recovery;
-  ASSERT_OK(
-      metabypass::Read(fs_.get(), PublishedPoint() + "/RECOVERY", &recovery));
-  std::istringstream input(recovery);
-  uint64_t sequence = 0;
-  ASSERT_TRUE(bool(input >> sequence));
-  EXPECT_EQ(sequence, 1U);
+  const std::string expected = "value";
+  CheckPointValue(PublishedPoint(), "during-enumeration", &expected);
 }
 
-TEST_F(MetaBypassTest, WriteGateDrainsAdmittedWritersBeforeCheckpoint) {
-  m_.checkpoint_interval_ms = 60000;
-  ASSERT_NO_FATAL_FAILURE(Open());
-  std::array<TestGate, 2> admitted;
-  TestGate closed, waiting, capturing;
-  std::atomic<size_t> admissions{0}, released_writers{0};
-  std::atomic<bool> pinned{false};
-  auto* sync = SyncPoint::GetInstance();
-  Defer cleanup([&] {
-    for (auto& gate : admitted) gate.Release();
-    closed.Release();
-    waiting.Release();
-    capturing.Release();
-    sync->DisableProcessing();
-    sync->ClearAllCallBacks();
-  });
-  sync->SetCallBack("MetaBypass::WriteGateAdmitted", [&](void*) {
-    const size_t index = admissions.fetch_add(1);
-    if (index < admitted.size()) {
-      admitted[index].Block();
-      released_writers.fetch_add(1);
-    }
-  });
-  sync->SetCallBack("MetaBypass::WriteGateClosed",
-                    [&](void*) { closed.Block(); });
-  sync->SetCallBack("MetaBypass::WriteGateAdmissionBlocked",
-                    [&](void*) { waiting.Block(); });
-  sync->SetCallBack("MetaBypass::NativeFilesPinned", [&](void*) {
-    EXPECT_EQ(released_writers.load(), admitted.size());
-    pinned = true;
-  });
-  sync->SetCallBack("MetaBypass::NativeCaptureStatus", [&](void* arg) {
-    EXPECT_OK(*static_cast<Status*>(arg));
-    capturing.Block();
-  });
-  sync->EnableProcessing();
-  auto first = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "first", "one");
-  });
-  EXPECT_TRUE(admitted[0].WaitUntilBlockedFor(std::chrono::seconds(10)));
-  auto second = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "second", "two");
-  });
-  EXPECT_TRUE(admitted[1].WaitUntilBlockedFor(std::chrono::seconds(10)));
-  auto checkpoint =
-      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
-  EXPECT_TRUE(closed.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  EXPECT_FALSE(pinned.load());
-  auto late = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "late", "three");
-  });
-  EXPECT_TRUE(waiting.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  waiting.Release();
-  closed.Release();
-  admitted[0].Release();
-  EXPECT_OK(first.get());
-  EXPECT_FALSE(pinned.load());
-  EXPECT_FALSE(capturing.WaitUntilBlockedFor(std::chrono::seconds(0)));
-  EXPECT_EQ(admissions.load(), 2U);
-  admitted[1].Release();
-  EXPECT_OK(second.get());
-  EXPECT_TRUE(capturing.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  EXPECT_TRUE(pinned.load());
-  EXPECT_EQ(admissions.load(), 2U);
-  EXPECT_EQ(late.wait_for(std::chrono::seconds(0)),
-            std::future_status::timeout);
-  capturing.Release();
-  EXPECT_OK(late.get());
-  EXPECT_OK(checkpoint.get());
-  EXPECT_EQ(admissions.load(), 3U);
-  sync->DisableProcessing();
-
-  const std::string point = PublishedPoint();
-  const std::string one = "one", two = "two", three = "three";
-  CheckPointValue(point, "first", &one);
-  CheckPointValue(point, "second", &two);
-  CheckPointValue(point, "late", nullptr);
-  ASSERT_OK(db_->SyncBackup());
-  CheckPointValue(PublishedPoint(), "late", &three);
-}
-
-TEST_F(MetaBypassTest, WriteGateReopensAfterCheckpointCaptureFailure) {
+TEST_F(MetaBypassTest, NativeCaptureFailurePreservesPublishedPoint) {
   m_.checkpoint_interval_ms = 60000;
   ASSERT_NO_FATAL_FAILURE(Open());
   WriteOptions durable;
@@ -1917,49 +1940,354 @@ TEST_F(MetaBypassTest, WriteGateReopensAfterCheckpointCaptureFailure) {
   ASSERT_OK(db_->Put(durable, "base", "value"));
   const std::string old_point = PublishedPoint();
   const Status failure = Status::IOError("injected checkpoint capture failure");
-  TestGate capturing, waiting, reopened;
+  TestGate capturing;
   auto* sync = SyncPoint::GetInstance();
-  Defer cleanup([&] {
-    capturing.Release();
-    waiting.Release();
-    reopened.Release();
-    sync->DisableProcessing();
-    sync->ClearAllCallBacks();
-  });
   sync->SetCallBack("MetaBypass::NativeCaptureStatus", [&](void* arg) {
     capturing.Block();
     *static_cast<Status*>(arg) = failure;
   });
-  sync->SetCallBack("MetaBypass::WriteGateAdmissionBlocked",
-                    [&](void*) { waiting.Block(); });
-  sync->SetCallBack("MetaBypass::WriteGateReopened",
-                    [&](void*) { reopened.Block(); });
   sync->EnableProcessing();
   auto checkpoint =
       std::async(std::launch::async, [&] { return db_->SyncBackup(); });
   EXPECT_TRUE(capturing.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  auto late = std::async(std::launch::async, [&] {
-    return db_->Put(WriteOptions(), "late", "admitted after capture");
+  auto writer = std::async(std::launch::async, [&] {
+    return db_->Put(WriteOptions(), "late", "written during capture");
   });
-  EXPECT_TRUE(waiting.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  EXPECT_EQ(late.wait_for(std::chrono::seconds(0)),
-            std::future_status::timeout);
-  waiting.Release();
+  const auto completed = writer.wait_for(std::chrono::seconds(10));
   capturing.Release();
-  EXPECT_TRUE(reopened.WaitUntilBlockedFor(std::chrono::seconds(10)));
-  const auto completed = late.wait_for(std::chrono::seconds(10));
   EXPECT_EQ(completed, std::future_status::ready);
-  // The waiter can make progress while the validator is still unwinding.
-  if (completed == std::future_status::ready) {
-    EXPECT_OK(late.get());
-  }
-  reopened.Release();
-  if (late.valid()) late.get().PermitUncheckedError();
+  EXPECT_OK(writer.get());
   EXPECT_EQ(checkpoint.get().ToString(), failure.ToString());
   sync->DisableProcessing();
-  Check("late", "admitted after capture");
+  sync->ClearAllCallBacks();
+  Check("late", "written during capture");
   EXPECT_EQ(PublishedPoint(), old_point);
   EXPECT_EQ(db_->Close().ToString(), failure.ToString());
+}
+
+TEST_F(MetaBypassTest, RecoveryStartsAfterConcurrentSstFlush) {
+  m_.checkpoint_interval_ms = 60000;
+  o_.disable_auto_compactions = true;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  WriteBatch base;
+  for (int i = 0; i < 100; ++i) {
+    ASSERT_OK(base.Put("base-" + std::to_string(i), "value"));
+  }
+  ASSERT_OK(db_->Write(WriteOptions(), &base));
+  ASSERT_NO_FATAL_FAILURE(
+      CheckpointWithConcurrentWrite("MetaBypass::CheckpointLowerBound", [&] {
+        Status s = db_->Put(WriteOptions(), "flushed", "sequence 101");
+        if (s.ok()) s = db_->Flush(FlushOptions());
+        return s;
+      }));
+
+  const std::string point = PublishedPoint();
+  metabypass::Backup::RecoveryPoint boundary;
+  ASSERT_OK(metabypass::Backup::ReadRecoveryPoint(fs_.get(), m_.backup_dir,
+                                                  &boundary));
+  EXPECT_EQ(boundary.sequence_lower_bound, 100U);
+  EXPECT_FALSE(boundary.exact_sequence);
+  EXPECT_FALSE(boundary.manifest_sequence.has_value());
+  ASSERT_NO_FATAL_FAILURE(WithPoint(point, [&](DB* snapshot) {
+    EXPECT_EQ(snapshot->GetLatestSequenceNumber(), 101U);
+    std::vector<LiveFileMetaData> tables;
+    snapshot->GetLiveFilesMetaData(&tables);
+    ASSERT_EQ(tables.size(), 1U);
+    EXPECT_EQ(tables.front().largest_seqno, 101U);
+  }));
+
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "sequence 102"));
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(point));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(101, 102));
+  Check("base-99", "value");
+  Check("flushed", "sequence 101");
+  Check("tail", "sequence 102");
+}
+
+TEST_F(MetaBypassTest, InplaceCheckpointCoversSequenceReusedInSst) {
+  m_.checkpoint_interval_ms = 60000;
+  o_.inplace_update_support = true;
+  o_.allow_concurrent_memtable_write = false;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "same", "original longer value"));
+  ASSERT_NO_FATAL_FAILURE(
+      CheckpointWithConcurrentWrite("MetaBypass::CheckpointLowerBound", [&] {
+        Status s = db_->Put(WriteOptions(), "same", "updated");
+        if (s.ok()) s = db_->Flush(FlushOptions());
+        return s;
+      }));
+
+  const std::string point = PublishedPoint();
+  metabypass::Backup::RecoveryPoint boundary;
+  ASSERT_OK(metabypass::Backup::ReadRecoveryPoint(fs_.get(), m_.backup_dir,
+                                                  &boundary));
+  EXPECT_EQ(boundary.sequence_lower_bound, 1U);
+  EXPECT_FALSE(boundary.exact_sequence);
+  EXPECT_EQ(boundary.manifest_sequence, 2U);
+  ASSERT_NO_FATAL_FAILURE(WithPoint(point, [&](DB* snapshot) {
+    // The in-place update consumed sequence 2 and kept the SST entry at 1.
+    EXPECT_EQ(snapshot->GetLatestSequenceNumber(), 1U);
+    std::string value;
+    ASSERT_OK(snapshot->Get(ReadOptions(), "same", &value));
+    EXPECT_EQ(value, "updated");
+  }));
+
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "sequence 3"));
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(point));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(2, 3));
+  Check("same", "updated");
+  Check("tail", "sequence 3");
+}
+
+class MetaBypassFragmentedCheckpointTest : public MetaBypassTest {
+ public:
+  enum class MirroredWal { kComplete, kTruncated, kDivergent };
+
+  void RecoverFragmentedWal(MirroredWal mirrored_wal) {
+    m_.checkpoint_interval_ms = 60000;
+    o_.write_buffer_size = 4 * 1024 * 1024;
+    // Make the first physical fragment visible before the second is written.
+    o_.writable_file_max_buffer_size = 0;
+    ASSERT_NO_FATAL_FAILURE(Open());
+    WriteBatch base;
+    ASSERT_OK(base.Put("base", "value"));
+    ASSERT_OK(db_->Write(WriteOptions(), &base));
+    const std::string large(2 * log::kBlockSize, 'v');
+    WriteBatch batch;
+    ASSERT_OK(batch.Put("first", large));
+    ASSERT_OK(batch.Put("second", "value"));
+
+    TestGate fragment;
+    unsigned fragments = 0;
+    static thread_local bool writing_batch = false;
+    auto* sync = SyncPoint::GetInstance();
+    sync->SetCallBack("LogWriter::EmitPhysicalRecord:BeforeEncodeChecksum",
+                      [&](void*) {
+                        if (writing_batch && ++fragments == 2) {
+                          fragment.Block();
+                        }
+                      });
+    sync->EnableProcessing();
+    auto writer = std::async(std::launch::async, [&] {
+      writing_batch = true;
+      Status s = db_->Write(WriteOptions(), &batch);
+      writing_batch = false;
+      return s;
+    });
+    EXPECT_TRUE(fragment.WaitUntilBlockedFor(std::chrono::seconds(10)));
+    auto checkpoint =
+        std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+    const auto completed = checkpoint.wait_for(std::chrono::seconds(10));
+    fragment.Release();
+    EXPECT_OK(writer.get());
+    EXPECT_OK(checkpoint.get());
+    sync->DisableProcessing();
+    sync->ClearAllCallBacks();
+    ASSERT_EQ(completed, std::future_status::ready);
+
+    const std::string point = PublishedPoint();
+    ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(point));
+    const auto logs = FilesOfType(point, kWalFile);
+    ASSERT_EQ(logs.size(), 1U);
+    uint64_t checkpoint_size = 0;
+    ASSERT_OK(fs_->GetFileSize(point + "/" + logs.front(), IOOptions(),
+                               &checkpoint_size, nullptr));
+    ASSERT_EQ(checkpoint_size, log::kBlockSize);
+    const std::string mirrored = m_.backup_dir + "/work/" + logs.front();
+    uint64_t mirrored_size = 0;
+    ASSERT_OK(fs_->GetFileSize(mirrored, IOOptions(), &mirrored_size, nullptr));
+    ASSERT_GT(mirrored_size, checkpoint_size);
+    if (mirrored_wal == MirroredWal::kTruncated) {
+      std::unique_ptr<FSWritableFile> file;
+      ASSERT_OK(
+          fs_->ReopenWritableFile(mirrored, FileOptions(), &file, nullptr));
+      ASSERT_OK(file->Truncate(checkpoint_size, IOOptions(), nullptr));
+      ASSERT_OK(file->Close(IOOptions(), nullptr));
+    } else if (mirrored_wal == MirroredWal::kDivergent) {
+      std::string bytes;
+      ASSERT_OK(metabypass::Read(fs_.get(), mirrored, &bytes));
+      const size_t fragment_start = log::kHeaderSize + base.GetDataSize();
+      const size_t type_offset = fragment_start + log::kHeaderSize - 1;
+      ASSERT_LT(type_offset, checkpoint_size);
+      ASSERT_EQ(bytes[type_offset], log::kFirstType);
+      const size_t value_offset =
+          bytes.find(std::string(32, 'v'), type_offset + 1);
+      ASSERT_LT(value_offset, checkpoint_size);
+      // Change the value while preserving the sequence, layout, and checksums.
+      bytes[value_offset] = 'w';
+      const auto checksum = crc32c::Value(bytes.data() + type_offset,
+                                          checkpoint_size - type_offset);
+      EncodeFixed32(bytes.data() + fragment_start, crc32c::Mask(checksum));
+      ASSERT_OK(metabypass::Write(fs_.get(), mirrored, bytes));
+    }
+
+    const bool complete = mirrored_wal == MirroredWal::kComplete;
+    ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, complete ? 3 : 1));
+    Check("base", "value");
+    if (complete) {
+      Check("first", large);
+      Check("second", "value");
+    } else {
+      std::string value;
+      EXPECT_TRUE(db_->Get(ReadOptions(), "first", &value).IsNotFound());
+      EXPECT_TRUE(db_->Get(ReadOptions(), "second", &value).IsNotFound());
+    }
+  }
+};
+
+TEST_F(MetaBypassFragmentedCheckpointTest, ContinuesCompleteMirroredBatch) {
+  RecoverFragmentedWal(MirroredWal::kComplete);
+}
+
+TEST_F(MetaBypassFragmentedCheckpointTest, StopsAtIncompleteBatch) {
+  RecoverFragmentedWal(MirroredWal::kTruncated);
+}
+
+TEST_F(MetaBypassFragmentedCheckpointTest, RejectsDivergentMirroredBatch) {
+  RecoverFragmentedWal(MirroredWal::kDivergent);
+}
+
+TEST_F(MetaBypassTest, RestoresCheckpointAfterNativePointInTimeRestart) {
+  m_.checkpoint_interval_ms = 60000;
+  o_.avoid_flush_during_recovery = true;
+  o_.avoid_flush_during_shutdown = true;
+  o_.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "base", "sequence 1"));
+  ASSERT_OK(db_->Put(WriteOptions(), "discarded", "old sequence 2"));
+  ASSERT_OK(db_->Close());
+  db_.reset();
+
+  const auto old_logs = FilesOfType(index_, kWalFile);
+  ASSERT_EQ(old_logs.size(), 1U);
+  const std::string primary = index_ + "/" + old_logs.front();
+  std::string corrupted;
+  ASSERT_OK(metabypass::Read(fs_.get(), primary, &corrupted));
+  ASSERT_FALSE(corrupted.empty());
+  // Leave sequence 1 intact and make the final record fail its physical CRC.
+  corrupted.back() ^= 1;
+  ASSERT_OK(metabypass::Write(fs_.get(), primary, corrupted));
+  ASSERT_OK(metabypass::Write(
+      fs_.get(), m_.backup_dir + "/work/" + old_logs.front(), corrupted));
+
+  bool wrote_continuity_marker = false;
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("DBImpl::WriteToWAL:log_entry", [&](void* arg) {
+    WriteBatch record;
+    ASSERT_OK(
+        WriteBatchInternal::SetContents(&record, *static_cast<Slice*>(arg)));
+    if (record.Count() == 0 && WriteBatchInternal::Sequence(&record) == 2) {
+      wrote_continuity_marker = true;
+    }
+  });
+  sync->EnableProcessing();
+  const Status reopened = MetaBypassDB::Open(o_, m_, index_, &db_);
+  sync->DisableProcessing();
+  sync->ClearAllCallBacks();
+  ASSERT_OK(reopened);
+  ASSERT_TRUE(wrote_continuity_marker);
+  Check("base", "sequence 1");
+  std::string value;
+  ASSERT_TRUE(db_->Get(ReadOptions(), "discarded", &value).IsNotFound());
+  ASSERT_OK(db_->Put(WriteOptions(), "replacement", "new sequence 2"));
+  ASSERT_OK(db_->SyncBackup());
+  const std::string point = PublishedPoint();
+  metabypass::Backup::RecoveryPoint boundary;
+  ASSERT_OK(metabypass::Backup::ReadRecoveryPoint(fs_.get(), m_.backup_dir,
+                                                  &boundary));
+  ASSERT_EQ(boundary.sequence_lower_bound, 2U);
+  ASSERT_TRUE(FilesOfType(point, kTableFile).empty());
+  ASSERT_GE(FilesOfType(point, kWalFile).size(), 2U);
+  std::string checkpoint_old_wal;
+  ASSERT_OK(metabypass::Read(fs_.get(), point + "/" + old_logs.front(),
+                             &checkpoint_old_wal));
+  ASSERT_EQ(checkpoint_old_wal, corrupted);
+
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(point));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(2, 2));
+  Check("base", "sequence 1");
+  Check("replacement", "new sequence 2");
+  EXPECT_TRUE(db_->Get(ReadOptions(), "discarded", &value).IsNotFound());
+}
+
+TEST_F(MetaBypassTest, RestoresLegacyExactRecoveryBoundary) {
+  m_.checkpoint_interval_ms = 60000;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "base", "sequence 1"));
+  ASSERT_OK(db_->SyncBackup());
+  const std::string point = PublishedPoint();
+  metabypass::Backup::RecoveryPoint boundary;
+  ASSERT_OK(metabypass::Backup::ReadRecoveryPoint(fs_.get(), m_.backup_dir,
+                                                  &boundary));
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "sequence 2"));
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(point));
+  ASSERT_OK(
+      metabypass::Write(fs_.get(), point + "/RECOVERY",
+                        "1 " + std::to_string(boundary.wal_floor) + "\n"));
+
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 2));
+  Check("base", "sequence 1");
+  Check("tail", "sequence 2");
+}
+
+TEST_F(MetaBypassTest, RecoveryProbeDoesNotAccumulateMemtableWrites) {
+  constexpr size_t record_count = 128;
+  constexpr size_t value_size = 16 * 1024;
+  constexpr size_t recovery_buffer_limit = 256 * 1024;
+  m_.checkpoint_interval_ms = 60000;
+  o_.write_buffer_size = 4 * 1024 * 1024;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  const std::string value(value_size, 'v');
+  for (size_t i = 0; i < record_count; ++i) {
+    ASSERT_OK(db_->Put(WriteOptions(), "key-" + std::to_string(i), value));
+  }
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_TRUE(FilesOfType(PublishedPoint(), kTableFile).empty());
+  Clean(index_);
+
+  Options recovery = o_;
+  auto manager = std::make_shared<WriteBufferManager>(recovery_buffer_limit);
+  recovery.write_buffer_manager = manager;
+  size_t inspected = 0;
+  size_t peak_probe_memory = 0;
+  size_t probe_writes = 0, replay_writes = 0;
+  bool replay_started = false;
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::RecoveryFilterCreated",
+                    [&](void*) { replay_started = true; });
+  sync->SetCallBack(
+      "DBImpl::RecoverLogFiles:BeforeUpdateProtectionInfo:batch", [&](void*) {
+        if (!replay_started) {
+          ++inspected;
+          peak_probe_memory =
+              std::max(peak_probe_memory, manager->memory_usage());
+        }
+      });
+  sync->SetCallBack("MemTable::Add:BeforeReturn:Encoded", [&](void*) {
+    if (replay_started) {
+      ++replay_writes;
+    } else {
+      ++probe_writes;
+    }
+  });
+  sync->EnableProcessing();
+  MetaBypassRecoveryReport report;
+  const Status status = MetaBypassDB::Restore(recovery, m_, index_, &report);
+  sync->DisableProcessing();
+  sync->ClearAllCallBacks();
+  ASSERT_OK(status);
+  ASSERT_TRUE(replay_started);
+  EXPECT_EQ(inspected, record_count);
+  EXPECT_EQ(probe_writes, 0U);
+  EXPECT_LT(peak_probe_memory, recovery_buffer_limit);
+  EXPECT_EQ(replay_writes, record_count);
+  EXPECT_EQ(report.checkpoint_sequence, record_count);
+  EXPECT_EQ(report.recovered_sequence, record_count);
+  ASSERT_NO_FATAL_FAILURE(Open());
+  for (size_t i = 0; i < record_count; ++i) {
+    Check("key-" + std::to_string(i), value);
+  }
 }
 #endif
 
@@ -2665,11 +2993,9 @@ TEST_F(MetaBypassTest, SyncWritesWaitForPublicationAndReportFailure) {
     SyncPoint::GetInstance()->ClearAllCallBacks();
     EXPECT_EQ(completed.load(), 3);
     if (!fail) {
-      std::string boundary;
-      ASSERT_OK(metabypass::Read(fs_.get(), PublishedPoint() + "/RECOVERY",
-                                 &boundary));
-      std::istringstream metadata(boundary);
-      ASSERT_TRUE(bool(metadata >> successful_checkpoint));
+      ASSERT_NO_FATAL_FAILURE(WithPoint(PublishedPoint(), [&](DB* snapshot) {
+        successful_checkpoint = snapshot->GetLatestSequenceNumber();
+      }));
       // Trigger plus two two-operation batches must be covered. The async
       // sixth operation may have arrived after the last requested capture.
       ASSERT_GE(successful_checkpoint, 5U);
@@ -4112,6 +4438,457 @@ TEST_F(MetaBypassTest, SstCapturedOnlyAtCheckpoint) {
   ASSERT_NO_FATAL_FAILURE(Restore());
   Check("key", "2");
 }
+class MetaBypassAsyncSstTest : public MetaBypassTest {
+ protected:
+  MetaBypassAsyncSstTest()
+      : split_fs_(std::make_shared<SplitDeviceFileSystem>(fs_, m_.backup_dir)),
+        split_env_(NewCompositeEnv(split_fs_)) {
+    o_.env = split_env_.get();
+    o_.num_levels = 2;
+    o_.disable_auto_compactions = true;
+    o_.level_compaction_dynamic_level_bytes = false;
+    o_.compression = o_.bottommost_compression = kNoCompression;
+    m_.checkpoint_interval_ms = 600000;
+    m_.batch_bytes = 1;
+    m_.sst_async_min_level = 1;
+    m_.sst_async_delay_ms = 600000;
+  }
+  // The database borrows split_env_ until destruction.
+  ~MetaBypassAsyncSstTest() override { db_.reset(); }
+  Status FlushKey(const std::string& key, const std::string& value) {
+    Status s = db_->Put(WriteOptions(), key, value);
+    return s.ok() ? db_->Flush(FlushOptions()) : s;
+  }
+  Status MoveToL1() {
+    return db_->CompactRange(CompactRangeOptions(), nullptr, nullptr);
+  }
+  void PrepareInplaceUpdateWithPrecopiedSst();
+  void CheckRecoveredSequenceAfterReopen(SequenceNumber expected) {
+    MetaBypassRecoveryProgress progress;
+    ASSERT_OK(db_->GetRecoveryProgress(&progress));
+    EXPECT_EQ(progress.visible_sequence, expected);
+    ASSERT_OK(db_->Close());
+    db_.reset();
+    ASSERT_NO_FATAL_FAILURE(Open());
+    ASSERT_OK(db_->GetRecoveryProgress(&progress));
+    EXPECT_EQ(progress.visible_sequence, expected);
+    ASSERT_OK(db_->Put(WriteOptions(), "next", "after recovery"));
+    ASSERT_OK(db_->GetRecoveryProgress(&progress));
+    EXPECT_EQ(progress.visible_sequence, expected + 1);
+    Check("next", "after recovery");
+  }
+  static void ClearHooks() {
+    SyncPoint::GetInstance()->DisableProcessing();
+    SyncPoint::GetInstance()->ClearAllCallBacks();
+  }
+  std::shared_ptr<SplitDeviceFileSystem> split_fs_;
+  std::unique_ptr<Env> split_env_;
+};
+
+TEST_F(MetaBypassAsyncSstTest, TrivialMoveStagesHighSstAndCheckpointCopiesL0) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("high", "moved"));
+  const auto original = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(original.size(), 1U);
+  uint64_t high_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(index_ + "/" + original.front(), IOOptions(),
+                             &high_bytes, nullptr));
+  TestGate ready;
+  uint64_t number = 0;
+  Defer cleanup([&] {
+    ready.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncReady", [&](void* arg) {
+    number = *static_cast<uint64_t*>(arg);
+    ready.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(ready.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  EXPECT_EQ(MakeTableFileName(number), original.front());
+  ready.Release();
+  ASSERT_OK(FlushKey("low", "flushed"));
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  EXPECT_EQ(before.sst_async_copy_bytes, high_bytes);
+  EXPECT_EQ(before.sst_async_staged_bytes, high_bytes);
+  ASSERT_OK(db_->SyncBackup());
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  const auto point = PublishedPoint();
+  const auto files = FilesOfType(point, kTableFile);
+  ASSERT_EQ(files.size(), 2U);
+  const auto low = std::find_if(files.begin(), files.end(), [&](const auto& f) {
+    return f != original.front();
+  });
+  ASSERT_NE(low, files.end());
+  uint64_t low_bytes = 0;
+  ASSERT_OK(
+      fs_->GetFileSize(point + "/" + *low, IOOptions(), &low_bytes, nullptr));
+  EXPECT_EQ(after.last_checkpoint_sst_copy_bytes, low_bytes);
+  EXPECT_EQ(after.last_checkpoint_sst_ready_bytes, high_bytes);
+  EXPECT_EQ(after.sst_async_staged_bytes, 0U);
+  ASSERT_OK(db_->SyncBackup());
+  const auto reused = db_->GetBackupStats();
+  ASSERT_OK(reused.error);
+  EXPECT_EQ(reused.sst_async_copy_bytes, high_bytes);
+  EXPECT_EQ(reused.last_checkpoint_sst_copy_bytes, 0U);
+  EXPECT_EQ(reused.last_checkpoint_sst_ready_bytes, 0U);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"high", "moved"}, {"low", "flushed"}});
+}
+
+void MetaBypassAsyncSstTest::PrepareInplaceUpdateWithPrecopiedSst() {
+  m_.sst_async_delay_ms = 0;
+  o_.inplace_update_support = true;
+  o_.allow_concurrent_memtable_write = false;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("high", "staged"));
+  {
+    TestGate ready;
+    Defer cleanup([&] {
+      ready.Release();
+      ClearHooks();
+    });
+    auto* sync = SyncPoint::GetInstance();
+    sync->SetCallBack("MetaBypass::SstAsyncReady",
+                      [&](void*) { ready.Block(); });
+    sync->EnableProcessing();
+    ASSERT_OK(MoveToL1());
+    ASSERT_TRUE(ready.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  }
+
+  ASSERT_OK(db_->Put(WriteOptions(), "same", "original longer value"));
+  ASSERT_NO_FATAL_FAILURE(CheckpointWithConcurrentWrite(
+      "MetaBypass::CheckpointLowerBound",
+      [&] { return FlushKey("same", "updated"); }));
+
+  const auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  EXPECT_GT(stats.last_checkpoint_sst_ready_bytes, 0U);
+  EXPECT_GT(stats.last_checkpoint_sst_copy_bytes, 0U);
+
+  const std::string point = PublishedPoint();
+  metabypass::Backup::RecoveryPoint boundary;
+  ASSERT_OK(metabypass::Backup::ReadRecoveryPoint(fs_.get(), m_.backup_dir,
+                                                  &boundary));
+  EXPECT_EQ(boundary.sequence_lower_bound, 2U);
+  EXPECT_EQ(boundary.manifest_sequence, 3U);
+  ASSERT_NO_FATAL_FAILURE(WithPoint(point, [&](DB* snapshot) {
+    EXPECT_EQ(snapshot->GetLatestSequenceNumber(), 2U);
+    std::string value;
+    ASSERT_OK(snapshot->Get(ReadOptions(), "same", &value));
+    EXPECT_EQ(value, "updated");
+  }));
+}
+
+TEST_F(MetaBypassAsyncSstTest, RestoresInplaceUpdateWithPrecopiedSst) {
+  ASSERT_NO_FATAL_FAILURE(PrepareInplaceUpdateWithPrecopiedSst());
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "original longer tail value"));
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "updated tail"));
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(PublishedPoint()));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(3, 5));
+  ASSERT_NO_FATAL_FAILURE(CheckContents(
+      {{"high", "staged"}, {"same", "updated"}, {"tail", "updated tail"}}));
+  ASSERT_NO_FATAL_FAILURE(CheckRecoveredSequenceAfterReopen(5));
+}
+
+TEST_F(MetaBypassAsyncSstTest,
+       RestoresInplaceUpdateWithPrecopiedSstWithoutWalTail) {
+  ASSERT_NO_FATAL_FAILURE(PrepareInplaceUpdateWithPrecopiedSst());
+  ASSERT_NO_FATAL_FAILURE(ClosePreservingPoint(PublishedPoint()));
+  ASSERT_NO_FATAL_FAILURE(Clean(m_.backup_dir + "/work"));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(3, 3));
+
+  ASSERT_NO_FATAL_FAILURE(
+      CheckContents({{"high", "staged"}, {"same", "updated"}}));
+  ASSERT_NO_FATAL_FAILURE(CheckRecoveredSequenceAfterReopen(3));
+}
+
+TEST_F(MetaBypassAsyncSstTest,
+       ObsoleteBeforeDelaySkipsCopyAndSyncPromotesSurvivor) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "value"));
+  const auto first = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(first.size(), 1U);
+  uint64_t first_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(index_ + "/" + first.front(), IOOptions(),
+                             &first_bytes, nullptr));
+  std::promise<void> queued;
+  auto queued_signal = queued.get_future();
+  std::atomic<bool> first_observation{true};
+  TestGate obsolete;
+  Defer cleanup([&] {
+    obsolete.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncNow", [&](void*) {
+    if (first_observation.exchange(false)) queued.set_value();
+  });
+  sync->SetCallBack("MetaBypass::SstAsyncObsolete", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == first.front())
+      obsolete.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_EQ(queued_signal.wait_for(std::chrono::seconds(10)),
+            std::future_status::ready);
+  ASSERT_OK(CompactTables());
+  ASSERT_TRUE(obsolete.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  obsolete.Release();
+  const auto skipped = db_->GetBackupStats();
+  ASSERT_OK(skipped.error);
+  EXPECT_EQ(skipped.sst_async_cancelled_bytes, first_bytes);
+  EXPECT_EQ(skipped.sst_async_copy_bytes, 0U);
+  EXPECT_EQ(skipped.sst_async_discarded_bytes, 0U);
+  ASSERT_OK(db_->SyncBackup());
+  const auto current = PublishedPoint();
+  const auto files = FilesOfType(current, kTableFile);
+  ASSERT_EQ(files.size(), 1U);
+  EXPECT_NE(first.front(), files.front());
+  uint64_t survivor_bytes = 0;
+  ASSERT_OK(fs_->GetFileSize(current + "/" + files.front(), IOOptions(),
+                             &survivor_bytes, nullptr));
+  const auto promoted = db_->GetBackupStats();
+  ASSERT_OK(promoted.error);
+  EXPECT_EQ(promoted.sst_async_copy_bytes, 0U);
+  EXPECT_EQ(promoted.last_checkpoint_sst_copy_bytes, survivor_bytes);
+  EXPECT_EQ(promoted.last_checkpoint_sst_ready_bytes, 0U);
+  EXPECT_EQ(promoted.sst_async_staged_bytes, 0U);
+  ASSERT_OK(db_->Close());
+}
+
+TEST_F(MetaBypassAsyncSstTest, ObsoleteReadyHardLinkDoesNotCountAsCancelled) {
+  o_.env = Env::Default();
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "linked"));
+  const auto files = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(files.size(), 1U);
+  const std::string source = index_ + "/" + files.front();
+  uint64_t initial_links = 0;
+  ASSERT_OK(fs_->NumFileLinks(source, IOOptions(), &initial_links, nullptr));
+  TestGate ready, obsolete;
+  Defer cleanup([&] {
+    ready.Release();
+    obsolete.Release();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncReady", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == files.front())
+      ready.Block();
+  });
+  sync->SetCallBack("MetaBypass::SstAsyncObsolete", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == files.front())
+      obsolete.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(ready.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  uint64_t linked = 0;
+  ASSERT_OK(fs_->NumFileLinks(source, IOOptions(), &linked, nullptr));
+  EXPECT_EQ(linked, initial_links + 1);
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  EXPECT_GT(before.sst_async_staged_bytes, 0U);
+  EXPECT_EQ(before.sst_async_copy_bytes, 0U);
+  ready.Release();
+  ASSERT_OK(CompactTables());
+  ASSERT_TRUE(obsolete.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_EQ(after.sst_async_cancelled_bytes, 0U);
+  EXPECT_EQ(after.sst_async_discarded_bytes, 0U);
+  obsolete.Release();
+  ASSERT_OK(db_->Close());
+}
+
+TEST_F(MetaBypassAsyncSstTest, InFlightHighSstPinsNativeSourceWhileWalDrains) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "snapshot"));
+  const auto source = FilesOfType(index_, kTableFile);
+  ASSERT_EQ(source.size(), 1U);
+  TestGate copying, requested, wal, drained;
+  std::future<Status> checkpoint;
+  Defer cleanup([&] {
+    copying.Release();
+    requested.Release();
+    wal.Release();
+    drained.Release();
+    ClearHooks();
+    if (checkpoint.valid()) checkpoint.get().PermitUncheckedError();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncAppendStatus",
+                    [&](void*) { copying.Block(); });
+  sync->SetCallBack("MetaBypass::SstAsyncCandidateWait", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == source.front())
+      requested.Block();
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(copying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  checkpoint =
+      std::async(std::launch::async, [&] { return db_->SyncBackup(); });
+  ASSERT_TRUE(requested.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  requested.Release();
+  const auto before = db_->GetBackupStats();
+  ASSERT_OK(before.error);
+  BlockFirstApply(&wal);
+  ASSERT_OK(db_->Put(WriteOptions(), "tail", "after snapshot"));
+  ASSERT_TRUE(wal.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  sync->SetCallBack("MetaBypass::BeforeMirrorWait",
+                    [&](void*) { drained.Block(); });
+  wal.Release();
+  ASSERT_TRUE(drained.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  drained.Release();
+  const auto after = db_->GetBackupStats();
+  ASSERT_OK(after.error);
+  EXPECT_GT(after.mirrored_wal_bytes, before.mirrored_wal_bytes);
+  ASSERT_OK(CompactTables());
+  EXPECT_OK(
+      fs_->FileExists(index_ + "/" + source.front(), IOOptions(), nullptr));
+  EXPECT_EQ(checkpoint.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  copying.Release();
+  ASSERT_OK(checkpoint.get());
+  const std::string value = "snapshot";
+  CheckPointValue(PublishedPoint(), "key", &value);
+  CheckPointValue(PublishedPoint(), "tail", nullptr);
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"key", "snapshot"}, {"tail", "after snapshot"}});
+}
+
+TEST_F(MetaBypassAsyncSstTest, CloseJoinsOrdinaryCopyAfterSstMovesBackToL0) {
+  m_.sst_async_delay_ms = 0;
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("key", "value"));
+  TestGate copying, detaching;
+  std::atomic<bool> copy_returned{false}, native_closed{false};
+  std::future<Status> close;
+  Defer cleanup([&] {
+    copying.Release();
+    detaching.Release();
+    if (close.valid()) close.get().PermitUncheckedError();
+    ClearHooks();
+  });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncAppendStatus", [&](void*) {
+    copying.Block();
+    copy_returned = true;
+  });
+  sync->SetCallBack("MetaBypass::BeforeDetachDB",
+                    [&](void*) { detaching.Block(); });
+  sync->SetCallBack("DBImpl::CloseHelper:PendingPurgeFinished", [&](void*) {
+    EXPECT_TRUE(copy_returned.load());
+    native_closed = true;
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(MoveToL1());
+  ASSERT_TRUE(copying.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  CompactRangeOptions refit;
+  refit.change_level = true;
+  refit.target_level = 0;
+  ASSERT_OK(db_->CompactRange(refit, nullptr, nullptr));
+  // The final checkpoint can copy the L0 table while the staging worker is
+  // still handling its speculative L1 append.
+  close = std::async(std::launch::async, [&] { return db_->Close(); });
+  ASSERT_TRUE(detaching.WaitUntilBlockedFor(std::chrono::seconds(10)));
+  detaching.Release();
+  EXPECT_FALSE(native_closed.load());
+  EXPECT_EQ(close.wait_for(std::chrono::seconds(0)),
+            std::future_status::timeout);
+  copying.Release();
+  ASSERT_OK(close.get());
+  EXPECT_TRUE(native_closed.load());
+  ClearHooks();
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 1));
+  CheckContents({{"key", "value"}});
+}
+
+class MetaBypassAsyncSstFailureTest
+    : public MetaBypassAsyncSstTest,
+      public testing::WithParamInterface<const char*> {};
+
+TEST_P(MetaBypassAsyncSstFailureTest, RequiredCopyFailurePreservesPointAndWal) {
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(db_->Put(WriteOptions(), "key", "old"));
+  ASSERT_OK(db_->SyncBackup());
+  const auto previous = PublishedPoint();
+  ASSERT_OK(FlushKey("key", "new"));
+  ASSERT_OK(MoveToL1());
+  std::atomic<unsigned> failures{0}, released{0};
+  Defer cleanup([] { ClearHooks(); });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack(GetParam(), [&](void* arg) {
+    ++failures;
+    *static_cast<Status*>(arg) = Status::IOError("required SST staging fault");
+  });
+  sync->SetCallBack("MetaBypass::NativeFilesReleased",
+                    [&](void*) { ++released; });
+  sync->EnableProcessing();
+  EXPECT_TRUE(db_->SyncBackup().IsIOError());
+  EXPECT_EQ(released.load(), 1U);
+  EXPECT_EQ(failures.load(), 1U);
+  EXPECT_EQ(PublishedPoint(), previous);
+  EXPECT_TRUE(db_->Close().IsIOError());
+  db_.reset();
+  ClearHooks();
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 2));
+  CheckContents({{"key", "new"}});
+}
+
+INSTANTIATE_TEST_CASE_P(AppendAndFsync, MetaBypassAsyncSstFailureTest,
+                        testing::Values("MetaBypass::SstAsyncAppendStatus",
+                                        "MetaBypass::SstAsyncSyncStatus"));
+
+TEST_F(MetaBypassAsyncSstTest, ReadsColdHighSstWhenPreviousPointCannotLink) {
+  EnableSst();
+  ASSERT_NO_FATAL_FAILURE(Open());
+  ASSERT_OK(FlushKey("cold", "protected"));
+  ASSERT_OK(db_->SyncBackup());
+  const auto cold = FilesOfType(PublishedPoint(), kTableFile);
+  ASSERT_EQ(cold.size(), 1U);
+  AwaitSst([](const auto& stats) {
+    return stats.demotions > 0 && stats.ssd_bytes == 0;
+  });
+  ASSERT_TRUE(FilesOfType(index_, kTableFile).empty());
+  ASSERT_OK(MoveToL1());
+  ASSERT_OK(FlushKey("hot", "new"));
+  ASSERT_OK(MoveToL1());
+  split_fs_->reject_point_links = true;
+  std::atomic<bool> read_cold{false};
+  Defer cleanup([] { ClearHooks(); });
+  auto* sync = SyncPoint::GetInstance();
+  sync->SetCallBack("MetaBypass::SstAsyncBeforeCopy", [&](void* arg) {
+    if (MakeTableFileName(*static_cast<uint64_t*>(arg)) == cold.front())
+      read_cold = true;
+  });
+  sync->EnableProcessing();
+  ASSERT_OK(db_->SyncBackup());
+  EXPECT_TRUE(read_cold.load());
+  EXPECT_EQ(FilesOfType(PublishedPoint(), kTableFile).size(), 2U);
+  const auto stats = db_->GetBackupStats();
+  ASSERT_OK(stats.error);
+  EXPECT_GT(stats.last_checkpoint_sst_copy_bytes, 0U);
+  split_fs_->reject_point_links = false;
+  ASSERT_OK(db_->Close());
+  db_.reset();
+  ASSERT_NO_FATAL_FAILURE(Restore());
+  CheckContents({{"cold", "protected"}, {"hot", "new"}});
+}
+
 TEST_F(MetaBypassTest, SstCopyAllowsWalDrainAndPinsCompactionInputs) {
   auto observed = std::make_shared<CandidateNoLinkFileSystem>(fs_);
   auto env = NewCompositeEnv(observed);
@@ -5481,7 +6258,9 @@ TEST_F(MetaBypassTest, RejectInvalidPublishedPointWithoutMutation) {
   };
   for (const Damage damage :
        {Damage{"RECOVERY", nullptr}, Damage{"RECOVERY", "12\n"},
-        Damage{"RECOVERY", "12 4 1\n"}, Damage{"LATEST", ""},
+        Damage{"RECOVERY", "12 4 1\n"}, Damage{"RECOVERY", "MBR2 12\n"},
+        Damage{"RECOVERY", "MBR2 12 4 invalid\n"},
+        Damage{"RECOVERY", "MBR2 12 4 13 14\n"}, Damage{"LATEST", ""},
         Damage{"LATEST", "point-1\npoint-2\n"},
         Damage{"LATEST", "point-01\n"}}) {
     SCOPED_TRACE(damage.file);
@@ -5549,6 +6328,16 @@ TEST_F(MetaBypassTest, SigkillDuringSstCopyRestoresAfterSsdLoss) {
   // Restore deletes the complete native directory. Only the old published
   // point and the continuously mirrored WAL survive the interrupted copy.
   ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 5));
+  CheckContents({{"a", "last"}, {"b", "batch"}});
+}
+TEST_F(MetaBypassAsyncSstTest, SigkillDuringRequiredCopyRestoresAfterSsdLoss) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("async-sst-copy"));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(1, 5));
+  CheckContents({{"a", "last"}, {"b", "batch"}});
+}
+TEST_F(MetaBypassAsyncSstTest, SigkillAfterStagedSstPublishRestoresAfterSsdLoss) {
+  ASSERT_NO_FATAL_FAILURE(RunCrashWriter("async-sst-published"));
+  ASSERT_NO_FATAL_FAILURE(RestorePrefix(5, 5));
   CheckContents({{"a", "last"}, {"b", "batch"}});
 }
 TEST_F(MetaBypassTest, SigkillDuringRetiredPointCleanup) {
@@ -5767,14 +6556,31 @@ int main(int argc, char** argv) {
     MetaBypassOptions bypass = TestMetaBypassOptions();
     bypass.backup_dir = argv[3];
     const bool sst_copy_crash = argc == 5 && std::string(argv[4]) == "sst-copy";
-    auto no_links =
-        std::make_shared<ROCKSDB_NAMESPACE::CandidateNoLinkFileSystem>(
-            options.env->GetFileSystem());
+    const bool async_sst_copy_crash =
+        argc == 5 && std::string(argv[4]) == "async-sst-copy";
+    const bool async_sst_published_crash =
+        argc == 5 && std::string(argv[4]) == "async-sst-published";
+    const bool async_sst_crash =
+        async_sst_copy_crash || async_sst_published_crash;
+    const bool table_crash = sst_copy_crash || async_sst_crash;
+    std::shared_ptr<ROCKSDB_NAMESPACE::FileSystem> no_links;
+    if (async_sst_crash) {
+      no_links = std::make_shared<ROCKSDB_NAMESPACE::SplitDeviceFileSystem>(
+          options.env->GetFileSystem(), bypass.backup_dir);
+      options.num_levels = 2;
+      options.disable_auto_compactions = true;
+      options.level_compaction_dynamic_level_bytes = false;
+      bypass.sst_async_min_level = 1;
+      bypass.sst_async_delay_ms = 600000;
+    } else {
+      no_links = std::make_shared<ROCKSDB_NAMESPACE::CandidateNoLinkFileSystem>(
+          options.env->GetFileSystem());
+    }
     auto env = ROCKSDB_NAMESPACE::NewCompositeEnv(no_links);
-    if (sst_copy_crash) options.env = env.get();
+    if (table_crash) options.env = env.get();
     const bool gc_crash =
         argc == 5 && std::string(argv[4]) == "MetaBypass::GCFileDeleted";
-    if (gc_crash || sst_copy_crash) {
+    if (gc_crash || table_crash) {
       bypass.batch_bytes = bypass.wal_queue_capacity;
       bypass.interval_ms = 60000;
       bypass.checkpoint_interval_ms = bypass.interval_ms;
@@ -5796,9 +6602,19 @@ int main(int argc, char** argv) {
                                                 kill(getpid(), SIGKILL);
                                             });
       SyncPoint::GetInstance()->EnableProcessing();
-    } else if (argc == 5) {
+    } else if (async_sst_published_crash) {
+      // This hook runs after LATEST is durable and before SyncBackup can
+      // return. PointerSynced runs after the validator has woken its waiter.
       SyncPoint::GetInstance()->SetCallBack(
-          argv[4], [](void*) { kill(getpid(), SIGKILL); });
+          "MetaBypass::PointerDirectorySyncStatus", [](void* arg) {
+            if (static_cast<Status*>(arg)->ok()) kill(getpid(), SIGKILL);
+          });
+      SyncPoint::GetInstance()->EnableProcessing();
+    } else if (argc == 5) {
+      const char* hook = argv[4];
+      if (async_sst_copy_crash) hook = "MetaBypass::SstAsyncAppendStatus";
+      SyncPoint::GetInstance()->SetCallBack(
+          hook, [](void*) { kill(getpid(), SIGKILL); });
       SyncPoint::GetInstance()->EnableProcessing();
     }
     if (s.ok()) s = db->Put(WriteOptions(), "deleted", "old");
@@ -5807,13 +6623,16 @@ int main(int argc, char** argv) {
     if (s.ok()) s = batch.Put("b", "batch");
     if (s.ok()) s = batch.Delete("deleted");
     WriteOptions sync;
-    sync.sync = !sst_copy_crash;
+    sync.sync = !table_crash;
     if (s.ok()) s = db->Write(sync, &batch);
-    if (sst_copy_crash) {
+    if (table_crash) {
       if (s.ok()) s = db->Flush(ROCKSDB_NAMESPACE::FlushOptions());
+      if (s.ok() && async_sst_crash)
+        s = db->CompactRange(ROCKSDB_NAMESPACE::CompactRangeOptions(), nullptr,
+                             nullptr);
       if (s.ok()) s = db->SyncBackup();
       if (s.ok()) {
-        fprintf(stderr, "SST copy crash hook did not run\n");
+        fprintf(stderr, "SST crash hook did not run\n");
         _exit(3);
       }
     }

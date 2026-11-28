@@ -1141,6 +1141,12 @@ DEFINE_uint64(metabypass_interval_ms,
 DEFINE_uint64(metabypass_checkpoint_interval_ms,
               ROCKSDB_NAMESPACE::MetaBypassOptions{}.checkpoint_interval_ms,
               "Recovery point trigger interval in milliseconds");
+DEFINE_int32(metabypass_sst_async_min_level,
+             ROCKSDB_NAMESPACE::MetaBypassOptions{}.sst_async_min_level,
+             "Minimum compaction output level to stage; -1 disables staging");
+DEFINE_uint64(metabypass_sst_async_delay_ms,
+              ROCKSDB_NAMESPACE::MetaBypassOptions{}.sst_async_delay_ms,
+              "Delay before ordinary asynchronous SST staging in milliseconds");
 DEFINE_bool(metabypass_recovery_time_sampling, true,
             "Sample PROGRESS and estimate recovery time bounds");
 DEFINE_string(metabypass_sst_action, "legacy",
@@ -11322,6 +11328,17 @@ static int RunMetaBypassNodeSst(Options options,
     MB_NODE_FIELD(b, pending_gc_bytes);
     MB_NODE_FIELD(b, gc_micros);
     MB_NODE_FIELD(b, candidate_copied_bytes);
+    MB_NODE_FIELD(b, io_backup_write_bytes);
+    MB_NODE_FIELD(b, last_checkpoint_sst_copy_bytes);
+    MB_NODE_FIELD(b, last_checkpoint_sst_ready_bytes);
+    MB_NODE_FIELD(b, last_checkpoint_sst_wait_micros);
+    MB_NODE_FIELD(b, last_checkpoint_sst_micros);
+    MB_NODE_FIELD(b, sst_async_copy_bytes);
+    MB_NODE_FIELD(b, sst_async_discarded_bytes);
+    MB_NODE_FIELD(b, sst_async_cancelled_bytes);
+    MB_NODE_FIELD(b, sst_async_staged_bytes);
+    MB_NODE_FIELD(b, wal_backpressure_micros);
+    MB_NODE_FIELD(b, wal_queued_bytes);
 #undef MB_NODE_FIELD
     field("wal_queue_capacity", bypass.wal_queue_capacity);
     field("metadata_queue_capacity", bypass.metadata_queue_capacity);
@@ -12002,15 +12019,24 @@ static int RunMetaBypassBenchmark() {
   bypass.checkpoint_interval_ms = FLAGS_metabypass_checkpoint_interval_ms;
   bypass.enable_recovery_time_sampling =
       FLAGS_metabypass_recovery_time_sampling;
+  bypass.sst_async_min_level = FLAGS_metabypass_sst_async_min_level;
+  bypass.sst_async_delay_ms = FLAGS_metabypass_sst_async_delay_ms;
+  if (FLAGS_metabypass_mode == "restore" ||
+      (FLAGS_metabypass_mode == "sst_tiering" &&
+       FLAGS_metabypass_sst_action == "rpo_restore")) {
+    bypass.sst_async_min_level = -1;
+  }
   printf(
       "metabypass effective_options allow_concurrent_memtable_write=%d"
       " mirror_interval_ms=%" PRIu64 " checkpoint_interval_ms=%" PRIu64
       " recovery_time_sampling=%d sync=%d"
-      " wal_queue_capacity=%zu metadata_queue_capacity=%zu batch_bytes=%zu\n",
+      " wal_queue_capacity=%zu metadata_queue_capacity=%zu batch_bytes=%zu"
+      " sst_async_min_level=%d sst_async_delay_ms=%" PRIu64 "\n",
       options.allow_concurrent_memtable_write, bypass.interval_ms,
       bypass.checkpoint_interval_ms, bypass.enable_recovery_time_sampling,
       FLAGS_sync, bypass.wal_queue_capacity, bypass.metadata_queue_capacity,
-      bypass.batch_bytes);
+      bypass.batch_bytes, bypass.sst_async_min_level,
+      bypass.sst_async_delay_ms);
   if (FLAGS_metabypass_mode == "sst_tiering")
     return RunMetaBypassSstBenchmark(options, bypass);
   auto clock = FLAGS_env->GetSystemClock();
@@ -12101,6 +12127,22 @@ static int RunMetaBypassBenchmark() {
          "\n",
          stats.checkpoint_captures, stats.checkpoint_capture_micros,
          stats.checkpoint_publish_micros);
+  printf("metabypass last_checkpoint_sst_copy_bytes=%" PRIu64
+         " last_checkpoint_sst_ready_bytes=%" PRIu64
+         " last_checkpoint_sst_wait_micros=%" PRIu64
+         " last_checkpoint_sst_micros=%" PRIu64 " last_publish_micros=%" PRIu64
+         " sst_async_copy_bytes=%" PRIu64 " sst_async_discarded_bytes=%" PRIu64
+         " sst_async_cancelled_bytes=%" PRIu64
+         " sst_async_staged_bytes=%" PRIu64 " wal_backpressure_micros=%" PRIu64
+         " wal_queued_bytes=%" PRIu64 " io_backup_write_bytes=%" PRIu64 "\n",
+         stats.last_checkpoint_sst_copy_bytes,
+         stats.last_checkpoint_sst_ready_bytes,
+         stats.last_checkpoint_sst_wait_micros,
+         stats.last_checkpoint_sst_micros, stats.last_publish_micros,
+         stats.sst_async_copy_bytes, stats.sst_async_discarded_bytes,
+         stats.sst_async_cancelled_bytes, stats.sst_async_staged_bytes,
+         stats.wal_backpressure_micros, stats.wal_queued_bytes,
+         stats.io_backup_write_bytes);
   printf("metabypass p99_us=%" PRIu64 " sync_write_us=%" PRIu64 "\n", p99,
          stats.sync_write_micros);
   return s.ok() ? 0 : 1;

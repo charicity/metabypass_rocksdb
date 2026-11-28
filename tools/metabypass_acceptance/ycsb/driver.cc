@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -37,6 +38,7 @@
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_batch.h"
+#include "util/defer.h"
 
 namespace {
 namespace rdb = ROCKSDB_NAMESPACE;
@@ -91,7 +93,8 @@ void Emit(std::string_view event, const std::string& fields = {}) {
   std::cout << "{\"event\":" << Quote(event) << fields << '}' << std::endl;
 }
 
-std::string Number(std::string_view field, uint64_t value) {
+template <typename Integer>
+std::string Number(std::string_view field, Integer value) {
   return "," + Quote(field) + ":" + std::to_string(value);
 }
 
@@ -177,10 +180,74 @@ void SetDataDirectory(Options& bypass) {
   }
 }
 
+struct SstAsyncConfig {
+  int min_level = -1;
+  uint64_t delay_ms = 1000;
+};
+
+SstAsyncConfig SstAsyncFromEnvironment() {
+  SstAsyncConfig config;
+  if (const char* level = std::getenv("MB_YCSB_SST_ASYNC_MIN_LEVEL")) {
+    if (std::string_view(level) != "-1") {
+      config.min_level =
+          static_cast<int>(Parse(level, "SST async minimum level", 1,
+                                 std::numeric_limits<int>::max()));
+    }
+  }
+  if (const char* delay = std::getenv("MB_YCSB_SST_ASYNC_DELAY_MS")) {
+    config.delay_ms = Parse(delay, "SST async delay milliseconds", 0,
+                            std::numeric_limits<uint64_t>::max());
+  }
+  return config;
+}
+
+template <typename Options>
+void SetSstAsyncConfig(Options& bypass, const SstAsyncConfig& config) {
+  if constexpr (requires {
+                  bypass.sst_async_min_level;
+                  bypass.sst_async_delay_ms;
+                }) {
+    bypass.sst_async_min_level = config.min_level;
+    bypass.sst_async_delay_ms = config.delay_ms;
+  } else {
+    Require(config.min_level == -1 && config.delay_ms == 1000,
+            "this RocksDB core does not support SST async staging options");
+  }
+}
+
+template <typename Stats>
+std::string BackupStatsFields(const Stats& stats) {
+  auto fields = Number("recovery_points", stats.recovery_points) +
+                Number("last_publish_micros", stats.last_publish_micros) +
+                Number("last_build_micros", stats.last_build_micros) +
+                Number("peak_queued_bytes", stats.peak_queued_bytes);
+  if constexpr (requires { stats.io_backup_write_bytes; }) {
+    fields += Number("io_backup_write_bytes", stats.io_backup_write_bytes);
+  }
+  if constexpr (requires { stats.last_checkpoint_sst_copy_bytes; }) {
+    fields +=
+        Number("last_checkpoint_sst_copy_bytes",
+               stats.last_checkpoint_sst_copy_bytes) +
+        Number("last_checkpoint_sst_ready_bytes",
+               stats.last_checkpoint_sst_ready_bytes) +
+        Number("last_checkpoint_sst_wait_micros",
+               stats.last_checkpoint_sst_wait_micros) +
+        Number("last_checkpoint_sst_micros", stats.last_checkpoint_sst_micros) +
+        Number("sst_async_copy_bytes", stats.sst_async_copy_bytes) +
+        Number("sst_async_discarded_bytes", stats.sst_async_discarded_bytes) +
+        Number("sst_async_cancelled_bytes", stats.sst_async_cancelled_bytes) +
+        Number("sst_async_staged_bytes", stats.sst_async_staged_bytes) +
+        Number("wal_backpressure_micros", stats.wal_backpressure_micros) +
+        Number("wal_queued_bytes", stats.wal_queued_bytes);
+  }
+  return fields;
+}
+
 class Database {
  public:
-  Database(Engine engine, std::string backup, uint64_t checkpoint_ms)
-      : engine_(engine) {
+  Database(Engine engine, std::string backup, uint64_t checkpoint_ms,
+           SstAsyncConfig sst_async = {})
+      : engine_(engine), sst_async_(sst_async) {
     bypass_.backup_dir = std::move(backup);
     bypass_.interval_ms = kMirrorMs;
     bypass_.batch_bytes = kMirrorBatchBytes;
@@ -188,6 +255,7 @@ class Database {
     bypass_.metadata_queue_capacity = kMetadataQueueBytes;
     if (engine == Engine::kMetaBypass) {
       SetDataDirectory(bypass_);
+      SetSstAsyncConfig(bypass_, sst_async_);
     }
     if (checkpoint_ms != 0) {
       bypass_.checkpoint_interval_ms = checkpoint_ms;
@@ -285,13 +353,18 @@ class Database {
                   Number("query_begin_wall_us", wall_begin) +
                   Number("query_end_wall_us", wall_end) +
                   Number("sequence", sequence);
-    if (mb_) {
-      const auto stats = mb_->GetBackupStats();
-      Check(stats.error, "MB background backup");
-      fields += Number("recovery_points", stats.recovery_points) +
-                Number("last_publish_micros", stats.last_publish_micros);
+    Emit("progress", fields + ReportBackupStats());
+  }
+
+  std::string ReportBackupStats() const {
+    if (!mb_) {
+      return {};
     }
-    Emit("progress", fields);
+    const auto stats = mb_->GetBackupStats();
+    const auto sample_time = Clock::now();
+    Check(stats.error, "MB background backup");
+    return Number("stats_sample_monotonic_ns", Nanos(sample_time)) +
+           BackupStatsFields(stats);
   }
 
   void Backup(bool initial) {
@@ -300,12 +373,10 @@ class Database {
     }
     const auto start = Clock::now();
     rdb::BackupID id = 0;
-    uint64_t recovery_points = 0;
+    std::string stats;
     if (mb_) {
       Check(mb_->SyncBackup(), "MB initial backup");
-      const auto stats = mb_->GetBackupStats();
-      Check(stats.error, "MB initial backup");
-      recovery_points = stats.recovery_points;
+      stats = ReportBackupStats();
     } else {
       rdb::CreateBackupOptions options;
       options.flush_before_backup = false;
@@ -313,13 +384,12 @@ class Database {
       Check(be_->PurgeOldBackups(1), "BE purge");
     }
     const auto end = Clock::now();
-    Emit(
-        "backup",
-        std::string(",\"initial\":") + (initial ? "true" : "false") +
-            ",\"completed\":true" +
-            OptionalNumber("backup_id", id, be_ != nullptr) +
-            OptionalNumber("recovery_points", recovery_points, mb_ != nullptr) +
-            Number("begin_ns", Nanos(start)) + Number("end_ns", Nanos(end)));
+    Emit("backup", std::string(",\"initial\":") + (initial ? "true" : "false") +
+                       ",\"completed\":true" +
+                       OptionalNumber("backup_id", id, be_ != nullptr) +
+                       Number("begin_ns", Nanos(start)) +
+                       Number("end_ns", Nanos(end)) +
+                       (mb_ ? stats : ",\"recovery_points\":null"));
   }
 
   std::string ReportOptions() const {
@@ -334,7 +404,9 @@ class Database {
           Number("mirror_ms", bypass_.interval_ms) +
           Number("wal_queue_bytes", bypass_.wal_queue_capacity) +
           Number("metadata_queue_bytes", bypass_.metadata_queue_capacity) +
-          Number("mirror_batch_bytes", bypass_.batch_bytes);
+          Number("mirror_batch_bytes", bypass_.batch_bytes) +
+          Number("sst_async_min_level", sst_async_.min_level) +
+          Number("sst_async_delay_ms", sst_async_.delay_ms);
     } else {
       fields += ",\"mirror_ms\":null";
     }
@@ -343,6 +415,7 @@ class Database {
 
  private:
   Engine engine_;
+  SstAsyncConfig sst_async_;
   rdb::MetaBypassOptions bypass_;
   std::unique_ptr<rdb::MetaBypassDB> mb_;
   std::unique_ptr<rdb::DB> native_;
@@ -358,9 +431,22 @@ struct OperationIO {
   uint64_t scan_rows = 0;
 };
 
+struct PutSpan {
+  uint64_t begin_ns;
+  uint64_t end_ns;
+};
+static_assert(sizeof(PutSpan) == 16);
+
+template <bool checkpoint_timing>
 class Adapter final : public ycsbc::DB {
  public:
-  explicit Adapter(Database& db) : db_(db) {}
+  Adapter(Database& db, std::vector<PutSpan>* put_spans,
+          const Clock::time_point& measure_begin,
+          const Clock::time_point& measure_end)
+      : db_(db),
+        put_spans_(put_spans),
+        measure_begin_(measure_begin),
+        measure_end_(measure_end) {}
 
   Status Read(const std::string&, const std::string& key,
               const std::vector<std::string>*,
@@ -410,12 +496,25 @@ class Adapter final : public ycsbc::DB {
   Status Put(const std::string& key, const std::vector<Field>& fields) {
     ++io.put_calls;
     const auto& value = fields.front().value;
-    Check(db_.Put(key, value), "YCSB Put");
+    if constexpr (checkpoint_timing) {
+      const auto put_begin = Clock::now();
+      const auto status = db_.Put(key, value);
+      const auto put_end = Clock::now();
+      Check(status, "YCSB Put");
+      if (put_begin < measure_end_ && put_end >= measure_begin_) {
+        put_spans_->push_back({Nanos(put_begin), Nanos(put_end)});
+      }
+    } else {
+      Check(db_.Put(key, value), "YCSB Put");
+    }
     io.write_bytes += value.size();
     return kOK;
   }
 
   Database& db_;
+  std::vector<PutSpan>* put_spans_;
+  const Clock::time_point& measure_begin_;
+  const Clock::time_point& measure_end_;
 };
 
 struct Profile {
@@ -535,8 +634,30 @@ std::string DatasetFields(const mb_ycsb::Metadata& metadata) {
   std::_Exit(EXIT_FAILURE);
 }
 
+[[maybe_unused]] void WritePutSpans(
+    const char* path, const std::vector<std::vector<PutSpan>>& put_spans) {
+  std::ofstream trace(path, std::ios::binary);
+  Require(trace.is_open(), "cannot open Put span file");
+  for (const auto& worker : put_spans) {
+    if (!worker.empty()) {
+      trace.write(reinterpret_cast<const char*>(worker.data()),
+                  worker.size() * sizeof(PutSpan));
+    }
+  }
+  trace.close();
+  Require(trace.good(), "cannot write Put span file");
+}
+
+template <bool checkpoint_timing>
 void Run(char** argv) {
   const auto engine = ParseEngine(argv[4]);
+  if constexpr (checkpoint_timing) {
+    Require(engine == Engine::kMetaBypass, "checkpoint timing requires mb");
+    Require(fs::path(argv[11]).is_absolute(),
+            "Put span file path must be absolute");
+    Require(std::endian::native == std::endian::little,
+            "checkpoint timing requires a little-endian host");
+  }
   const auto backup =
       engine == Engine::kNative ? std::string{} : Absolute(argv[6]);
   const auto threads = Parse(argv[7], "thread count", 1, 1024);
@@ -547,7 +668,10 @@ void Run(char** argv) {
   const auto interval = std::chrono::milliseconds(
       Parse(argv[10], "checkpoint milliseconds",
             engine == Engine::kNative ? 0 : 1, 86400000));
-  Database db(engine, backup, interval.count());
+  const auto sst_async = engine == Engine::kMetaBypass
+                             ? SstAsyncFromEnvironment()
+                             : SstAsyncConfig{};
+  Database db(engine, backup, interval.count(), sst_async);
   db.Open(Absolute(argv[5]), true);
 
   const auto load_start = Clock::now();
@@ -569,20 +693,53 @@ void Run(char** argv) {
   ycsbc::CoreWorkload workload;
   workload.Init(profile.props);
   std::vector<Published> results(threads);
+  std::vector<std::vector<PutSpan>> put_spans(checkpoint_timing ? threads : 0);
   std::vector<std::thread> workers;
   workers.reserve(threads);
   std::latch ready(threads);
   std::latch start(1);
   Clock::time_point begin, end;
+  bool start_released = false;
+  std::atomic<bool> stop_diagnostic_threads{false};
+  std::thread reporter;
+  const auto join_diagnostic_threads = [&] {
+    stop_diagnostic_threads.store(true, std::memory_order_relaxed);
+    if (!start_released) {
+      start.count_down();
+      start_released = true;
+    }
+    for (auto& worker : workers) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
+    if (reporter.joinable()) {
+      reporter.join();
+    }
+  };
+
+  // Keep the latch and threads alive while cleaning up a failed launch.
+  std::optional<rdb::Defer> stop_diagnostic_threads_on_exit;
+  if constexpr (checkpoint_timing) {
+    stop_diagnostic_threads_on_exit.emplace(join_diagnostic_threads);
+  }
+
   for (size_t i = 0; i < threads; ++i) {
     workers.emplace_back([&, i] {
       try {
-        Adapter adapter(db);
+        Adapter<checkpoint_timing> adapter(
+            db, checkpoint_timing ? &put_spans[i] : nullptr, begin, end);
         ready.count_down();
         start.wait();
         for (;;) {
           adapter.io = {};
           const auto op_begin = Clock::now();
+          if constexpr (checkpoint_timing) {
+            if (op_begin >= end ||
+                stop_diagnostic_threads.load(std::memory_order_relaxed)) {
+              return;
+            }
+          }
           Require(workload.DoTransaction(adapter), "YCSB transaction failed");
           const auto op_end = Clock::now();
           if (op_end >= begin && op_end < end) {
@@ -610,10 +767,16 @@ void Run(char** argv) {
   begin = workload_start + warmup;
   end = begin + measure;
   start.count_down();
-  std::thread reporter([&] {
+  start_released = true;
+  reporter = std::thread([&, workload_start] {
     try {
       for (auto next = workload_start;; next += 1s) {
         std::this_thread::sleep_until(next);
+        if constexpr (checkpoint_timing) {
+          if (stop_diagnostic_threads.load(std::memory_order_relaxed)) {
+            return;
+          }
+        }
         db.ReportSequence();
         next = std::max(next, Clock::now() - 1s);
       }
@@ -623,7 +786,7 @@ void Run(char** argv) {
   });
   std::unique_ptr<std::thread> backup_worker;
   if (engine == Engine::kBE) {
-    backup_worker = std::make_unique<std::thread>([&] {
+    backup_worker = std::make_unique<std::thread>([&, workload_start] {
       try {
         auto next = workload_start + interval;
         for (;;) {
@@ -638,14 +801,23 @@ void Run(char** argv) {
     });
   }
   std::this_thread::sleep_until(begin);
-  Emit("measurement_start", Number("monotonic_ns", Nanos(begin)));
+  Emit("measurement_start",
+       Number("monotonic_ns", Nanos(begin)) + db.ReportBackupStats());
   std::this_thread::sleep_until(end);
+  const auto end_stats = db.ReportBackupStats();
+  if constexpr (checkpoint_timing) {
+    stop_diagnostic_threads_on_exit.reset();
+    db.Close();
+    WritePutSpans(argv[11], put_spans);
+  }
   Emit("measurement_end", Number("monotonic_ns", Nanos(end)) +
                               Number("elapsed_ns", Nanos(end) - Nanos(begin)) +
-                              Summarize(results));
-  // The controller kills this process to model an abrupt SSD failure.
-  // Continue the workload until the signal rather than closing either store.
-  reporter.join();
+                              Summarize(results) + end_stats);
+  if constexpr (!checkpoint_timing) {
+    // The controller models an abrupt failure. Continue until it sends the
+    // signal so neither store closes before the failure.
+    reporter.join();
+  }
 }
 
 void Recover(char** argv) {
@@ -775,7 +947,14 @@ int main(int argc, char** argv) {
       Emit("dataset",
            String("dataset", path) + DatasetFields(dataset.metadata()));
     } else if (command == "run" && argc == 11) {
-      Run(argv);
+      Run<false>(argv);
+    } else if (command == "run-checkpoint-timing" && argc == 12) {
+#ifdef ROCKSDB_MB_CHECKPOINT_TIMING
+      Run<true>(argv);
+#else
+      throw std::runtime_error(
+          "checkpoint timing requires a ROCKSDB_MB_CHECKPOINT_TIMING build");
+#endif
     } else if (command == "recover" && argc == 9) {
       Recover(argv);
     } else if (command == "verify" && argc == 4) {
@@ -785,7 +964,9 @@ int main(int argc, char** argv) {
           "usage: identity | dataset DIR RECORDS VALUE_BYTES | verify DATASET "
           "DB "
           "| run DATASET PROPERTIES mb|be|native DB BACKUP|- THREADS WARMUP_S "
-          "MEASURE_S CHECKPOINT_MS | recover DATASET PROPERTIES mb|be TARGET "
+          "MEASURE_S CHECKPOINT_MS | run-checkpoint-timing DATASET PROPERTIES "
+          "mb DB BACKUP THREADS WARMUP_S MEASURE_S CHECKPOINT_MS PUT_SPANS "
+          "| recover DATASET PROPERTIES mb|be TARGET "
           "BACKUP INITIAL_SEQUENCE SAMPLES");
     }
     return EXIT_SUCCESS;

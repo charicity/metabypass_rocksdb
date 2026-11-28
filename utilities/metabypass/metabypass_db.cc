@@ -2,6 +2,7 @@
 //  This source code is licensed under both the GPLv2 (found in the
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "db/db_impl/db_impl_readonly.h"
 #include "db/write_batch_internal.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/listener.h"
@@ -19,6 +21,7 @@
 #include "rocksdb/wal_filter.h"
 #include "rocksdb/write_batch.h"
 #include "test_util/sync_point.h"
+#include "util/cast_util.h"
 #include "utilities/metabypass/backup.h"
 #include "utilities/metabypass/sst_storage.h"
 #include "utilities/metabypass/wal_breakdown.h"
@@ -105,6 +108,10 @@ Status Validate(const Options& o, const MetaBypassOptions& m,
     return Status::InvalidArgument("invalid Metabypass queue configuration");
   if (!m.checkpoint_interval_ms || m.checkpoint_interval_ms > max_interval)
     return Status::InvalidArgument("invalid Metabypass checkpoint interval");
+  if ((m.sst_async_min_level != -1 &&
+       (m.sst_async_min_level < 1 || m.sst_async_min_level >= o.num_levels)) ||
+      m.sst_async_delay_ms > max_interval)
+    return Status::InvalidArgument("invalid asynchronous SST staging options");
   const auto& tier = m.sst_tiering;
   if (tier.mode != SstTieringMode::kDisabled &&
       (tier.mode != SstTieringMode::kObserveOnly &&
@@ -163,6 +170,41 @@ class SupportedBatch : public WriteBatch::Handler {
                    : Status::NotSupported("Metabypass multiple CFs");
   }
 };
+Status ReadCheckpointSequence(const Options& recovery, const std::string& index,
+                              const metabypass::Backup::RecoveryPoint& point,
+                              DBImpl::WalRecoveryProbe* probe,
+                              SequenceNumber* sequence) {
+  *sequence = point.sequence_lower_bound;
+  if (point.exact_sequence) return Status::OK();
+
+  DBOptions checkpoint_options(recovery);
+  checkpoint_options.paranoid_checks = true;
+  checkpoint_options.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
+  probe->validate_batch = [](const WriteBatch& batch) {
+    SupportedBatch check;
+    Status s = batch.Iterate(&check);
+    if (s.ok() && !check.supported)
+      return Status::Corruption("unsupported checkpoint WAL batch");
+    return s;
+  };
+  Status s = DBImplReadOnly::ProbeWalRecovery(
+      checkpoint_options, index,
+      {{kDefaultColumnFamilyName, ColumnFamilyOptions(recovery)}}, probe,
+      sequence);
+  if (!s.ok()) return s;
+
+  // In-place updates can take effect in the SST under an earlier internal
+  // key sequence. The MANIFEST capture samples a lower bound that covers
+  // such updates even if their WAL is no longer needed at open.
+  if (point.manifest_sequence)
+    *sequence = std::max(*sequence, *point.manifest_sequence);
+  if (*sequence < point.sequence_lower_bound) {
+    return Status::Corruption("checkpoint sequence below recovery bound",
+                              point.name);
+  }
+  return Status::OK();
+}
+
 class RecoveryFilter : public WalFilter {
  public:
   explicit RecoveryFilter(MetaBypassRecoveryReport* report) : report_(report) {
@@ -292,7 +334,9 @@ class BackupListener : public EventListener {
   const char* Name() const override { return "MetaBypassBackupListener"; }
   void OnFlushCompleted(DB*, const FlushJobInfo&) override { Notify(); }
   void OnCompactionCompleted(DB*, const CompactionJobInfo& info) override {
-    if (info.status.ok()) Notify();
+    if (info.status.ok()) {
+      if (auto backup = backup_.lock()) backup->NativeFilesChanged(&info);
+    }
   }
 
  private:
@@ -493,26 +537,40 @@ Status MetaBypassDB::Restore(const Options& options, const MetaBypassOptions& m,
         status = sst->Initialize(point.identity, true);
         if (!status.ok()) return status;
       }
-      status = metabypass::Backup::PrepareRecovery(
-          fs.get(), m.backup_dir, point, index, report, sst.get());
+      status = metabypass::Backup::RestoreCheckpointFiles(
+          fs.get(), m.backup_dir, point, index, sst.get());
       if (!status.ok()) return status;
-      TEST_SYNC_POINT("MetaBypass::RecoveryPrepared");
-      RecoveryFilter filter(report);
       auto env = NewCompositeEnv(sst ? std::shared_ptr<FileSystem>(sst) : fs);
       Options recovery = options;
       recovery.env = env.get();
       recovery.disable_auto_compactions = true;
       recovery.avoid_flush_during_recovery = false;
-      recovery.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
-      recovery.wal_filter = &filter;
       recovery.create_if_missing = false;
       recovery.error_if_exists = false;
+      DBImpl::WalRecoveryProbe checkpoint_probe;
+      status = ReadCheckpointSequence(recovery, index, point, &checkpoint_probe,
+                                      &report->checkpoint_sequence);
+      if (!status.ok()) return status;
+      report->recovered_sequence = report->checkpoint_sequence;
+      status = metabypass::Backup::RestoreIncrementalWals(
+          fs.get(), m.backup_dir, index, checkpoint_probe.complete_wal_ends);
+      if (!status.ok()) return status;
+      TEST_SYNC_POINT("MetaBypass::RecoveryPrepared");
+      RecoveryFilter filter(report);
+      recovery.wal_recovery_mode = WALRecoveryMode::kPointInTimeRecovery;
+      recovery.wal_filter = &filter;
       std::unique_ptr<DB> native;
       status = DB::Open(recovery, index, &native);
       if (!status.ok()) return status;
+      if (point.manifest_sequence || recovery.inplace_update_support) {
+        // Preserve the verified checkpoint floor and the native replay
+        // sequence, including in-place updates that reuse SST entry sequences.
+        status = static_cast_with_check<DBImpl>(native.get())
+                     ->PersistRecoveredSequence(report->checkpoint_sequence);
+      }
       if (report->stop_reason.empty())
         report->stop_reason = "native_replay_end";
-      status = native->Close();
+      status.UpdateIfOk(native->Close());
       native.reset();
       if (!status.ok()) return status;
       TEST_SYNC_POINT("MetaBypass::RecoveryNativeClosed");
@@ -594,13 +652,8 @@ Status MetaBypassDB::WriteImpl(const WriteOptions& o, WriteBatch* b,
     s = impl_->backup->Error();
   }
   if (!s.ok()) return s;
-  {
-    MB_WAL_SPAN(wait, write_fence_wait, true);
-    auto writer = impl_->backup->EnterWrite();
-    MB_WAL_END(wait);
-    s = impl_->db->Write(o, b);
-    if (s.ok()) impl_->backup->WriteCompleted();
-  }
+  s = impl_->db->Write(o, b);
+  if (s.ok()) impl_->backup->WriteCompleted();
   // Count successful primary writes even if the following backup barrier fails.
   if (s.ok() && o.sync) {
     TEST_SYNC_POINT("MetaBypass::BeforeSyncWriteBarrier");
@@ -633,6 +686,7 @@ Status MetaBypassDB::CompactRange(const CompactRangeOptions& o, const Slice* a,
   if (s.ok())
     s = impl_->db ? impl_->db->CompactRange(o, a, b)
                   : Status::ShutdownInProgress();
+  if (s.ok() && o.change_level) impl_->backup->NativeSstLevelsChanged();
   return s;
 }
 Status MetaBypassDB::SyncBackup() { return impl_->backup->Sync(); }

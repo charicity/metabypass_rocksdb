@@ -128,9 +128,21 @@ if(BUILD_TESTING)
     set_tests_properties("dataset_${case}" PROPERTIES TIMEOUT 60)
   endforeach()
   foreach(case matching_initial_contents_across_cores unverified_contents
-      independent_fixture_rejected workload_and_observation_must_match sequence_bounds)
+      independent_fixture_rejected workload_and_observation_must_match
+      sequence_bounds sst_async_options checkpoint_timing_mode_must_match
+      checkpoint_timing_intervals checkpoint_timing_p99_minimum_and_truncated_trace
+      checkpoint_timing_capture_intervals checkpoint_timing_rejects_invalid_capture)
     add_test(NAME "report_${case}" COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/run_test.py" "ReportTest.test_${case}")
     set_tests_properties("report_${case}" PROPERTIES TIMEOUT 60)
+  endforeach()
+  foreach(case same_number_move dump_and_inventory_lengths transient_files confirmations_and_phase
+      measurement_end_confirms_point_and_earliest_snapshot_wins
+      measurement_counter_deltas_and_sampled_queue_peak
+      workloadd_capture_forwards_cgroup_and_archives_d_logs
+      offline_summary_reads_d_and_legacy_a_archives invalid_recovery_boundary)
+    add_test(NAME "sst_study_${case}" COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/sst_checkpoint_study_test.py" "CheckpointStudyTest.test_${case}")
+    set_tests_properties("sst_study_${case}" PROPERTIES TIMEOUT 60)
   endforeach()
 endif()

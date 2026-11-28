@@ -207,6 +207,12 @@ class DBImpl : public DB {
 
   virtual ~DBImpl();
 
+  struct WalRecoveryProbe {
+    std::function<Status(const WriteBatch&)> validate_batch;
+    // Last complete accepted logical record end, or zero for a WAL with none.
+    std::map<uint64_t, uint64_t> complete_wal_ends;
+  };
+
   // ---- Implementations of the DB interface ----
 
   using DB::Resume;
@@ -520,6 +526,10 @@ class DBImpl : public DB {
 
   SequenceNumber GetLatestSequenceNumber() const override;
 
+  // Preserve a sequence floor after WAL recovery. Requires exclusive access
+  // to the writable DB before exposing it to readers or writers.
+  Status PersistRecoveredSequence(SequenceNumber minimum_sequence);
+
   // IncreaseFullHistoryTsLow(ColumnFamilyHandle*, std::string) will acquire
   // and release db_mutex
   Status IncreaseFullHistoryTsLow(ColumnFamilyHandle* column_family,
@@ -588,6 +598,16 @@ class DBImpl : public DB {
   Status GetLiveFilesStorageInfo(
       const LiveFilesStorageInfoOptions& opts,
       std::vector<LiveFileStorageInfo>* files) override;
+  // On success, optional SST levels and the optional MANIFEST capture
+  // sequence are sampled with the same Versions as the file inventory.
+  Status GetLiveFilesStorageInfo(
+      const LiveFilesStorageInfoOptions& opts,
+      std::vector<LiveFileStorageInfo>* files,
+      std::unordered_map<uint64_t, int>* table_levels,
+      SequenceNumber* manifest_capture_sequence);
+  // Snapshot current live SST sizes in the specified level range.
+  void GetLiveTableFileSizes(int min_level,
+                             std::unordered_map<uint64_t, uint64_t>* files);
 
   Status GetPreparedFileInfoForExternalSstIngestion(
       const std::string& file_path,
@@ -1545,6 +1565,7 @@ class DBImpl : public DB {
     // All existing data files (SST files and Blob files) found during DB::Open.
     std::vector<std::string> existing_data_files_;
     bool is_new_db_ = false;
+    WalRecoveryProbe* wal_probe = nullptr;
   };
 
   // Persist options to options file. Must be holding options_mutex_.
@@ -2355,7 +2376,8 @@ class DBImpl : public DB {
       bool* stop_replay_for_corruption, bool* stop_replay_by_wal_filter,
       uint64_t* corrupted_wal_number, bool* corrupted_wal_found,
       std::unordered_map<int, VersionEdit>* version_edits, bool* flushed,
-      PredecessorWALInfo& predecessor_wal_info);
+      PredecessorWALInfo& predecessor_wal_info, WalRecoveryProbe* wal_probe,
+      WALRecoveryMode reader_recovery_mode);
 
   void SetupLogFileProcessing(uint64_t wal_number);
 
@@ -2378,7 +2400,8 @@ class DBImpl : public DB {
       SequenceNumber* last_seqno_observed, SequenceNumber* next_sequence,
       bool* stop_replay_for_corruption, Status* status,
       bool* stop_replay_by_wal_filter,
-      std::unordered_map<int, VersionEdit>* version_edits, bool* flushed);
+      std::unordered_map<int, VersionEdit>* version_edits, bool* flushed,
+      WalRecoveryProbe* wal_probe);
 
   Status InitializeWriteBatchForLogRecord(
       Slice record, const std::unique_ptr<log::Reader>& reader,

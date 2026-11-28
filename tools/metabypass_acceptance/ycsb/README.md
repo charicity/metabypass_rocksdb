@@ -101,6 +101,68 @@ keys. Recovered update bytes have no independent oracle in that case.
 
 Pairing requires matching fixture and observed digests, successful initial
 verification, and matching YCSB revision and patch, adapter, workload, shared
-database settings, memory budget and measurement window. Engine, core and
-backup settings are comparison variables. Historical hand-written YCSB
-ledgers are outside this protocol.
+database settings, memory budget, measurement window and checkpoint timing
+mode. Engine, core and backup settings are comparison variables. Historical
+hand-written YCSB ledgers are outside this protocol.
+
+## YCSB-A and YCSB-D checkpoint SST study
+
+```sh
+python3 "$tools_dir/sst_checkpoint_study.py" run \
+  --driver "$build/metabypass_ycsb" --ldb "$build/rocksdb/tools/ldb" \
+  --dataset /path/to/datasets/1kib/dataset.bin \
+  --workload "$ycsb_src/workloads/workloada" --output /tmp/ycsb-a-sst-r1
+
+python3 "$tools_dir/sst_checkpoint_study.py" summarize \
+  --ldb "$build/rocksdb/tools/ldb" --output /tmp/ycsb-a-sst-r1
+```
+
+Use an `ldb` from the same core build as the driver. For the integrated build,
+configure CMake with `-DWITH_CORE_TOOLS=ON` and build the `ldb` target. Use a
+new results directory on a local filesystem with room for the kept foreground
+and backup data.
+Defaults are 16 threads, 65 seconds of warmup, 180 seconds of measurement and
+40 seconds between checkpoints. Override them with `--threads`,
+`--warmup-seconds`, `--measure-seconds` and `--checkpoint-ms`.
+Use the upstream `workloadd` profile as `--workload` and a new output
+directory for Workload D.
+
+The observer archives checkpoint metadata in `points/`. `levels.csv` lists
+each level, SST totals, new file numbers and same-number moves. Measurement
+totals use intervals ending at a confirmed measurement-window publication.
+Differences across a MANIFEST rollover still appear in the level data.
+`points.csv` gives WAL and metadata sizes and tracks whether the MANIFEST
+prefix covers short-lived SSTs for each interval. Its `sequence_boundary_type`
+column identifies `sequence` as an exact legacy boundary or an MBR2 lower
+bound. The `manifest_sequence` column reports the captured value when present.
+`summary.json` gives byte shares for L1+ and L2+ and lists any final point
+unconfirmed by the writer. All sizes are logical file bytes.
+
+Pass `--front-root` and `--back-root` together to use two existing data
+directories on local mounts. Each run gets unique sample directories. Raw
+writer logs are archived under `back/ycsb-a/` for Workload A and
+`back/ycsb-d/` for Workload D. Pass `--cgroup` and `--memory-gib` to use the
+runner's existing cgroup v1 checks and declared memory limit. Pass
+`--cleanup-data` to remove this run's foreground and backup data after
+successful collection and summarization.
+
+Use `--sst-async-min-level -1` for the default with staging disabled. Set
+`--sst-async-min-level 5 --sst-async-delay-ms 1000` to stage compaction outputs
+at level 5 or higher after a one-second delay. The same two flags apply to
+`run.py run --engine mb`. The runner passes only these settings via the
+per-process `MB_YCSB_SST_ASYNC_MIN_LEVEL` and
+`MB_YCSB_SST_ASYNC_DELAY_MS` environment overrides. Recovery opens with
+staging disabled. For db_bench, the corresponding flags are
+`--metabypass_sst_async_min_level` and `--metabypass_sst_async_delay_ms`.
+
+The writer JSONL includes backup snapshots in the initial backup, periodic
+progress, and measurement boundary events. The observer adds the snapshots
+to `points.csv` by published point count and records the actual sampling
+timestamps. In `summary.json`, `measurement_backup.counter_deltas` uses the
+two measurement boundary snapshots and `p99_ns` is the YCSB histogram bucket
+upper bound. Checkpoint copy bytes are successful SST Append bytes attributed
+to each confirmed candidate. Ready bytes came from staging that had already
+synchronized before that candidate began. The overall queue peak upper bound
+is the sum of the WAL and metadata high-water marks. The sampled WAL queue
+maximum has a separate field. Cancelled bytes cover admitted jobs evicted
+before I/O. The MANIFEST analysis covers transient SSTs between publications.

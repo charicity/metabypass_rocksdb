@@ -102,9 +102,10 @@ target_include_directories(mb_ycsb_dataset PUBLIC
 target_link_libraries(mb_ycsb_dataset PUBLIC
   ${core_target} OpenSSL::Crypto Threads::Threads)
 
-add_executable(metabypass_ycsb driver.cc)
+add_executable(metabypass_ycsb driver.cc bepp.cc wal_operation_mirror.cc)
 target_link_libraries(metabypass_ycsb PRIVATE mb_ycsb_dataset)
-set(adapter_sources driver.cc dataset.h dataset.cc)
+set(adapter_sources driver.cc dataset.h dataset.cc bepp.h bepp.cc
+  wal_operation_mirror.h wal_operation_mirror.cc)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${adapter_sources})
 foreach(source IN LISTS adapter_sources)
   file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${source}" source_sha)

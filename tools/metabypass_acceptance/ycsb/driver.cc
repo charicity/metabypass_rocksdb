@@ -29,16 +29,19 @@
 #include <utility>
 #include <vector>
 
+#include "bepp.h"
 #include "core/core_workload.h"
 #include "dataset.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/db.h"
+#include "rocksdb/env.h"
 #include "rocksdb/table.h"
 #include "rocksdb/utilities/backup_engine.h"
 #include "rocksdb/utilities/metabypass.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_batch.h"
 #include "util/defer.h"
+#include "wal_operation_mirror.h"
 
 namespace {
 namespace rdb = ROCKSDB_NAMESPACE;
@@ -135,7 +138,33 @@ std::string Absolute(const char* path) {
   return fs::absolute(path).lexically_normal().string();
 }
 
-enum class Engine { kMetaBypass, kBE, kNative };
+void CheckBEPPDirectories(const fs::path& db, const fs::path& backup,
+                          const fs::path& mirror) {
+  const auto canonical = [](const fs::path& path) {
+    // Creating the mirror must not make a previously dangling alias valid.
+    for (auto candidate = fs::absolute(path);
+         candidate.has_relative_path() && !fs::exists(candidate);
+         candidate = candidate.parent_path()) {
+      Require(!fs::is_symlink(fs::symlink_status(candidate)),
+              "BE++ directories must not use dangling symbolic links");
+    }
+    const auto resolved = fs::weakly_canonical(path);
+    return resolved.has_filename() ? resolved : resolved.parent_path();
+  };
+  const auto overlaps = [](const fs::path& left, const fs::path& right) {
+    const auto [left_end, right_end] =
+        std::mismatch(left.begin(), left.end(), right.begin(), right.end());
+    return left_end == left.end() || right_end == right.end();
+  };
+  const auto db_dir = canonical(db);
+  const auto backup_dir = canonical(backup);
+  const auto mirror_dir = canonical(mirror);
+  Require(!overlaps(db_dir, backup_dir) && !overlaps(db_dir, mirror_dir) &&
+              !overlaps(backup_dir, mirror_dir),
+          "BE++ DB, backup and WAL mirror directories must be disjoint");
+}
+
+enum class Engine { kMetaBypass, kBE, kBEPP, kNative };
 
 Engine ParseEngine(std::string_view engine) {
   if (engine == "mb") {
@@ -144,7 +173,10 @@ Engine ParseEngine(std::string_view engine) {
   if (engine == "be") {
     return Engine::kBE;
   }
-  Require(engine == "native", "engine must be mb, be or native");
+  if (engine == "bepp") {
+    return Engine::kBEPP;
+  }
+  Require(engine == "native", "engine must be mb, be, bepp or native");
   return Engine::kNative;
 }
 
@@ -266,19 +298,40 @@ class Database {
     auto options = DBOptions(create);
     if (engine_ == Engine::kMetaBypass) {
       Check(rdb::MetaBypassDB::Open(options, bypass_, path, &mb_), "MB Open");
-    } else {
-      Check(rdb::DB::Open(options, path, &native_), "DB Open");
-      if (create && engine_ == Engine::kBE) {
-        rdb::BackupEngine* backup = nullptr;
-        Check(rdb::BackupEngine::Open(BEOptions(bypass_.backup_dir),
-                                      options.env, &backup),
-              "BE Open");
-        be_.reset(backup);
-      }
+      return;
+    }
+    if (create && engine_ == Engine::kBEPP) {
+      const auto mirror = mb_ycsb::WalMirrorDirectory(bypass_.backup_dir);
+      CheckBEPPDirectories(path, bypass_.backup_dir, mirror);
+      mb_ycsb::BackupEnginePlusPlus::ConfigureWalSourceOptions(options);
+      options.wal_compression = rdb::kNoCompression;
+      options.track_and_verify_wals = false;
+      options.track_and_verify_wals_in_manifest = false;
+      const auto base_fs = options.env->GetFileSystem();
+      wal_mirror_ = std::make_unique<mb_ycsb::WalOperationMirror>(
+          base_fs, base_fs, path, mirror);
+      capture_env_ = rdb::NewCompositeEnv(wal_mirror_->CaptureFileSystem());
+      options.env = capture_env_.get();
+    }
+    Check(rdb::DB::Open(options, path, &native_), "DB Open");
+    if (create && engine_ == Engine::kBE) {
+      rdb::BackupEngine* backup = nullptr;
+      Check(rdb::BackupEngine::Open(BEOptions(bypass_.backup_dir), options.env,
+                                    &backup),
+            "BE Open");
+      be_.reset(backup);
+    } else if (create && engine_ == Engine::kBEPP) {
+      bepp_ = std::make_unique<mb_ycsb::BackupEnginePlusPlus>(
+          *native_, bypass_.backup_dir);
     }
   }
 
-  void Close() { Check(mb_ ? mb_->Close() : native_->Close(), "DB Close"); }
+  void Close() {
+    Check(mb_ ? mb_->Close() : native_->Close(), "DB Close");
+    if (wal_mirror_) {
+      Check(wal_mirror_->Close(), "BE++ WAL mirror close");
+    }
+  }
 
   void Load(const mb_ycsb::Dataset& dataset) {
     rdb::WriteBatch batch;
@@ -306,6 +359,14 @@ class Database {
     if (engine_ == Engine::kMetaBypass) {
       return rdb::MetaBypassDB::Restore(DBOptions(false), bypass_, target,
                                         report);
+    }
+    if (engine_ == Engine::kBEPP) {
+      CheckBEPPDirectories(target, bypass_.backup_dir,
+                           mb_ycsb::WalMirrorDirectory(bypass_.backup_dir));
+      auto prepared =
+          mb_ycsb::BackupEnginePlusPlus::OpenRestore(bypass_.backup_dir);
+      prepared.StageWal(target);
+      return prepared.Restore(target);
     }
     rdb::BackupEngineReadOnly* impl = nullptr;
     auto status = rdb::BackupEngineReadOnly::Open(BEOptions(bypass_.backup_dir),
@@ -343,6 +404,7 @@ class Database {
   }
 
   void ReportSequence() {
+    CheckWalMirror();
     const auto begin = Clock::now();
     const auto wall_begin = WallMicros();
     const auto sequence = Sequence();
@@ -367,6 +429,12 @@ class Database {
            BackupStatsFields(stats);
   }
 
+  void CheckWalMirror() const {
+    if (wal_mirror_) {
+      Check(wal_mirror_->GetError(), "BE++ WAL mirror");
+    }
+  }
+
   void Backup(bool initial) {
     if (engine_ == Engine::kNative) {
       return;
@@ -377,6 +445,12 @@ class Database {
     if (mb_) {
       Check(mb_->SyncBackup(), "MB initial backup");
       stats = ReportBackupStats();
+    } else if (bepp_) {
+      CheckWalMirror();
+      const auto result = bepp_->Backup();
+      CheckWalMirror();
+      wal_mirror_->AdvanceFloor(result.wal_floor);
+      id = result.backup_id;
     } else {
       rdb::CreateBackupOptions options;
       options.flush_before_backup = false;
@@ -386,7 +460,7 @@ class Database {
     const auto end = Clock::now();
     Emit("backup", std::string(",\"initial\":") + (initial ? "true" : "false") +
                        ",\"completed\":true" +
-                       OptionalNumber("backup_id", id, be_ != nullptr) +
+                       OptionalNumber("backup_id", id, be_ || bepp_) +
                        Number("begin_ns", Nanos(start)) +
                        Number("end_ns", Nanos(end)) +
                        (mb_ ? stats : ",\"recovery_points\":null"));
@@ -407,6 +481,9 @@ class Database {
           Number("mirror_batch_bytes", bypass_.batch_bytes) +
           Number("sst_async_min_level", sst_async_.min_level) +
           Number("sst_async_delay_ms", sst_async_.delay_ms);
+    } else if (engine_ == Engine::kBEPP) {
+      fields +=
+          Number("mirror_ms", mb_ycsb::WalOperationMirrorOptions{}.interval_ms);
     } else {
       fields += ",\"mirror_ms\":null";
     }
@@ -418,8 +495,12 @@ class Database {
   SstAsyncConfig sst_async_;
   rdb::MetaBypassOptions bypass_;
   std::unique_ptr<rdb::MetaBypassDB> mb_;
+  // The capture environment and mirror must outlive the source DB.
+  std::unique_ptr<mb_ycsb::WalOperationMirror> wal_mirror_;
+  std::unique_ptr<rdb::Env> capture_env_;
   std::unique_ptr<rdb::DB> native_;
   std::unique_ptr<rdb::BackupEngine> be_;
+  std::unique_ptr<mb_ycsb::BackupEnginePlusPlus> bepp_;
 };
 
 struct OperationIO {
@@ -785,7 +866,7 @@ void Run(char** argv) {
     }
   });
   std::unique_ptr<std::thread> backup_worker;
-  if (engine == Engine::kBE) {
+  if (engine == Engine::kBE || engine == Engine::kBEPP) {
     backup_worker = std::make_unique<std::thread>([&, workload_start] {
       try {
         auto next = workload_start + interval;
@@ -804,6 +885,11 @@ void Run(char** argv) {
   Emit("measurement_start",
        Number("monotonic_ns", Nanos(begin)) + db.ReportBackupStats());
   std::this_thread::sleep_until(end);
+  try {
+    db.CheckWalMirror();
+  } catch (const std::exception& e) {
+    ChildFailure(e);
+  }
   const auto end_stats = db.ReportBackupStats();
   if constexpr (checkpoint_timing) {
     stop_diagnostic_threads_on_exit.reset();
@@ -963,10 +1049,11 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "usage: identity | dataset DIR RECORDS VALUE_BYTES | verify DATASET "
           "DB "
-          "| run DATASET PROPERTIES mb|be|native DB BACKUP|- THREADS WARMUP_S "
+          "| run DATASET PROPERTIES mb|be|bepp|native DB BACKUP|- THREADS "
+          "WARMUP_S "
           "MEASURE_S CHECKPOINT_MS | run-checkpoint-timing DATASET PROPERTIES "
           "mb DB BACKUP THREADS WARMUP_S MEASURE_S CHECKPOINT_MS PUT_SPANS "
-          "| recover DATASET PROPERTIES mb|be TARGET "
+          "| recover DATASET PROPERTIES mb|be|bepp TARGET "
           "BACKUP INITIAL_SEQUENCE SAMPLES");
     }
     return EXIT_SUCCESS;

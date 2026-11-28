@@ -482,7 +482,10 @@ def sample(args):
     save(ledger, result)
     if not args.keep_data:
         shutil.rmtree(front)
-        for name in ("backup", "data"):
+        data_dirs = ("backup", "data")
+        if args.engine == "bepp":
+            data_dirs += ("wal-mirror",)
+        for name in data_dirs:
             path = back / name
             if path.exists():
                 shutil.rmtree(path)
@@ -526,7 +529,7 @@ def main():
     for name in ("driver", "dataset", "workload", "ssd-root", "hdd-root"):
         run.add_argument("--" + name, type=Path, required=True)
     run.add_argument("--sample", required=True)
-    run.add_argument("--engine", choices=("mb", "be", "native"), required=True)
+    run.add_argument("--engine", choices=("mb", "be", "bepp", "native"), required=True)
     run.add_argument("--threads", type=positive, default=1)
     run.add_argument("--warmup-seconds", type=positive, default=65)
     run.add_argument("--measure-seconds", type=positive, default=180)
